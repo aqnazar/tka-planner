@@ -87,6 +87,18 @@ class TKAPlannerProperties(PropertyGroup):
         subtype="DIR_PATH",
         default="",
     )
+    perform_cuts: BoolProperty(
+        name="Perform cuts", default=True,
+        description="Resect the bones along the planned cut planes",
+    )
+    animate_flexion: BoolProperty(
+        name="Animate flexion", default=True,
+        description="Swing the tibia through flexion about the transepicondylar axis",
+    )
+    max_flexion_deg: FloatProperty(
+        name="Max flexion", default=120.0, min=0.0, max=150.0,
+        description="Peak flexion angle for the animation, in degrees",
+    )
     show_planes: BoolProperty(name="Cut planes", default=True)
     show_axes: BoolProperty(name="Axes", default=True)
     show_landmarks: BoolProperty(name="Show landmarks", default=False)
@@ -220,6 +232,7 @@ class TKA_OT_plan(Operator):
             femoral_thickness_mm=sizing.femoral_thickness_mm,
             tibial_resection_mm=properties.tibial_resection_mm,
             native_slope_deg=metrics["posterior_slope_medial_deg"].value,
+            femur_mesh=femur, tibia_mesh=tibia,
         )
 
         components = {}
@@ -237,6 +250,9 @@ class TKA_OT_plan(Operator):
             show_planes=properties.show_planes,
             show_axes=properties.show_axes,
             show_landmarks=properties.show_landmarks,
+            perform_cuts=properties.perform_cuts,
+            animate_flexion=properties.animate_flexion,
+            max_flexion_deg=properties.max_flexion_deg,
         )
 
         femoral = plan.resections["femoral_distal"]
@@ -335,6 +351,11 @@ class TKA_PT_panel(Panel):
         row.prop(properties, "show_planes", toggle=True)
         row.prop(properties, "show_axes", toggle=True)
         layout.prop(properties, "show_landmarks", toggle=True)
+        row = layout.row(align=True)
+        row.prop(properties, "perform_cuts", toggle=True)
+        row.prop(properties, "animate_flexion", toggle=True)
+        if properties.animate_flexion:
+            layout.prop(properties, "max_flexion_deg")
 
         layout.separator()
         run = layout.row()

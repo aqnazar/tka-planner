@@ -70,6 +70,9 @@ def build_scene(
     show_planes: bool = True,
     show_axes: bool = True,
     show_landmarks: bool = False,
+    perform_cuts: bool = True,
+    animate_flexion: bool = True,
+    max_flexion_deg: float = 120.0,
     clear: bool = True,
 ) -> SceneResult:
     """Build the full scene from an already-computed plan.
@@ -116,25 +119,74 @@ def build_scene(
             move_to_collection(axis, planning)
             result.objects[label] = axis
 
+    # Every part takes the pose of its bone group, because the library gives all parts
+    # of a bone one shared CAD origin. That is what puts a cutting block exactly on its
+    # implant, and the insert exactly on the tray, without any per-part offsets.
+    blocks = ensure_collection("CuttingBlocks")
     for component_name, spec in (components or {}).items():
-        pose = plan.components.get(component_name)
+        group = spec.get("group", "femoral")
+        pose = plan.components.get(f"{group}_component")
         if pose is None or not Path(spec["path"]).is_file():
             result.notes.append(f"{component_name}: mesh not found, skipped")
             continue
         obj = add_component(
             spec["path"], component_name,
-            pose=pose,
-            scale_factor=spec.get("scale", 1.0),
+            pose=pose, scale_factor=spec.get("scale", 1.0),
         )
-        colour = BLOCK_COLOUR if "cutting_block" in component_name else IMPLANT_COLOUR
-        set_material(obj, "Block" if "cutting_block" in component_name else "Implant",
-                     colour)
-        move_to_collection(obj, implants)
+        is_block = "cutting_block" in component_name
+        set_material(
+            obj,
+            "BlockShell" if is_block and "shell" in component_name
+            else "Block" if is_block else "Implant",
+            BLOCK_COLOUR if is_block else IMPLANT_COLOUR,
+            alpha=0.45 if "shell" in component_name else 1.0,
+        )
+        move_to_collection(obj, blocks if is_block else implants)
         result.objects[component_name] = obj
 
     if show_landmarks and landmarks is not None:
         marks = ensure_collection("Landmarks")
         result.objects["landmarks"] = _make_landmarks(landmarks, marks)
+
+    # ---- Resection ---------------------------------------------------
+    if perform_cuts:
+        for bone_obj, resection_name, keep in (
+            (femur, "femoral_distal", "proximal"),
+            (tibia, "tibial_proximal", "distal"),
+        ):
+            resection = plan.resections[resection_name]
+            outcome = resect_bone(
+                bone_obj, resection.point, resection.normal,
+                keep=keep, name=resection_name,
+            )
+            if outcome is False:
+                result.notes.append(f"{resection_name}: boolean failed, bone left whole")
+            elif outcome == "fast":
+                result.notes.append(
+                    f"{resection_name}: exact boolean failed, used the fast solver "
+                    f"(the resulting geometry differs)"
+                )
+            set_material(bone_obj, "BoneCut", RESECTED_COLOUR)
+
+    # ---- Flexion ------------------------------------------------------
+    if animate_flexion:
+        axis_point, axis_direction = _flexion_axis(
+            plan, femoral_frame, landmarks
+        )
+        moving = [tibia] + [
+            result.objects[name] for name in result.objects
+            if name.startswith("tibial")
+        ]
+        pivot = add_flexion_animation(
+            moving, axis_point_mm=axis_point, axis_direction=axis_direction,
+            max_flexion_deg=max_flexion_deg,
+        )
+        move_to_collection(pivot, planning)
+        result.objects["flexion_axis"] = pivot
+        result.notes.append(
+            f"flexion animated 0 to {max_flexion_deg:.0f} degrees about the "
+            f"transepicondylar axis"
+        )
 
     result.collections = {"bones": bones, "planning": planning}
     result.notes.append(
@@ -186,6 +238,168 @@ def add_component(
     )
     obj.matrix_world = matrix
     return obj
+
+
+def _flexion_axis(plan, femoral_frame, landmarks):
+    """Where the knee hinges, and about what.
+
+    The flexion axis is taken as the **transepicondylar axis**, through the midpoint of
+    the epicondyles. That is the standard approximation, and the reason it works is
+    geometric: the femoral condyles are close to circular in the sagittal plane and the
+    epicondyles sit near the centres of those circles, so the tibia rides around them at
+    a nearly constant radius and stays in contact through the arc.
+
+    Using the posterior condyles instead puts the axis on the condylar *surface* rather
+    than at its centre of curvature, roughly two centimetres out. The joint then swings
+    apart as it flexes -- the component separation grew from 33 mm to 93 mm over 120
+    degrees before this was corrected.
+
+    Simplifications worth stating: the axis is held fixed, so femoral rollback and the
+    screw-home rotation near extension are not modelled, and the tibia is treated as a
+    rigid body hinging in one plane.
+    """
+    direction = femoral_frame.y_patient_left
+
+    for pair in (
+        ("femur.epicondyle_lateral", "femur.epicondyle_medial_sulcus"),
+        ("femur.epicondyle_lateral", "femur.epicondyle_medial_prominence"),
+    ):
+        if landmarks is not None and landmarks.available(*pair):
+            lateral, medial = landmarks.require(*pair)
+            return (np.asarray(lateral) + np.asarray(medial)) / 2.0, direction
+
+    return plan.components["femoral_component"][:3, 3], direction
+
+
+def resect_bone(obj, point_mm, normal_mm, *, keep: str, name: str):
+    """Cut a bone along a resection plane, keeping one side.
+
+    The cut is made with a box large enough to swallow the discarded side, rather than
+    with the cutting block. The block is the instrument that would realise the cut in
+    theatre and is shown as such; the plane is what the plan actually specifies, so
+    cutting with it shows the plan rather than the tooling.
+
+    ``keep="proximal"`` retains the bone above the plane, which is the femur; the tibia
+    keeps ``"distal"``.
+    """
+    import mathutils
+
+    normal = np.asarray(normal_mm, dtype=float)
+    normal = normal / np.linalg.norm(normal)
+    discard = -normal if keep == "proximal" else normal
+
+    size_mm = 400.0
+    centre = np.asarray(point_mm, dtype=float) + discard * (size_mm / 2.0)
+    bpy.ops.mesh.primitive_cube_add(size=size_mm * MM_TO_BU, location=_v(centre))
+    cutter = bpy.context.active_object
+    cutter.name = f"_{name}_cutter"
+    cutter.rotation_mode = "QUATERNION"
+    cutter.rotation_quaternion = _rotation_to(discard)
+
+    modifier = obj.modifiers.new(name="Resection", type="BOOLEAN")
+    modifier.operation = "DIFFERENCE"
+    modifier.object = cutter
+    modifier.solver = "EXACT"
+
+    bpy.context.view_layer.objects.active = obj
+    try:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+        applied = True
+    except RuntimeError:
+        # Exact can fail on a non-manifold segmentation; fall back and say so, since
+        # the fast solver produces different geometry.
+        obj.modifiers.remove(modifier)
+        modifier = obj.modifiers.new(name="Resection", type="BOOLEAN")
+        modifier.operation = "DIFFERENCE"
+        modifier.object = cutter
+        modifier.solver = "FAST"
+        try:
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+            applied = "fast"
+        except RuntimeError:
+            obj.modifiers.remove(modifier)
+            applied = False
+
+    bpy.data.objects.remove(cutter, do_unlink=True)
+    return applied
+
+
+def add_flexion_animation(
+    tibial_objects,
+    *,
+    axis_point_mm,
+    axis_direction,
+    max_flexion_deg: float = 120.0,
+    frames: int = 120,
+):
+    """Animate the tibia and its components flexing about the knee.
+
+    The femur is held still and the tibia swings, which is how a planning screen shows
+    range of motion: the femoral component is the reference and the articulation is what
+    moves.
+
+    Rotation is about the **transepicondylar axis**, the standard approximation to the
+    knee's flexion axis, positioned through the posterior condyles. That is better than
+    a midpoint between the two bones and no harder: the femoral condyles are very nearly
+    circular in the sagittal plane and the tibia rides around their centre. It ignores
+    the femoral rollback and the screw-home rotation that accompany real flexion, which
+    is a stated simplification rather than an oversight.
+
+    The moving parts are parented to an empty at the axis, so one keyframed rotation
+    carries the tibia and every tibial component together and their relative placement
+    cannot drift.
+    """
+    import mathutils
+
+    pivot = bpy.data.objects.new("FlexionAxis", None)
+    pivot.empty_display_type = "PLAIN_AXES"
+    pivot.empty_display_size = 0.05
+    bpy.context.scene.collection.objects.link(pivot)
+
+    direction = np.asarray(axis_direction, dtype=float)
+    direction = direction / np.linalg.norm(direction)
+
+    # Orient the empty so its local X lies along the flexion axis, then keep it in
+    # quaternion mode throughout. Switching an object from quaternion to euler does not
+    # convert the value -- the euler simply reads whatever it held, usually identity --
+    # so orienting by quaternion and then keyframing the euler silently discards the
+    # orientation and the animation does nothing.
+    pivot.rotation_mode = "QUATERNION"
+    base = mathutils.Vector((1.0, 0.0, 0.0)).rotation_difference(
+        mathutils.Vector(tuple(float(c) for c in direction))
+    )
+    pivot.location = _v(axis_point_mm)
+    pivot.rotation_quaternion = base
+    bpy.context.view_layer.update()
+
+    # Parent with the inverse baked in, which is Blender's keep-transform parenting.
+    # Assigning matrix_world afterwards would fight it.
+    parent_inverse = pivot.matrix_world.inverted()
+    for obj in tibial_objects:
+        if obj is None:
+            continue
+        obj.parent = pivot
+        obj.matrix_parent_inverse = parent_inverse
+
+    scene = bpy.context.scene
+    scene.frame_start = 1
+    scene.frame_end = frames
+
+    for frame, fraction in ((1, 0.0), (frames // 2, 1.0), (frames, 0.0)):
+        angle = np.radians(max_flexion_deg * fraction)
+        # Flexion is a turn about the pivot's own local X, so it composes on the right.
+        pivot.rotation_quaternion = (
+            base @ mathutils.Quaternion((1.0, 0.0, 0.0), float(angle))
+        )
+        pivot.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+
+    if pivot.animation_data and pivot.animation_data.action:
+        for curve in pivot.animation_data.action.fcurves:
+            for keyframe in curve.keyframe_points:
+                keyframe.interpolation = "BEZIER"
+
+    scene.frame_set(1)
+    return pivot
 
 
 def _make_plane(name: str, point_mm, normal_mm, *, radius_mm: float):
@@ -287,13 +501,20 @@ def resolve_component_meshes(
     """
     library = Path(library)
     label = sizing.nearest_discrete_size
-    folder = library / label
-    if not folder.is_dir():
+    if not (library / label).is_dir():
         return {}
-
-    discrete_ml = chart.value_at("femur_ML", chart.label_parameter(label))
-    scale = sizing.implant_ml_mm / discrete_ml
     is_left = str(side).lower().startswith("l")
+
+    # The exported folders are not uniformly complete -- L4, for instance, holds the
+    # implants but no cutting blocks. Rather than drop those parts, search outwards from
+    # the nearest size for a folder that does export them, and scale from whichever size
+    # was found. Because the library is one master geometry under a uniform scale, a part
+    # taken from a neighbouring size and rescaled is the same part.
+    order = sorted(
+        (lbl for lbl in chart.labels if (library / lbl).is_dir()),
+        key=lambda lbl: abs(chart.label_parameter(lbl)
+                            - chart.label_parameter(label)),
+    )
 
     # Filenames are matched on content rather than exact spelling, because the exported
     # library is not internally consistent: the M2 folder holds
@@ -303,10 +524,16 @@ def resolve_component_meshes(
     def normalise(name: str) -> str:
         return "".join(c for c in name.lower() if c.isalnum())
 
-    files = [(normalise(p.name), p) for p in folder.glob("*.stl")]
-
-    def find(*, must: tuple[str, ...], side_token: str | None) -> Path | None:
-        matches = [p for key, p in files if all(term in key for term in must)]
+    def find_in(folder_label, *, must, side_token, exclude=()):
+        files = [
+            (normalise(p.name), p)
+            for p in (library / folder_label).glob("*.stl")
+        ]
+        matches = [
+            p for key, p in files
+            if all(term in key for term in must)
+            and not any(term in key for term in exclude)
+        ]
         if side_token:
             sided = [p for p in matches if side_token in normalise(p.name)]
             other = "right" if side_token == "left" else "left"
@@ -321,23 +548,62 @@ def resolve_component_meshes(
             return neutral[0] if neutral else None
         return matches[0] if matches else None
 
+    def find(*, must, side_token, exclude=()):
+        """Search outwards from the requested size until the part turns up."""
+        for folder_label in order:
+            found = find_in(
+                folder_label, must=must, side_token=side_token, exclude=exclude
+            )
+            if found is not None:
+                return found, folder_label
+        return None, None
+
     resolved = {}
-    femoral = find(
-        must=("implant", "femoral"), side_token="left" if is_left else "right"
+
+    # Every part belonging to a bone shares that bone's CAD origin, so they all take the
+    # same pose. That is the library's own guarantee and it is what makes a cutting block
+    # land exactly on its implant.
+    wanted = (
+        ("femoral_component", ("implant", "femoral"), "femoral", True),
+        ("femoral_cutting_block", ("cuttingblock", "femoral"), "femoral", False),
+        ("femoral_cutting_block_shell", ("cuttingblock", "femoral", "shell"),
+         "femoral", False),
+        ("tibial_component", ("tibial", "plate"), "tibial", False),
+        ("tibial_insert", ("tibial", "insert"), "tibial", False),
+        ("tibial_cutting_block", ("cuttingblock", "tibia"), "tibial", False),
+        ("tibial_cutting_block_shell", ("cuttingblock", "tibia", "shell"),
+         "tibial", False),
     )
-    if femoral is not None:
-        resolved["femoral_component"] = {"path": str(femoral), "scale": scale}
+    for name, must, group, sided in wanted:
+        path, found_label = find(
+            must=must,
+            side_token=("left" if is_left else "right") if sided else None,
+            exclude=() if "shell" in name else ("shell",),
+        )
+        if path is not None:
+            source_ml = chart.value_at(
+                "femur_ML", chart.label_parameter(found_label)
+            )
+            resolved[name] = {
+                "path": str(path),
+                "scale": sizing.implant_ml_mm / source_ml,
+                "group": group,
+                "source_size": found_label,
+            }
 
-    tibial = find(must=("tibial", "plate"), side_token=None)
-    if tibial is not None:
-        resolved["tibial_component"] = {"path": str(tibial), "scale": scale}
-
-    # Cutting blocks share their implant's CAD origin, so the same pose seats them.
-    for name, must in (
-        ("femoral_cutting_block", ("cuttingblock", "femoral")),
-        ("tibial_cutting_block", ("cuttingblock", "tibia")),
-    ):
-        block = find(must=must, side_token=None)
-        if block is not None and "shell" not in normalise(block.name):
-            resolved[name] = {"path": str(block), "scale": scale}
+    # The plastic insert is sometimes exported without "tibial" in its name.
+    if "tibial_insert" not in resolved:
+        path, found_label = find(
+            must=("insert",), side_token=None, exclude=("shell",)
+        )
+        if path is not None:
+            source_ml = chart.value_at(
+                "femur_ML", chart.label_parameter(found_label)
+            )
+            resolved["tibial_insert"] = {
+                "path": str(path),
+                "scale": sizing.implant_ml_mm / source_ml,
+                "group": "tibial",
+                "source_size": found_label,
+            }
     return resolved

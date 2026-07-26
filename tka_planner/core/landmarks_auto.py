@@ -87,83 +87,68 @@ def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
 
     landmarks: list[Landmark] = []
 
-    # ---- Stage one: the epicondyles, which establish the femur's own rotation ----
+    # ---- Stage one: find the femur's own mediolateral axis ----------
     #
-    # Order matters here. A femur is rarely aligned with the patient frame -- the leg
-    # sits at whatever rotation the scanner found it in -- so searching for the "most
-    # posterior" point along the world axis finds whichever part of the condyle happens
-    # to face backwards, not the posterior condylar apex. On a real case that error
-    # reached 23 degrees of apparent condylar twist.
+    # Everything below depends on knowing which way the femur faces, and a femur lies at
+    # whatever rotation the scanner found it in. Searching for extremes along the world
+    # axes therefore finds the wrong points.
     #
-    # The epicondylar axis is the one landmark pair recoverable without knowing the
-    # rotation, because it is the widest span of the epicondylar band whichever way the
-    # bone is turned. It therefore goes first and defines the directions used below.
-    band = vertices[(z >= z_min + 0.15 * height) & (z <= z_min + 0.35 * height)]
-    lateral_epicondyle = medial_epicondyle = None
+    # An earlier version took the widest points of the epicondylar band along world X.
+    # On a femur rotated 15 degrees that lands nowhere near the epicondyles -- it picks
+    # whatever part of the condylar circumference happens to be widest in world X -- and
+    # it put the rotational reference 26 degrees out. The posterior condyles are a far
+    # better anchor: they are genuine extremes of the surface, and the posterior
+    # condylar line is the standard surgical rotational reference in any case.
+    lateral_axis, posterior = _converge_posterior_condylar_axis(mesh, side)
 
-    if len(band) >= CONTACT_AVERAGE_N:
-        lateral_epicondyle = extremal_point(
-            band, side.lateral_direction(LPS_PATIENT_LEFT),
-            n_average=CONTACT_AVERAGE_N,
-        )
-        medial_epicondyle = extremal_point(
-            band, side.medial_direction(LPS_PATIENT_LEFT),
-            n_average=CONTACT_AVERAGE_N,
-        )
-        landmarks.append(_estimated(
-            "femur.epicondyle_lateral", lateral_epicondyle,
-            "epicondylar_band.v1", "fair",
-        ))
-        landmarks.append(_estimated(
-            "femur.epicondyle_medial_prominence", medial_epicondyle,
-            "epicondylar_band.v1", "fair",
-        ))
-        # The medial sulcus is deliberately NOT estimated. It is a depression, not a
-        # surface extreme, so an extremal search returns the prominence beside it. An
-        # earlier version emitted the prominence for both, which silently made the
-        # surgical and anatomical axes identical and produced condylar twist angles of
-        # -34 to +10 degrees on the real cohort against a normal range of 0 to 7.
-        #
-        # Leaving it unpicked is the better failure: the frame falls back to the
-        # anatomical axis and records the substitution, and the twist angle reports
-        # itself as not computable rather than as a plausible wrong number. A human
-        # pick is what unlocks it.
-        landmarks.append(Landmark(
-            id="femur.epicondyle_medial_sulcus",
-            status=LandmarkStatus.NOT_PICKED,
-            reason=(
-                "a depression rather than a surface extreme; requires a human pick"
-            ),
-        ))
+    landmarks: list[Landmark] = []
 
-    lateral_axis, posterior = _provisional_directions(
-        lateral_epicondyle, medial_epicondyle, side
-    )
-
-    # ---- Stage two: condyles, searched along the femur's own directions ----
+    # ---- Stage two: condyles, along the femur's own directions ------
     distal = vertices[regional_mask(vertices, LPS_SUPERIOR, fraction=0.20, end="low")]
-    midline = float(np.median(distal @ lateral_axis))
     offsets = distal @ lateral_axis
-    compartments = (
-        ("medial", distal[offsets < midline]),
-        ("lateral", distal[offsets >= midline]),
-    )
+    midline = float(np.median(offsets))
+    lateral_half, medial_half = distal[offsets >= midline], distal[offsets < midline]
     if side is Side.RIGHT:
-        compartments = (("medial", distal[offsets >= midline]),
-                        ("lateral", distal[offsets < midline]))
+        lateral_half, medial_half = medial_half, lateral_half
 
-    for compartment, points in compartments:
+    for compartment, points in (("medial", medial_half), ("lateral", lateral_half)):
         if len(points) < CONTACT_AVERAGE_N:
             continue
         landmarks.append(_estimated(
             f"femur.condyle_distal_{compartment}",
             extremal_point(points, -LPS_SUPERIOR, n_average=CONTACT_AVERAGE_N),
-            "condyle_extreme.v2", "good",
+            "condyle_extreme.v3", "good",
         ))
         landmarks.append(_estimated(
             f"femur.condyle_posterior_{compartment}",
             extremal_point(points, posterior, n_average=CONTACT_AVERAGE_N),
-            "condyle_extreme.v2", "fair",
+            "condyle_extreme.v3", "good",
+        ))
+
+    # ---- Stage three: epicondyles, along the corrected axis ---------
+    band = vertices[(z >= z_min + 0.15 * height) & (z <= z_min + 0.35 * height)]
+    if len(band) >= CONTACT_AVERAGE_N:
+        lateral_direction = (
+            lateral_axis if side is Side.LEFT else -lateral_axis
+        )
+        landmarks.append(_estimated(
+            "femur.epicondyle_lateral",
+            extremal_point(band, lateral_direction, n_average=CONTACT_AVERAGE_N),
+            "epicondylar_band.v2", "fair",
+        ))
+        landmarks.append(_estimated(
+            "femur.epicondyle_medial_prominence",
+            extremal_point(band, -lateral_direction, n_average=CONTACT_AVERAGE_N),
+            "epicondylar_band.v2", "fair",
+        ))
+        # The medial sulcus is a depression, not a surface extreme, so no extremal
+        # search can find it. Left unpicked deliberately: the frame then falls back to
+        # the anatomical epicondylar axis and records the substitution, and the condylar
+        # twist angle reports itself not computable rather than as a wrong number.
+        landmarks.append(Landmark(
+            id="femur.epicondyle_medial_sulcus",
+            status=LandmarkStatus.NOT_PICKED,
+            reason="a depression rather than a surface extreme; requires a human pick",
         ))
 
     # Intercondylar notch: near the midline of the condylar block, the roof of the
@@ -180,28 +165,74 @@ def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
     return landmarks
 
 
-def _provisional_directions(lateral_epicondyle, medial_epicondyle, side: Side):
-    """Derive the femur's own lateral and posterior directions from the epicondyles.
+def _converge_posterior_condylar_axis(
+    mesh: Mesh, side: Side, *, max_rounds: int = 12, tolerance_deg: float = 0.01
+):
+    """Find the femur's mediolateral axis from its posterior condyles, iteratively.
 
-    Falls back to the world axes when the epicondyles could not be found, which keeps
-    the estimator working on a truncated mesh at the cost of the accuracy this two-stage
-    approach exists to recover.
+    Locating the posterior condyles requires knowing which way is posterior, and knowing
+    which way is posterior requires the mediolateral axis -- so the two are solved
+    together. Starting from the world axis, each round splits the condylar block about
+    the current estimate, finds the most posterior point of each half, and takes the line
+    between them as the next estimate. It settles in a handful of rounds.
+
+    Returns ``(lateral_axis, posterior)``, both unit vectors in the transverse plane.
+    ``lateral_axis`` points along the posterior condylar line toward the patient's left,
+    matching the frame convention; the caller flips it per side where a genuinely lateral
+    direction is wanted.
+
+    On the cohort this converges to within a degree of the distal condylar axis, whereas
+    the epicondylar-band search it replaced sat 26 degrees away.
     """
-    if lateral_epicondyle is None or medial_epicondyle is None:
-        return (side.lateral_direction(LPS_PATIENT_LEFT), LPS_POSTERIOR)
+    vertices = mesh.vertices
+    distal = vertices[
+        regional_mask(vertices, LPS_SUPERIOR, fraction=0.20, end="low")
+    ]
 
-    lateral_axis = lateral_epicondyle - medial_epicondyle
-    lateral_axis = lateral_axis / np.linalg.norm(lateral_axis)
+    lateral_axis = LPS_PATIENT_LEFT.astype(float).copy()
+    for _ in range(max_rounds):
+        posterior = np.array([-lateral_axis[1], lateral_axis[0], 0.0])
+        norm = np.linalg.norm(posterior)
+        if norm < 1e-9:
+            break
+        posterior /= norm
+        if float(np.dot(posterior, LPS_POSTERIOR)) < 0:
+            posterior = -posterior
 
-    # Remove any superior tilt so the axis lies in the transverse plane, then build the
-    # matching anteroposterior direction from it.
-    lateral_axis = lateral_axis - np.dot(lateral_axis, LPS_SUPERIOR) * LPS_SUPERIOR
-    lateral_axis = lateral_axis / np.linalg.norm(lateral_axis)
+        offsets = distal @ lateral_axis
+        midline = float(np.median(offsets))
+        one, other = distal[offsets >= midline], distal[offsets < midline]
+        if min(len(one), len(other)) < CONTACT_AVERAGE_N:
+            break
 
-    patient_left = lateral_axis * side.lateral_sign
-    anterior = np.cross(patient_left, LPS_SUPERIOR)
-    anterior = anterior / np.linalg.norm(anterior)
-    return lateral_axis, -anterior
+        updated = (
+            extremal_point(one, posterior, n_average=2 * CONTACT_AVERAGE_N)
+            - extremal_point(other, posterior, n_average=2 * CONTACT_AVERAGE_N)
+        )
+        updated[2] = 0.0
+        norm = np.linalg.norm(updated)
+        if norm < 1e-9:
+            break
+        updated /= norm
+        if float(np.dot(updated, lateral_axis)) < 0:
+            updated = -updated
+
+        shift = np.degrees(np.arccos(
+            np.clip(float(np.dot(updated, lateral_axis)), -1.0, 1.0)
+        ))
+        lateral_axis = updated
+        if shift < tolerance_deg:
+            break
+
+    # Report it pointing patient-left, so the sign convention matches the frame.
+    if float(np.dot(lateral_axis, LPS_PATIENT_LEFT)) < 0:
+        lateral_axis = -lateral_axis
+
+    posterior = np.array([-lateral_axis[1], lateral_axis[0], 0.0])
+    posterior /= np.linalg.norm(posterior)
+    if float(np.dot(posterior, LPS_POSTERIOR)) < 0:
+        posterior = -posterior
+    return lateral_axis, posterior
 
 
 def estimate_tibial_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:

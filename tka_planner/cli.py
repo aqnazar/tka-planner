@@ -140,6 +140,7 @@ def _measure(args: argparse.Namespace) -> int:
         femoral_thickness_mm=sizing.femoral_thickness_mm,
         tibial_resection_mm=args.tibial_resection,
         native_slope_deg=metrics["posterior_slope_medial_deg"].value,
+        femur_mesh=femur, tibia_mesh=tibia,
     )
 
     # -- Report -------------------------------------------------------

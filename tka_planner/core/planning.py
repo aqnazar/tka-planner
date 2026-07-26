@@ -73,6 +73,7 @@ MECHANICAL = AlignmentTarget(
         "hip-knee-ankle axis."
     ),
     tibial_slope_deg=3.0,
+    femoral_rotation_deg=3.0,
 )
 
 KINEMATIC = AlignmentTarget(
@@ -82,6 +83,7 @@ KINEMATIC = AlignmentTarget(
         "restoring the patient's own joint line obliquity."
     ),
     tibial_slope_deg=None,  # reproduce the measured native slope
+    femoral_rotation_deg=3.0,
 )
 
 
@@ -179,6 +181,8 @@ def plan_alignment(
     femoral_thickness_mm: float = 9.0,
     tibial_resection_mm: float = 10.0,
     native_slope_deg: float | None = None,
+    femur_mesh=None,
+    tibia_mesh=None,
 ) -> SurgicalPlan:
     """Compute the correction, the resection planes and the component poses.
 
@@ -278,6 +282,7 @@ def plan_alignment(
         distal_points, femoral_normal,
         seat=distal_points[int(np.argmin(projections))]
         + femoral_thickness_mm * femoral_normal,
+        mesh=femur_mesh,
     )
     femoral_medial, femoral_lateral = _plane_depths(
         landmarks, femoral_point, femoral_normal,
@@ -306,6 +311,7 @@ def plan_alignment(
         plateau_points, tibial_normal,
         seat=plateau_points[int(np.argmax(plateau_projections))]
         - tibial_resection_mm * tibial_normal,
+        mesh=tibia_mesh,
     )
     tibial_medial, tibial_lateral = _plane_depths(
         landmarks, tibial_point, tibial_normal,
@@ -325,13 +331,23 @@ def plan_alignment(
             )
 
     # ---- Component poses --------------------------------------------
+    #
+    # Femoral component rotation is set off the **posterior condylar axis** with a
+    # conventional external rotation, which is how it is set in theatre -- and not off
+    # the frame's epicondylar axis, which serves the coronal construction. The two
+    # differ by the condylar twist angle, so using the frame's would rotate the
+    # component by that much.
+    femoral_anterior = _rotational_reference(
+        landmarks, femoral_frame, femoral_normal, target.femoral_rotation_deg
+    )
     components = {
         "femoral_component": _component_pose(
-            femoral_point, femoral_normal, femoral_frame,
-            convention="femoral", rotation_deg=target.femoral_rotation_deg,
+            femoral_point, femoral_normal, convention="femoral",
+            anterior=femoral_anterior,
         ),
         "tibial_component": _component_pose(
-            tibial_point, tibial_normal, tibial_frame, convention="tibial",
+            tibial_point, tibial_normal, convention="tibial",
+            anterior=_in_plane_of(tibial_frame.x_anterior, tibial_normal),
         ),
     }
     # A cutting block shares its implant's CAD origin, so it shares its pose exactly.
@@ -385,17 +401,36 @@ def _in_plane_of(vector: np.ndarray, normal: np.ndarray) -> np.ndarray:
 
 
 def _plane_origin(
-    points: np.ndarray, normal: np.ndarray, *, seat: np.ndarray
+    points: np.ndarray, normal: np.ndarray, *, seat: np.ndarray, mesh=None
 ) -> np.ndarray:
     """Centre the cut plane on the anatomy it cuts, at the seated depth.
 
-    The plane's stored point doubles as the component's origin, so it has to sit at the
-    anatomical centre of the cut rather than wherever the deepest landmark happened to
-    fall -- otherwise the component is placed off to one side of the bone.
+    The plane's stored point doubles as the component's origin, so it must sit at the
+    anatomical centre of the cut surface. Where the bone mesh is available, that centre
+    is taken as the **centroid of the actual cross-section** the plane makes through it,
+    which is what the component seats on.
+
+    Falling back to the midpoint of the two compartment landmarks -- as this did before a
+    mesh could be passed in -- puts the origin wherever those two happen to lie. On the
+    tibia that is roughly a centimetre off in both the mediolateral and anteroposterior
+    directions, because the deepest point of each plateau is neither centred nor
+    symmetric.
     """
     normal = unit(normal)
-    centre = np.asarray(points, dtype=float).mean(axis=0)
-    return centre + np.dot(np.asarray(seat, dtype=float) - centre, normal) * normal
+    seat = np.asarray(seat, dtype=float)
+
+    centre = None
+    if mesh is not None:
+        offsets = (mesh.vertices - seat) @ normal
+        for half_width in (1.5, 3.0, 6.0):
+            on_plane = np.abs(offsets) <= half_width
+            if int(on_plane.sum()) >= 30:
+                centre = mesh.vertices[on_plane].mean(axis=0)
+                break
+    if centre is None:
+        centre = np.asarray(points, dtype=float).mean(axis=0)
+
+    return centre + np.dot(seat - centre, normal) * normal
 
 
 def _tilt_about(
@@ -434,13 +469,70 @@ def _tilt_about(
     return max(candidates, key=lambda v: float(np.dot(v, aim)))
 
 
+def _rotational_reference(
+    landmarks: LandmarkSet,
+    frame: AnatomicalFrame,
+    normal: np.ndarray,
+    external_rotation_deg: float,
+) -> np.ndarray:
+    """Anterior direction for the femoral component, from the posterior condylar axis.
+
+    Femoral rotation is set in theatre off the posterior condylar line with a
+    conventional external rotation of about three degrees, and that is what is used
+    here. The frame's epicondylar axis is a different reference serving the coronal
+    construction; the two differ by the condylar twist angle, so borrowing the frame's
+    would rotate the component by that much.
+
+    External rotation carries the lateral side of the component anteriorly. The sense is
+    resolved by testing against the frame's own lateral and anterior directions, so it
+    is right on both knees with no conditional.
+
+    Falls back to the frame's anterior axis when the posterior condyles are unavailable.
+    """
+    required = ("femur.condyle_posterior_medial", "femur.condyle_posterior_lateral")
+    if not landmarks.available(*required):
+        return _in_plane_of(frame.x_anterior, normal)
+
+    medial, lateral = landmarks.require(*required)
+    condylar_line = lateral - medial
+    if float(np.dot(condylar_line, frame.lateral)) < 0:
+        condylar_line = -condylar_line
+    condylar_line = _in_plane_of(condylar_line, normal)
+
+    # Anterior is a quarter turn from the condylar line; pick the turn that actually
+    # points forwards.
+    z_axis = unit(normal)
+    candidates = (np.cross(condylar_line, z_axis), np.cross(z_axis, condylar_line))
+    anterior = max(candidates, key=lambda v: float(np.dot(v, frame.x_anterior)))
+    anterior = unit(anterior)
+
+    if abs(external_rotation_deg) > 1e-9:
+        angle = np.radians(abs(external_rotation_deg))
+        turns = [
+            unit(anterior * np.cos(t) + np.cross(z_axis, anterior) * np.sin(t))
+            for t in (angle, -angle)
+        ]
+        # Which way is "external" is settled by the epicondylar axis rather than by
+        # geometric reasoning about where the lateral side goes. The clinical rule means
+        # something specific: three degrees of external rotation from the posterior
+        # condylar line is a stand-in for the surgical epicondylar axis, which sits
+        # externally rotated relative to it by the condylar twist angle. So the correct
+        # turn is simply the one heading toward the epicondylar reference. Deriving the
+        # sense geometrically instead sent it the other way, leaving the component about
+        # six degrees short.
+        toward = _in_plane_of(frame.x_anterior, normal)
+        anterior = max(turns, key=lambda v: float(np.dot(v, toward)))
+        if external_rotation_deg < 0:
+            anterior = min(turns, key=lambda v: float(np.dot(v, toward)))
+    return anterior
+
+
 def _component_pose(
     point: np.ndarray,
     normal: np.ndarray,
-    frame: AnatomicalFrame,
     *,
     convention: str,
-    rotation_deg: float = 0.0,
+    anterior: np.ndarray,
 ) -> np.ndarray:
     """A 4x4 pose placing a component's own CAD axes onto the cut.
 
@@ -458,12 +550,8 @@ def _component_pose(
     its implant, given the same pose, coincide by construction.
     """
     z_axis = unit(normal)
-    anterior = unit(frame.x_anterior - np.dot(frame.x_anterior, z_axis) * z_axis)
-    if abs(rotation_deg) > 1e-9:
-        angle = np.radians(rotation_deg)
-        anterior = unit(
-            anterior * np.cos(angle) + np.cross(z_axis, anterior) * np.sin(angle)
-        )
+    anterior = unit(np.asarray(anterior, dtype=float)
+                    - np.dot(anterior, z_axis) * z_axis)
     patient_left = np.cross(z_axis, anterior)
 
     if convention == "femoral":
