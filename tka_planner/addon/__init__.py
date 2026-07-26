@@ -78,6 +78,15 @@ class TKAPlannerProperties(PropertyGroup):
         description="Depth below the higher (less worn) plateau, in millimetres",
         default=10.0, min=0.0, max=20.0,
     )
+    implant_library: StringProperty(
+        name="Implant library",
+        description=(
+            "Folder of size subfolders (S1..L4) holding the implant STL exports. "
+            "Leave empty to show anatomy and cut planes only"
+        ),
+        subtype="DIR_PATH",
+        default="",
+    )
     show_planes: BoolProperty(name="Cut planes", default=True)
     show_axes: BoolProperty(name="Axes", default=True)
     show_landmarks: BoolProperty(name="Show landmarks", default=False)
@@ -145,7 +154,7 @@ class TKA_OT_plan(Operator):
 
     @staticmethod
     def _run(properties) -> list[str]:
-        from tka_planner.blender.build import build_scene
+        from tka_planner.blender.build import build_scene, resolve_component_meshes
         from tka_planner.core.frames import build_femoral_frame, build_tibial_frame
         from tka_planner.core.landmarks_auto import estimate_landmarks
         from tka_planner.core.measure import measure_femoral_ml, measure_tibial_plateau
@@ -193,8 +202,16 @@ class TKA_OT_plan(Operator):
             native_slope_deg=metrics["posterior_slope_medial_deg"].value,
         )
 
+        components = {}
+        library = Path(bpy.path.abspath(properties.implant_library or ""))
+        if library.is_dir():
+            components = resolve_component_meshes(
+                library, chart=chart, sizing=sizing, side=properties.side
+            )
+
         build_scene(
             femur_path=femur_path, tibia_path=tibia_path,
+            components=components,
             plan=plan, femoral_frame=femoral_frame, tibial_frame=tibial_frame,
             landmarks=landmarks,
             show_planes=properties.show_planes,
@@ -226,6 +243,7 @@ class TKA_OT_plan(Operator):
             f"Size parameter|{sizing.size_parameter:.2f}",
             f"Implant width|{sizing.implant_ml_mm:.1f} mm",
             f"Nearest size|{discrete.nearest_discrete_size}",
+            f"Implants shown|{len(components)}",
             "",
             "HEAD|Alignment",
         ]
@@ -289,6 +307,8 @@ class TKA_PT_panel(Panel):
         layout.label(text="Plan", icon="MODIFIER")
         layout.prop(properties, "philosophy", text="")
         layout.prop(properties, "tibial_resection_mm")
+        layout.label(text="Implant library (optional)")
+        layout.prop(properties, "implant_library", text="")
 
         row = layout.row(align=True)
         row.prop(properties, "show_planes", toggle=True)
