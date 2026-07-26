@@ -51,27 +51,31 @@ There are two ways in. The Blender add-on is the one to stand in front of.
 
 ### The planning screen (Blender)
 
-1. Open Blender. **Edit > Preferences > File Paths > Scripts**, point it at this
-   repository, and restart Blender.
-2. **Edit > Preferences > Add-ons**, search "TKA", enable **TKA Planner**.
-3. In the 3D viewport press **N** and open the **TKA** tab.
-4. Set **Patient folder** to a folder holding one knee's segmented bones, choose the
-   side, and press **Plan**.
+Build the add-on package, then install it from disk:
 
-The bones load, the resection planes and mechanical axes appear in the viewport, and
-the correction angle, resection depths and sizing appear in the sidebar beside them.
-Switch between mechanical and kinematic alignment and press Plan again to see the cuts
-move.
+```bash
+python build_addon.py          # writes tka_planner.zip
+```
+
+In Blender: **Edit > Preferences > Add-ons**, open the dropdown at the top right,
+choose **Install from Disk...**, select `tka_planner.zip`, and tick **TKA Planner**.
+
+Adding the repository to Blender's script paths does *not* work. Blender scans a script
+path for an `addons` subdirectory and expects a module or package whose `__init__`
+declares `bl_info`; a repository checkout is neither shape, so nothing appears in the
+list however often it is refreshed.
+
+Then press **N** in the 3D viewport and open the **TKA** tab. Set the patient folder,
+pick the side, optionally point at the implant library, and press **Plan**.
+
+The bones load, the cut planes and mechanical axes appear, the implants and cutting
+blocks seat on the cuts, and the correction angle, resection depths and sizing appear in
+the sidebar. Switch between mechanical and kinematic and press Plan again to see the
+cuts change.
 
 The folder is expected to contain `FD1Left.stl` and `TD1Left.stl` (or the Right
-equivalents). Files named for the bone — anything containing "femur" and "tibia" — also
-work, so a folder exported straight out of 3D Slicer can be used as-is.
-
-If Blender's Python lacks numpy, install it once:
-
-```
-"C:\Program Files\Blender Foundation\Blender 4.4\4.4\python\bin\python.exe" -m pip install numpy
-```
+equivalents). Files named for the bone also work, so a folder exported straight out of
+3D Slicer can be used as-is.
 
 ### The command line
 

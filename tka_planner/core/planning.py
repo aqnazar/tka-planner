@@ -42,6 +42,7 @@ import numpy as np
 from .frames import AnatomicalFrame
 from .geometry import angle_between, unit
 from .landmarks import LandmarkSet
+from .sides import LPS_ANTERIOR
 from .provenance import Quality
 
 __all__ = [
@@ -60,7 +61,7 @@ class AlignmentTarget:
 
     philosophy: str
     description: str
-    femoral_slope_deg: float = 3.0      # flexion of the femoral component
+    femoral_flexion_deg: float = 0.0    # sagittal flexion of the femoral component
     tibial_slope_deg: float | None = None  # None means match the native slope
     femoral_rotation_deg: float = 0.0   # external rotation from the frame reference
 
@@ -181,41 +182,102 @@ def plan_alignment(
 ) -> SurgicalPlan:
     """Compute the correction, the resection planes and the component poses.
 
-    ``femoral_thickness_mm`` is the distal thickness of the femoral component, which is
-    a property of the implant and comes from the size chart -- not a surgical choice.
-    ``tibial_resection_mm`` is measured from the *higher* (less worn) plateau, which is
-    the usual reference because the lower one has lost bone to disease.
+    Both cuts are built on a **single coronal reference**, and this is deliberate.
+
+    In mechanical alignment the femoral and tibial mechanical axes are collinear once the
+    limb is corrected, so both components are perpendicular to the same line and the two
+    cuts necessarily share a mediolateral slope. Deriving each cut from its own
+    independently estimated axis breaks that: on a real case here the femoral axis leaned
+    1.0 degrees in the coronal plane and the tibial axis 5.4 degrees, a 4.4 degree
+    disagreement that is estimation error from short canal segments rather than anatomy.
+    Left uncorrected it tilts the two cuts against each other, and the components then
+    have to articulate across that error.
+
+    So the femoral mechanical axis supplies the coronal reference for both, and the cuts
+    differ only in the sagittal plane -- femoral flexion and tibial posterior slope. The
+    sagittal angles are *set from the target* rather than inherited from the axis, for
+    the same reason: component flexion and tibial slope are surgical parameters, not
+    properties of a diaphyseal fit that happens to lean forward because the leg lay at an
+    angle in the scanner.
+
+    ``femoral_thickness_mm`` is the distal thickness of the femoral component, a property
+    of the implant taken from the size chart. ``tibial_resection_mm`` is measured from the
+    *higher* (less worn) plateau, since the other has lost bone to disease.
     """
     warnings: list[str] = []
 
-    # ---- The distal femoral valgus cut angle -------------------------
     valgus_deg, valgus_source, valgus_quality = _valgus_cut_angle(
         landmarks, femoral_frame
     )
 
-    # ---- Femoral distal resection -----------------------------------
+    # ---- The shared coronal reference --------------------------------
+    limb_axis = unit(femoral_frame.z_proximal)
+    coronal_disagreement = float(np.degrees(angle_between(
+        _in_plane_of(limb_axis, femoral_frame.x_anterior),
+        _in_plane_of(tibial_frame.z_proximal, femoral_frame.x_anterior),
+    )))
+    if coronal_disagreement > 3.0:
+        warnings.append(
+            f"The independently estimated femoral and tibial mechanical axes disagree "
+            f"by {coronal_disagreement:.1f} degrees in the coronal plane. The femoral "
+            f"axis is used for both cuts so they share a mediolateral slope; the "
+            f"disagreement is most likely error in the diaphyseal fits."
+        )
+
+    # ---- The shared cut basis ----------------------------------------
+    #
+    # Both cuts are built from one reference direction and one hinge, so they differ
+    # only in their anteroposterior angle and share a mediolateral slope exactly. The
+    # components articulate with each other, so a disagreement in mediolateral slope is
+    # not a difference of plan but an error the construct has to absorb.
     if target.philosophy == "kinematic":
-        # Parallel to the native distal condylar surface.
         medial, lateral = landmarks.require(
             "femur.condyle_distal_medial", "femur.condyle_distal_lateral"
         )
         joint_line = unit(lateral - medial)
-        femoral_normal = unit(np.cross(joint_line, femoral_frame.x_anterior))
-        if float(np.dot(femoral_normal, femoral_frame.z_proximal)) < 0:
-            femoral_normal = -femoral_normal
-        femoral_reference = "native distal condylar surface (kinematic)"
+        reference = unit(np.cross(joint_line, femoral_frame.x_anterior))
+        if float(np.dot(reference, limb_axis)) < 0:
+            reference = -reference
+        femoral_reference = "parallel to the native distal condylar surface (kinematic)"
     else:
-        femoral_normal = femoral_frame.z_proximal
+        reference = limb_axis
         femoral_reference = "perpendicular to the femoral mechanical axis"
 
-    # Seat the plane so the deeper compartment gives exactly the component thickness.
+    # Strip the reference's sagittal tilt, measured against the **patient** frame.
+    #
+    # A diaphyseal axis fitted to a supine, slightly flexed leg leans forwards by a few
+    # degrees -- 4.3 on this case -- and that lean says how the leg lay in the scanner,
+    # not what the anatomy is. Component flexion and tibial slope are surgical
+    # parameters, so they are set explicitly below rather than inherited from it.
+    #
+    # The zero has to come from the patient frame rather than the bone frame. A bone
+    # frame's anterior axis is perpendicular to its own proximal axis by construction,
+    # so projecting the axis onto it removes nothing at all. LPS *is* the patient frame,
+    # which is what makes this well defined: +Z superior, -Y anterior.
+    reference = unit(reference - np.dot(reference, LPS_ANTERIOR) * LPS_ANTERIOR)
+
+    # One hinge for both cuts: the mediolateral direction perpendicular to the
+    # reference. Rotating about it sweeps the normal purely anteroposteriorly and leaves
+    # the ratio of the mediolateral to proximal components untouched, so every cut built
+    # on this pair carries an identical mediolateral slope however much its own
+    # anteroposterior angle differs.
+    hinge = unit(np.cross(reference, LPS_ANTERIOR))
+
+    # ---- Femoral distal resection -----------------------------------
+    femoral_normal = _tilt_about(
+        reference, hinge, target.femoral_flexion_deg, posterior=-LPS_ANTERIOR
+    )
+    if abs(target.femoral_flexion_deg) > 1e-9:
+        femoral_reference += f", {target.femoral_flexion_deg:.1f} degrees flexion"
+
     distal_points = np.array(landmarks.require(
         "femur.condyle_distal_medial", "femur.condyle_distal_lateral"
     ))
     projections = distal_points @ femoral_normal
-    femoral_point = (
-        distal_points[int(np.argmin(projections))]
-        + femoral_thickness_mm * femoral_normal
+    femoral_point = _plane_origin(
+        distal_points, femoral_normal,
+        seat=distal_points[int(np.argmin(projections))]
+        + femoral_thickness_mm * femoral_normal,
     )
     femoral_medial, femoral_lateral = _plane_depths(
         landmarks, femoral_point, femoral_normal,
@@ -229,18 +291,21 @@ def plan_alignment(
         if target.tibial_slope_deg is not None
         else (native_slope_deg if native_slope_deg is not None else 3.0)
     )
-    tibial_normal = _apply_posterior_slope(
-        tibial_frame.z_proximal, tibial_frame, slope_deg
+    # Same reference and same hinge as the femur, tilted posteriorly. A posterior slope
+    # drops the back of the cut, which tilts the plane normal posteriorly; an earlier
+    # version tilted it the other way and produced cuts that sloped forwards.
+    tibial_normal = _tilt_about(
+        reference, hinge, slope_deg, posterior=-LPS_ANTERIOR
     )
 
     plateau_points = np.array(landmarks.require(
         "tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"
     ))
     plateau_projections = plateau_points @ tibial_normal
-    # Reference the higher (less worn) plateau.
-    tibial_point = (
-        plateau_points[int(np.argmax(plateau_projections))]
-        - tibial_resection_mm * tibial_normal
+    tibial_point = _plane_origin(
+        plateau_points, tibial_normal,
+        seat=plateau_points[int(np.argmax(plateau_projections))]
+        - tibial_resection_mm * tibial_normal,
     )
     tibial_medial, tibial_lateral = _plane_depths(
         landmarks, tibial_point, tibial_normal,
@@ -261,11 +326,17 @@ def plan_alignment(
 
     # ---- Component poses --------------------------------------------
     components = {
-        "femoral_component": _pose(
-            femoral_point, femoral_normal, femoral_frame, target.femoral_rotation_deg
+        "femoral_component": _component_pose(
+            femoral_point, femoral_normal, femoral_frame,
+            convention="femoral", rotation_deg=target.femoral_rotation_deg,
         ),
-        "tibial_component": _pose(tibial_point, tibial_normal, tibial_frame, 0.0),
+        "tibial_component": _component_pose(
+            tibial_point, tibial_normal, tibial_frame, convention="tibial",
+        ),
     }
+    # A cutting block shares its implant's CAD origin, so it shares its pose exactly.
+    components["femoral_cutting_block"] = components["femoral_component"]
+    components["tibial_cutting_block"] = components["tibial_component"]
 
     return SurgicalPlan(
         philosophy=target.philosophy,
@@ -282,7 +353,8 @@ def plan_alignment(
                 "tibial_proximal", tibial_point, tibial_normal,
                 tibial_medial, tibial_lateral,
                 f"{tibial_resection_mm:.0f} mm below the higher plateau, "
-                f"{slope_deg:.1f} degrees posterior slope",
+                f"{slope_deg:.1f} degrees posterior slope, sharing the femoral "
+                f"coronal reference",
             ),
         },
         components=components,
@@ -291,12 +363,127 @@ def plan_alignment(
             "target": target.description,
             "femoral_component_thickness_mm": femoral_thickness_mm,
             "tibial_resection_reference_mm": tibial_resection_mm,
+            "femoral_flexion_deg": target.femoral_flexion_deg,
+            "coronal_axis_disagreement_deg": round(coronal_disagreement, 2),
+            "cut_ml_slope_shared": True,
+            "reference_sagittal_tilt_removed": True,
+            "cut_angle_between_deg": round(float(np.degrees(
+                angle_between(femoral_normal, tibial_normal)
+            )), 2),
             "femoral_resection_asymmetry_mm": round(
                 abs(femoral_medial - femoral_lateral), 2),
             "tibial_resection_asymmetry_mm": round(
                 abs(tibial_medial - tibial_lateral), 2),
         },
     )
+
+
+def _in_plane_of(vector: np.ndarray, normal: np.ndarray) -> np.ndarray:
+    """The part of ``vector`` lying in the plane whose normal is ``normal``."""
+    normal = unit(normal)
+    return unit(np.asarray(vector, dtype=float) - np.dot(vector, normal) * normal)
+
+
+def _plane_origin(
+    points: np.ndarray, normal: np.ndarray, *, seat: np.ndarray
+) -> np.ndarray:
+    """Centre the cut plane on the anatomy it cuts, at the seated depth.
+
+    The plane's stored point doubles as the component's origin, so it has to sit at the
+    anatomical centre of the cut rather than wherever the deepest landmark happened to
+    fall -- otherwise the component is placed off to one side of the bone.
+    """
+    normal = unit(normal)
+    centre = np.asarray(points, dtype=float).mean(axis=0)
+    return centre + np.dot(np.asarray(seat, dtype=float) - centre, normal) * normal
+
+
+def _tilt_about(
+    axis: np.ndarray,
+    hinge: np.ndarray,
+    angle_deg: float,
+    *,
+    posterior: np.ndarray,
+) -> np.ndarray:
+    """Rotate a cut normal about a supplied hinge, positive meaning posterior slope.
+
+    The hinge is passed in rather than taken from a frame so that several cuts can share
+    one, which is what guarantees they end up with identical mediolateral slopes.
+
+    A positive angle drops the posterior edge of the cut, tilting the plane normal
+    posteriorly. The sense is resolved by testing the result against the posterior
+    direction rather than by a sign convention, so it holds on both knees without a
+    conditional.
+    """
+    axis, hinge = unit(axis), unit(hinge)
+    if abs(angle_deg) < 1e-9:
+        return axis
+
+    def rotate(theta):
+        return unit(
+            axis * np.cos(theta)
+            + np.cross(hinge, axis) * np.sin(theta)
+            + hinge * float(np.dot(hinge, axis)) * (1.0 - np.cos(theta))
+        )
+
+    angle = np.radians(abs(angle_deg))
+    candidates = (rotate(angle), rotate(-angle))
+    aim = np.asarray(posterior, dtype=float)
+    if angle_deg < 0:
+        aim = -aim
+    return max(candidates, key=lambda v: float(np.dot(v, aim)))
+
+
+def _component_pose(
+    point: np.ndarray,
+    normal: np.ndarray,
+    frame: AnatomicalFrame,
+    *,
+    convention: str,
+    rotation_deg: float = 0.0,
+) -> np.ndarray:
+    """A 4x4 pose placing a component's own CAD axes onto the cut.
+
+    The implant library uses two axis conventions, a quarter turn apart::
+
+        femoral parts   local +X anterior, +Y patient-left, +Z proximal
+        tibial parts    local +X patient-left, +Y posterior, +Z proximal
+
+    Both are right-handed. Mapping each explicitly is what puts a component the right way
+    round; assuming a single convention for the whole library leaves the tibial parts
+    rotated ninety degrees.
+
+    The translation places the component's **native CAD origin** on the cut. Every part
+    belonging to a bone shares that origin, which is precisely why a cutting block and
+    its implant, given the same pose, coincide by construction.
+    """
+    z_axis = unit(normal)
+    anterior = unit(frame.x_anterior - np.dot(frame.x_anterior, z_axis) * z_axis)
+    if abs(rotation_deg) > 1e-9:
+        angle = np.radians(rotation_deg)
+        anterior = unit(
+            anterior * np.cos(angle) + np.cross(z_axis, anterior) * np.sin(angle)
+        )
+    patient_left = np.cross(z_axis, anterior)
+
+    if convention == "femoral":
+        columns = (anterior, patient_left, z_axis)
+    elif convention == "tibial":
+        columns = (patient_left, -anterior, z_axis)
+    else:
+        raise ValueError(f"Unknown component convention {convention!r}.")
+
+    matrix = np.eye(4)
+    for index, column in enumerate(columns):
+        matrix[:3, index] = column
+    matrix[:3, 3] = np.asarray(point, dtype=float)
+
+    if not np.isclose(float(np.linalg.det(matrix[:3, :3])), 1.0, atol=1e-6):
+        raise ValueError(
+            f"The {convention} component pose is not right-handed; the axis mapping is "
+            f"wrong and the part would be mirrored."
+        )
+    return matrix
 
 
 def _valgus_cut_angle(
@@ -358,30 +545,3 @@ def _apply_posterior_slope(
             + hinge * float(np.dot(hinge, axis)) * (1.0 - np.cos(-angle))
         )
     return unit(rotated)
-
-
-def _pose(
-    point: np.ndarray,
-    normal: np.ndarray,
-    frame: AnatomicalFrame,
-    rotation_deg: float,
-) -> np.ndarray:
-    """A 4x4 component pose: seated on the cut plane, oriented by the frame."""
-    z_axis = unit(normal)
-    x_axis = frame.x_anterior - np.dot(frame.x_anterior, z_axis) * z_axis
-    x_axis = unit(x_axis)
-
-    if abs(rotation_deg) > 1e-9:
-        angle = np.radians(rotation_deg)
-        x_axis = unit(
-            x_axis * np.cos(angle) + np.cross(z_axis, x_axis) * np.sin(angle)
-        )
-
-    y_axis = np.cross(z_axis, x_axis)
-
-    matrix = np.eye(4)
-    matrix[:3, 0] = x_axis
-    matrix[:3, 1] = y_axis
-    matrix[:3, 2] = z_axis
-    matrix[:3, 3] = point
-    return matrix

@@ -34,6 +34,14 @@ RESECTED_COLOUR = (0.92, 0.72, 0.62)
 IMPLANT_COLOUR = (0.62, 0.66, 0.72)
 PLANE_COLOUR = (0.20, 0.60, 0.95)
 AXIS_COLOUR = (0.95, 0.35, 0.25)
+BLOCK_COLOUR = (0.35, 0.72, 0.45)
+# Landmark colour encodes provenance, so a glance says which were picked and which
+# the estimator guessed.
+LANDMARK_COLOURS = {
+    "present": (0.20, 0.80, 0.35),
+    "estimated": (0.95, 0.75, 0.15),
+    "derived": (0.35, 0.65, 0.95),
+}
 
 
 class SceneResult:
@@ -117,18 +125,16 @@ def build_scene(
             spec["path"], component_name,
             pose=pose,
             scale_factor=spec.get("scale", 1.0),
-            seat=spec.get("seat", "top"),
         )
-        set_material(obj, "Implant", IMPLANT_COLOUR)
+        colour = BLOCK_COLOUR if "cutting_block" in component_name else IMPLANT_COLOUR
+        set_material(obj, "Block" if "cutting_block" in component_name else "Implant",
+                     colour)
         move_to_collection(obj, implants)
         result.objects[component_name] = obj
 
     if show_landmarks and landmarks is not None:
-        cloud = _make_landmark_cloud(landmarks)
-        if cloud is not None:
-            set_material(cloud, "Landmark", (0.95, 0.80, 0.20))
-            move_to_collection(cloud, planning)
-            result.objects["landmarks"] = cloud
+        marks = ensure_collection("Landmarks")
+        result.objects["landmarks"] = _make_landmarks(landmarks, marks)
 
     result.collections = {"bones": bones, "planning": planning}
     result.notes.append(
@@ -145,7 +151,6 @@ def add_component(
     *,
     pose,
     scale_factor: float = 1.0,
-    seat: str = "top",
 ):
     """Load an implant component, scale it parametrically, and seat it on a cut plane.
 
@@ -154,45 +159,30 @@ def add_component(
     same aspect ratio to four decimal places), so any size between or beyond the twelve
     published ones is that master at the appropriate factor.
 
-    Seating is done from the component's bounding box rather than its CAD origin.
-    ``seat="top"`` puts the highest face on the plane, which is right for a femoral
-    component whose mating surface meets the distal cut; ``seat="bottom"`` puts the
-    lowest face on it, which is right for a tibial tray sitting on the plateau cut.
+    Placement uses the component's **native CAD origin**, untouched. The library is
+    built so that every part belonging to a bone shares one origin sitting on the cut
+    surface, which is what makes a cutting block and its implant coincide exactly when
+    given the same pose.
 
-    .. note::
-
-       This is a visual seating, accurate to the bounding box. Placing components by
-       their shared CAD origin -- which the exported library does provide -- would be
-       exact, and is the right next step once that origin convention is confirmed
-       against the CAD model.
+    An earlier version re-originned each mesh to its bounding box instead, seating the
+    top or bottom face on the plane. That is wrong for these parts and badly so: a
+    femoral component wraps the distal femur, so its highest points are the anterior
+    flange and the posterior condyles while its mating surface sits in between. Seating
+    by bounding box put the femoral component 42 mm below its cut and 32 mm off to the
+    side, and the tibial tray 40 mm above its own.
     """
     import mathutils
 
     obj = import_stl(path, name)
-    obj.scale = (scale_factor, scale_factor, scale_factor)
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
-    # Move the seating face to the object's origin, so the pose places it directly.
-    corners = [obj.matrix_world @ mathutils.Vector(c) for c in obj.bound_box]
-    xs = [c.x for c in corners]
-    ys = [c.y for c in corners]
-    zs = [c.z for c in corners]
-    seat_z = max(zs) if seat == "top" else min(zs)
-    offset = mathutils.Vector(
-        (-(min(xs) + max(xs)) / 2.0, -(min(ys) + max(ys)) / 2.0, -seat_z)
-    )
-    for vertex in obj.data.vertices:
-        vertex.co += offset
-    obj.data.update()
-
+    pose = np.asarray(pose, dtype=float)
     matrix = mathutils.Matrix(
-        [[float(v) for v in row] for row in np.asarray(pose, dtype=float)]
+        [[float(v) for v in row] for row in pose]
     )
+    # Scale about the CAD origin, so the parametric factor never shifts the seating.
+    matrix = matrix @ mathutils.Matrix.Scale(scale_factor, 4)
     matrix.translation = mathutils.Vector(
-        tuple(float(c) * MM_TO_BU for c in np.asarray(pose)[:3, 3])
+        tuple(float(c) * MM_TO_BU for c in pose[:3, 3])
     )
     obj.matrix_world = matrix
     return obj
@@ -228,9 +218,14 @@ def _make_axis(name: str, origin_mm, direction_mm, *, length_mm: float):
     return axis
 
 
-def _make_landmark_cloud(landmarks, radius_mm: float = 2.5):
-    """One small sphere per usable landmark, joined into a single object."""
-    spheres = []
+def _make_landmarks(landmarks, collection, radius_mm: float = 2.5):
+    """One named sphere per usable landmark.
+
+    Kept as separate objects rather than joined into a single mesh, so each carries its
+    anatomical id in the outliner and can be clicked, hidden and checked individually.
+    Joining them was faster to draw and useless to inspect.
+    """
+    created = []
     for landmark in landmarks:
         if not landmark.is_usable:
             continue
@@ -240,21 +235,12 @@ def _make_landmark_cloud(landmarks, radius_mm: float = 2.5):
         )
         obj = bpy.context.active_object
         obj.name = landmark.id
-        spheres.append(obj)
-
-    if not spheres:
-        return None
-
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in spheres:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = spheres[0]
-    if len(spheres) > 1:
-        bpy.ops.object.join()
-
-    joined = bpy.context.active_object
-    joined.name = "Landmarks"
-    return joined
+        obj.show_name = True
+        set_material(obj, f"Landmark_{landmark.status.value}",
+                     LANDMARK_COLOURS.get(landmark.status.value, (0.9, 0.8, 0.2)))
+        move_to_collection(obj, collection)
+        created.append(obj)
+    return created
 
 
 def _rotation_to(direction):
@@ -340,13 +326,18 @@ def resolve_component_meshes(
         must=("implant", "femoral"), side_token="left" if is_left else "right"
     )
     if femoral is not None:
-        resolved["femoral_component"] = {
-            "path": str(femoral), "scale": scale, "seat": "top",
-        }
+        resolved["femoral_component"] = {"path": str(femoral), "scale": scale}
 
     tibial = find(must=("tibial", "plate"), side_token=None)
     if tibial is not None:
-        resolved["tibial_component"] = {
-            "path": str(tibial), "scale": scale, "seat": "bottom",
-        }
+        resolved["tibial_component"] = {"path": str(tibial), "scale": scale}
+
+    # Cutting blocks share their implant's CAD origin, so the same pose seats them.
+    for name, must in (
+        ("femoral_cutting_block", ("cuttingblock", "femoral")),
+        ("tibial_cutting_block", ("cuttingblock", "tibia")),
+    ):
+        block = find(must=must, side_token=None)
+        if block is not None and "shell" not in normalise(block.name):
+            resolved[name] = {"path": str(block), "scale": scale}
     return resolved

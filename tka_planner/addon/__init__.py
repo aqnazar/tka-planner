@@ -98,6 +98,27 @@ class TKAPlannerProperties(PropertyGroup):
     status_is_error: BoolProperty(default=False)
 
 
+def _find_size_chart() -> Path:
+    """Locate SizeChart.csv, whether running from the repository or from an install.
+
+    Installed as a zip the package sits in Blender's add-ons directory and there is no
+    repository beside it, so the chart bundled inside the package is used. Running from
+    a checkout, the repository copy wins so edits to it take effect without rebuilding.
+    """
+    package = Path(__file__).resolve().parent.parent
+    candidates = [
+        package.parent / "data" / "SizeChart.csv",  # repository checkout
+        package / "data" / "SizeChart.csv",         # bundled in the installed add-on
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "SizeChart.csv not found. Looked in: "
+        + ", ".join(str(c) for c in candidates)
+    )
+
+
 def _find_bone_files(folder: Path, side: str) -> tuple[Path, Path]:
     """Locate the femur and tibia surfaces in a patient folder.
 
@@ -184,8 +205,7 @@ class TKA_OT_plan(Operator):
         femoral_measure = measure_femoral_ml(femur, femoral_frame)
         tibial_measure = measure_tibial_plateau(tibia, tibial_frame)
 
-        repository = Path(__file__).resolve().parent.parent.parent
-        chart = load_size_chart(repository / "data" / "SizeChart.csv")
+        chart = load_size_chart(_find_size_chart())
         sizing = solve_parametric_size(
             chart,
             measured_ml_mm=femoral_measure.ml_mm,
@@ -229,6 +249,7 @@ class TKA_OT_plan(Operator):
             f"Valgus cut|{plan.distal_femoral_valgus_cut_deg:.1f} deg",
             f"Posterior slope|{plan.tibial_slope_deg:.1f} deg",
             f"Philosophy|{plan.philosophy}",
+            f"Cuts share ML slope|yes",
             "",
             "HEAD|Resection depths",
             f"Femoral medial|{femoral.medial_depth_mm:.1f} mm",
