@@ -1,0 +1,15 @@
+# Normalise to LF in the repository and on checkout, so the code reads and hashes
+# identically on every platform.
+* text=auto eol=lf
+
+# The frozen legacy pipeline is exempt from all line-ending translation.
+#
+# Its provenance rests on being byte-identical to the file that produced the first
+# paper's results, and legacy/PROVENANCE.md records its SHA-256. Git's autocrlf would
+# rewrite line endings on checkout and silently change that hash, so the file is marked
+# -text: no conversion, ever, in either direction.
+legacy/TKA_Script_v3.py -text
+
+# Binary fixtures must never be touched.
+*.stl binary
+*.blend binary
