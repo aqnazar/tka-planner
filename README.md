@@ -28,10 +28,28 @@ geometry driven by continuous parameters. Discrete sizes are a legacy convenienc
 a bone that falls between them — or beyond the largest — is not a problem to be clamped.
 
 **The core needs no Blender.** `tka_planner.core` depends only on numpy. Measurement,
-metrics, sizing and reporting all run in plain Python, which means the anatomical maths
-is unit-tested against known-by-construction synthetic geometry, the sensitivity study
-runs thousands of Monte Carlo iterations in minutes, and you can audit the methods
-without installing anything heavy.
+metrics, sizing and alignment planning all run in plain Python, which means the
+anatomical maths is unit-tested against known-by-construction synthetic geometry, the
+sensitivity study runs thousands of Monte Carlo iterations in minutes, and you can audit
+the methods without installing anything heavy. Blender renders decisions already made;
+it does not make any of them.
+
+## What it does
+
+From two segmented bone surfaces, with no manual picking required:
+
+- **Measures** the deformity — mLDFA, aLDFA, MPTA, JLCA, condylar twist, native
+  posterior slope — each with its provenance tier
+- **Sizes** the implant on a continuous parameter, with the tibial dimension taken from
+  the resection cross-section rather than a bounding box
+- **Plans** the correction: distal femoral valgus cut angle, posterior slope, and
+  per-compartment resection depths, under mechanical or kinematic alignment
+- **Places** the implants, cutting blocks, shells and insert, each on its own cut
+- **Cuts** both bones along the planned planes
+- **Animates** flexion, femur fixed, tibia swinging about the transepicondylar axis
+
+Methodology, including what each decision replaced and why, is in
+[docs/METHODS.md](docs/METHODS.md).
 
 ## Install
 
@@ -92,9 +110,10 @@ instead of the automatic estimate.
 
 ## Inputs
 
-Bone surfaces as STL, typically segmented in [3D Slicer](https://www.slicer.org/), plus
-a landmark file. Landmarks come from Slicer markups (`.fcsv` or `.mrk.json`) or from the
-included Blender picking add-on.
+Bone surfaces as STL, typically segmented in [3D Slicer](https://www.slicer.org/).
+Landmarks are optional: without them the pipeline estimates a full set automatically and
+marks every point `estimated`, awaiting review. Reviewed landmarks can be supplied as
+Slicer markups (`.fcsv` or `.mrk.json`) or in the native landmark format.
 
 Meshes and landmarks must declare their coordinate system. Slicer writes **LPS** by
 default (+X patient-left, +Y posterior, +Z superior) and the pipeline works in that
@@ -106,11 +125,12 @@ points do not land on the mesh is rejected rather than silently mis-placed.
 
 | Path | Contents |
 |---|---|
-| `tka_planner/core/` | numpy only, no `bpy`. Frames, metrics, sizing, plan schema. |
-| `tka_planner/blender/` | Thin Blender adapter. The only place millimetres become metres. |
-| `tka_planner/addon/` | Landmark picking add-on. |
+| `tka_planner/core/` | numpy only, no `bpy`. Frames, metrics, measurement, sizing, alignment planning. |
+| `tka_planner/blender/` | Blender adapter and scene builder. The only place millimetres become metres. |
+| `tka_planner/addon/` | The planning screen: patient in, models and numbers out. |
 | `tka_planner/report/` | Single-file HTML reports, no external assets. |
 | `tka_planner/validation/` | Cohort runner and landmark sensitivity analysis. |
+| `docs/METHODS.md` | Every methodological decision, why it was made, and what it replaced. |
 | `legacy/` | The frozen script behind the first paper. Do not modify — see its `PROVENANCE.md`. |
 | `tests/` | Runs without Blender. |
 
