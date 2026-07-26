@@ -1,0 +1,25 @@
+tka-planner
+Copyright 2026 Satbayev University
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+===============================================================================
+NOT A MEDICAL DEVICE
+===============================================================================
+
+This software is a research and demonstration artifact. It is NOT a medical
+device, has NOT been validated for clinical use, and carries NO regulatory
+clearance or approval of any kind in any jurisdiction.
+
+It must not be used to plan, guide, inform, or document the care of any
+patient. Output of this software — including measurements, implant sizes,
+resection depths, component positions, cutting guides, and reports — is not
+suitable for clinical decision-making and must not be represented as such.
+
+The software is published so that the methods behind computer-assisted
+arthroplasty planning can be inspected, reproduced, criticised, and built
+upon. That purpose is served by openness, not by clinical deployment.
+
+Every plan file produced by this software carries an `intended_use` field
+recording this restriction, and every generated report carries it in the
+header. Do not remove them.

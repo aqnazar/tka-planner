@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tka-planner"
+version = "0.1.0"
+description = "Open, reproducible pre-operative planning pipeline for total knee arthroplasty (research use only)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+tka = "tka_planner.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tka_planner*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Blender-dependent tests are opt-in: they need `blender --background`.
+addopts = "-m 'not blender'"
+markers = [
+    "blender: requires a Blender installation (excluded from the default run)",
+]

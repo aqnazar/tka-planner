@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Blender artifacts
+*.blend1
+*.blend2
+
+# Patient identity must never enter the repository.
+# The case_id -> real identity mapping stays local, always.
+case_map.json
+case_map.csv
+private/
+
+# Full-resolution patient meshes are too large to version and are not
+# needed for tests; only coarse fixtures and landmark files are committed.
+data/cases/**/*.stl
+!tests/fixtures/**/*.stl
+
+# Pipeline outputs
+Output/
+*.log
