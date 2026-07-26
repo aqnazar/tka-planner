@@ -58,6 +58,7 @@ from .geometry import (
 )
 from .landmarks import LandmarkSet
 from .provenance import (
+    ATEA_SUBSTITUTED_FOR_STEA,
     POPULATION_FEMORAL_AMA,
     TIBIAL_AMA_NEGLIGIBLE,
     Assumption,
@@ -226,20 +227,40 @@ def build_femoral_frame(
         landmarks, knee_centre, side, ama_assumption, attempts
     )
 
-    # Rotational reference: the surgical transepicondylar axis, brought into the
-    # transverse plane.
+    # Rotational reference, with its own ladder: the surgical transepicondylar axis
+    # where the medial sulcus is available, otherwise the anatomical axis.
+    #
+    # The fallback is needed in practice rather than in principle. The sulcus is a
+    # depression, not a surface extreme, so no automatic estimator can find it -- it
+    # requires a human pick. Falling back to the medial prominence keeps the frame
+    # buildable from an automatic pass while recording that component rotation is
+    # consequently off by the 1-2 degrees separating the two axes.
     lateral_epicondyle = landmarks.position("femur.epicondyle_lateral")
     medial_sulcus = landmarks.position("femur.epicondyle_medial_sulcus")
-    if lateral_epicondyle is None or medial_sulcus is None:
+    medial_prominence = landmarks.position("femur.epicondyle_medial_prominence")
+
+    if lateral_epicondyle is None or (
+        medial_sulcus is None and medial_prominence is None
+    ):
         raise FrameConstructionError(
             "femoral",
             attempts + [
-                "rotational reference requires femur.epicondyle_lateral and "
-                "femur.epicondyle_medial_sulcus (surgical TEA)"
+                "rotational reference requires femur.epicondyle_lateral together with "
+                "either femur.epicondyle_medial_sulcus (surgical TEA, preferred) or "
+                "femur.epicondyle_medial_prominence (anatomical TEA)"
             ],
         )
 
-    stea_raw = lateral_epicondyle - medial_sulcus
+    if medial_sulcus is not None:
+        medial_reference = medial_sulcus
+        diagnostics["rotational_reference"] = "stea"
+    else:
+        medial_reference = medial_prominence
+        diagnostics["rotational_reference"] = "atea"
+        quality = quality.combine(Quality.ESTIMATED)
+        assumptions = assumptions + (ATEA_SUBSTITUTED_FOR_STEA,)
+
+    stea_raw = lateral_epicondyle - medial_reference
     # Point it patient-left, so the frame's y axis always means the same direction
     # regardless of which end was picked first or which knee this is.
     stea_raw = orient_towards(stea_raw, _patient_left_reference(side, z_proximal))

@@ -277,9 +277,30 @@ class TestDegradation:
         with pytest.raises(FrameConstructionError, match="femur.notch_centre"):
             build_femoral_frame(landmarks)
 
-    def test_missing_epicondyles_names_the_surgical_tea(self):
+    def test_missing_sulcus_falls_back_to_the_anatomical_axis(self):
+        """The sulcus cannot be found automatically, so the frame must survive without it.
+
+        It is a depression rather than a surface extreme. Rather than fail, the frame
+        uses the anatomical transepicondylar axis and records the substitution, so
+        component rotation is known to be off by the 1-2 degrees between the two axes.
+        """
         landmarks = drop(synthetic_knee("left"), "femur.epicondyle_medial_sulcus")
-        with pytest.raises(FrameConstructionError, match="surgical TEA"):
+        frame = build_femoral_frame(landmarks)
+
+        assert frame.diagnostics["rotational_reference"] == "atea"
+        assert frame.quality is Quality.ESTIMATED
+        assert "atea_substituted_for_stea" in [a.id for a in frame.assumptions]
+
+    def test_the_surgical_axis_is_preferred_when_available(self):
+        frame = build_femoral_frame(synthetic_knee("left"))
+        assert frame.diagnostics["rotational_reference"] == "stea"
+
+    def test_losing_both_medial_epicondylar_landmarks_fails(self):
+        landmarks = drop(
+            synthetic_knee("left"),
+            "femur.epicondyle_medial_sulcus", "femur.epicondyle_medial_prominence",
+        )
+        with pytest.raises(FrameConstructionError, match="rotational reference"):
             build_femoral_frame(landmarks)
 
     def test_no_axis_at_all_lists_every_method_tried(self):

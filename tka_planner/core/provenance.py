@@ -40,6 +40,8 @@ __all__ = [
     "Metric",
     "POPULATION_FEMORAL_AMA",
     "TIBIAL_AMA_NEGLIGIBLE",
+    "AUTOMATIC_LANDMARK_ESTIMATE",
+    "ATEA_SUBSTITUTED_FOR_STEA",
 ]
 
 
@@ -118,6 +120,47 @@ POPULATION_FEMORAL_AMA = Assumption(
     ),
     applies_to=("femoral_mechanical_axis", "mldfa_deg", "hka_deviation_deg"),
     reason_required="femoral head outside the scan field of view",
+    patient_specific=False,
+)
+
+AUTOMATIC_LANDMARK_ESTIMATE = Assumption(
+    id="automatic_landmark_estimate",
+    description=(
+        "One or more landmarks feeding this metric were positioned by the automatic "
+        "estimator rather than picked by a human on the anatomy. The value is a "
+        "machine estimate awaiting review."
+    ),
+    value=0.0,
+    unit="",
+    source=(
+        "tka_planner.core.landmarks_auto. Confidence is recorded per landmark; the "
+        "tibial rotational references and the medial epicondylar sulcus are the least "
+        "reliable and should be corrected first."
+    ),
+    applies_to=(),
+    reason_required="landmarks have not been reviewed by a human",
+    patient_specific=False,
+)
+
+ATEA_SUBSTITUTED_FOR_STEA = Assumption(
+    id="atea_substituted_for_stea",
+    description=(
+        "The anatomical transepicondylar axis (lateral prominence to medial "
+        "prominence) was used as the frame's rotational reference in place of the "
+        "surgical axis (lateral prominence to medial sulcus), because the sulcus was "
+        "unavailable."
+    ),
+    value=1.5,
+    unit="deg",
+    source=(
+        "The two axes differ by roughly 1-2 degrees. The medial sulcus is a depression "
+        "rather than a surface extreme, so no automatic estimator can locate it -- it "
+        "requires a human pick. Component rotation planned on the anatomical axis is "
+        "therefore internally rotated by about this much relative to a surgical-axis "
+        "plan."
+    ),
+    applies_to=("femoral_frame_rotation", "condylar_twist_deg"),
+    reason_required="medial epicondylar sulcus not available",
     patient_specific=False,
 )
 

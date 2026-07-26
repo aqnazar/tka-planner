@@ -25,3 +25,8 @@ data/cases/**/*.stl
 # Pipeline outputs
 Output/
 *.log
+
+# CLI output directories
+demo_out/
+cohort_out/
+out/

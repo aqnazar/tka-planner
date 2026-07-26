@@ -26,8 +26,9 @@ import numpy as np
 
 from .frames import AnatomicalFrame
 from .geometry import angle_between, project_out, signed_angle_in_plane, unit
-from .landmarks import LandmarkSet
-from .provenance import Metric, Quality
+from .landmarks import LandmarkSet, LandmarkStatus
+from .provenance import AUTOMATIC_LANDMARK_ESTIMATE, Assumption, Metric, Quality
+
 
 __all__ = [
     "mldfa",
@@ -40,6 +41,48 @@ __all__ = [
     "femoral_mechanical_anatomical_angle",
     "compute_all",
 ]
+
+
+def _landmark_quality(
+    landmarks: LandmarkSet, landmark_ids: tuple[str, ...]
+) -> tuple[Quality, tuple[Assumption, ...]]:
+    """Quality implied by *how the landmarks were obtained*.
+
+    A metric is only as good as its weakest input, and that includes the provenance of
+    the points themselves. A value computed from machine-estimated landmarks is not a
+    measurement however sound the arithmetic, so any metric touching an ``ESTIMATED``
+    landmark is demoted and carries
+    :data:`~tka_planner.core.provenance.AUTOMATIC_LANDMARK_ESTIMATE`.
+
+    Without this the pipeline would label a number ``measured`` when every point behind
+    it had been guessed by a bounding-box heuristic -- exactly the unearned confidence
+    this system exists to avoid.
+    """
+    if any(
+        landmarks.get(landmark_id).status is LandmarkStatus.ESTIMATED
+        for landmark_id in landmark_ids
+    ):
+        return Quality.ESTIMATED, (AUTOMATIC_LANDMARK_ESTIMATE,)
+    return Quality.MEASURED, ()
+
+
+def _combined_quality(
+    landmarks: LandmarkSet,
+    frame: AnatomicalFrame,
+    landmark_ids: tuple[str, ...],
+) -> tuple[Quality, tuple[Assumption, ...]]:
+    """Landmark quality combined with the frame's axis-ladder quality.
+
+    Used by metrics that depend on a mechanical axis. Metrics referencing only local
+    joint geometry -- aLDFA, condylar twist, JLCA -- call :func:`_landmark_quality`
+    instead, because the frame's assumed axis does not enter their arithmetic and
+    inheriting its tier would understate them.
+    """
+    quality, assumptions = _landmark_quality(landmarks, landmark_ids)
+    return (
+        quality.combine(frame.quality),
+        tuple(frame.assumptions) + assumptions,
+    )
 
 
 def _joint_line_direction(
@@ -101,17 +144,18 @@ def mldfa(landmarks: LandmarkSet, frame: AnatomicalFrame) -> Metric:
     )
     axis_proximal = project_out(frame.z_proximal, frame.coronal_normal)
     value = np.degrees(angle_between(axis_proximal, joint_lateral))
+    quality, assumptions = _combined_quality(landmarks, frame, required)
 
     return Metric(
         name="mldfa_deg",
         value=round(float(value), 3),
         unit="deg",
-        quality=frame.quality,
+        quality=quality,
         definition=MLDFA_DEFINITION,
         sign_convention=MLDFA_SIGN,
         method="metrics.mldfa.v1",
         inputs=("frames.femoral.z_proximal",) + required,
-        assumptions=frame.assumptions,
+        assumptions=assumptions,
         reference_range=(85.0, 90.0),
     )
 
@@ -147,13 +191,15 @@ def aldfa(landmarks: LandmarkSet, frame: AnatomicalFrame) -> Metric:
         landmarks, frame, *required, towards_lateral=True
     )
     value = np.degrees(angle_between(anatomical_axis, joint_lateral))
+    # Independent of the frame's axis ladder -- it never touches the femoral head -- so
+    # the frame's assumed axis does not enter, but the landmarks' provenance does.
+    quality, assumptions = _landmark_quality(landmarks, required + canal)
 
     return Metric(
         name="aldfa_deg",
         value=round(float(value), 3),
         unit="deg",
-        # Measured regardless of the frame: it never touches the femoral head.
-        quality=Quality.MEASURED,
+        quality=quality,
         definition=ALDFA_DEFINITION,
         sign_convention=(
             "Normally 79-83 degrees. Relates to mLDFA by the mechanical-anatomical "
@@ -162,6 +208,7 @@ def aldfa(landmarks: LandmarkSet, frame: AnatomicalFrame) -> Metric:
         ),
         method="metrics.aldfa.v1",
         inputs=required + canal,
+        assumptions=assumptions,
         reference_range=(79.0, 83.0),
     )
 
@@ -198,17 +245,18 @@ def mpta(landmarks: LandmarkSet, frame: AnatomicalFrame) -> Metric:
     )
     axis_distal = project_out(frame.distal, frame.coronal_normal)
     value = np.degrees(angle_between(axis_distal, joint_medial))
+    quality, assumptions = _combined_quality(landmarks, frame, required)
 
     return Metric(
         name="mpta_deg",
         value=round(float(value), 3),
         unit="deg",
-        quality=frame.quality,
+        quality=quality,
         definition=MPTA_DEFINITION,
         sign_convention=MPTA_SIGN,
         method="metrics.mpta.v1",
         inputs=("frames.tibial.z_proximal",) + required,
-        assumptions=frame.assumptions,
+        assumptions=assumptions,
         reference_range=(85.0, 90.0),
     )
 
@@ -350,11 +398,15 @@ def jlca(
     )
     value = signed * (1.0 if lateral_reference > 0 else -1.0)
 
+    quality, assumptions = _landmark_quality(
+        landmarks, femoral_required + tibial_required
+    )
+
     return Metric(
         name="jlca_deg",
         value=round(float(value), 3),
         unit="deg",
-        quality=Quality.MEASURED,
+        quality=quality,
         definition=JLCA_DEFINITION,
         sign_convention=(
             "Positive when the joint space opens laterally (apex medial). Typically "
@@ -362,6 +414,7 @@ def jlca(
         ),
         method="metrics.jlca.v1",
         inputs=femoral_required + tibial_required,
+        assumptions=assumptions,
         reference_range=(-2.0, 3.0),
     )
 
@@ -426,12 +479,19 @@ def condylar_twist_angle(
         signed_angle_in_plane(frame.lateral, frame.x_anterior, frame.z_proximal)
     )
     value = signed * float(external_sense)
+    quality, assumptions = _combined_quality(landmarks, frame, required)
+    if not any(a.id == "automatic_landmark_estimate" for a in assumptions):
+        quality, assumptions = Quality.MEASURED, ()
+    else:
+        quality = Quality.ESTIMATED
+        assumptions = tuple(a for a in assumptions
+                            if a.id == "automatic_landmark_estimate")
 
     return Metric(
         name="condylar_twist_deg",
         value=round(float(value), 3),
         unit="deg",
-        quality=Quality.MEASURED,
+        quality=quality,
         definition=TWIST_DEFINITION,
         sign_convention=(
             "Positive when the surgical epicondylar axis is externally rotated "
@@ -439,6 +499,7 @@ def condylar_twist_angle(
         ),
         method="metrics.condylar_twist.v1",
         inputs=required,
+        assumptions=assumptions,
         reference_range=(0.0, 7.0),
     )
 
@@ -483,18 +544,20 @@ def posterior_slope_medial(
         float(np.dot(rim_line, frame.z_proximal)), -1.0, 1.0
     )))
 
+    quality, assumptions = _combined_quality(landmarks, frame, required)
+
     return Metric(
         name="posterior_slope_medial_deg",
         value=round(float(value), 3),
         unit="deg",
-        quality=frame.quality,
+        quality=quality,
         definition=SLOPE_DEFINITION,
         sign_convention=(
             "Positive is posterior-down, the normal direction. Typically 5-10 degrees."
         ),
         method="metrics.posterior_slope.v1",
         inputs=("frames.tibial.z_proximal",) + required,
-        assumptions=frame.assumptions,
+        assumptions=assumptions,
         reference_range=(0.0, 15.0),
         diagnostics={"compartment": "medial",
                      "reference_axis": frame.method},
@@ -535,15 +598,18 @@ def femoral_mechanical_anatomical_angle(
     anatomical = project_out(proximal_canal - distal_canal, frame.coronal_normal)
     mechanical = project_out(frame.z_proximal, frame.coronal_normal)
 
+    quality, assumptions = _landmark_quality(landmarks, ("femur.head_centre",) + canal)
+
     return Metric(
         name="femoral_ama_deg",
         value=round(float(np.degrees(angle_between(anatomical, mechanical))), 3),
         unit="deg",
-        quality=Quality.MEASURED,
+        quality=quality,
         definition=AMA_DEFINITION,
         sign_convention="Unsigned magnitude. Typically 5-7 degrees.",
         method="metrics.femoral_ama.v1",
         inputs=("femur.head_centre", "femur.notch_centre") + canal,
+        assumptions=assumptions,
         reference_range=(3.0, 9.0),
     )
 
