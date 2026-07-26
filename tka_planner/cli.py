@@ -24,7 +24,9 @@ from .core.frames import (
 from .core.landmarks import load_landmarks, write_landmark_set
 from .core.landmarks_auto import estimate_landmarks
 from .core.meshio import read_stl
+from .core.measure import measure_femoral_ml, measure_tibial_plateau
 from .core.metrics import compute_all
+from .core.planning import KINEMATIC, MECHANICAL, plan_alignment
 from .core.qc import (
     QCReport,
     assess_femur_coverage,
@@ -60,48 +62,6 @@ def _jsonable(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
-
-
-def _condylar_dimensions(mesh, frame, fraction: float = 0.20) -> tuple[float, float]:
-    """Mediolateral and anteroposterior width of the condylar block.
-
-    Measured in the *frame's* axes rather than the world's, so a femur lying at an
-    angle in the scanner gives the same answer as one lying straight. The legacy
-    pipeline measured a world-aligned bounding box, which inflates both dimensions by
-    however much the leg happened to be rotated.
-
-    Only the distal fifth of the segment is used, since the chart's ``femur_ML``
-    describes the condylar width and including the shaft would measure something else.
-
-    .. warning::
-
-       This measurement is **not yet validated against the definition the size chart
-       was built on**, and the two appear to differ. On the shorter femurs in this
-       cohort the distal fifth is only about 30 mm of bone, which reaches up into the
-       epicondyles -- and epicondylar width runs several millimetres wider than the
-       condylar width an implant actually spans. Measured this way, five of nine cases
-       exceed the largest chart size, which is very likely an overestimate rather than
-       a property of the population.
-
-       Resolving it needs the chart's own measurement protocol from the CAD model:
-       which landmarks bound ``femur_ML``, and over what region. Until then, treat the
-       absolute widths and the proportion of cases beyond the chart as provisional.
-       The relative comparison between the parametric and discrete solvers is
-       unaffected, since both consume the same measurement.
-    """
-    import numpy as np
-
-    from .core.geometry import regional_mask
-
-    vertices = mesh.vertices
-    distal = vertices[
-        regional_mask(vertices, frame.z_proximal, fraction=fraction, end="low")
-    ]
-    local = frame.to_local(distal)
-    return (
-        float(np.ptp(local[:, 1])),  # along patient-left: mediolateral
-        float(np.ptp(local[:, 0])),  # along anterior: anteroposterior
-    )
 
 
 def _measure(args: argparse.Namespace) -> int:
@@ -161,13 +121,25 @@ def _measure(args: argparse.Namespace) -> int:
 
     # -- Sizing -------------------------------------------------------
     chart = load_size_chart(args.size_chart)
-    measured_ml, measured_ap = _condylar_dimensions(femur, femoral_frame)
+    femoral_measure = measure_femoral_ml(femur, femoral_frame)
+    tibial_measure = measure_tibial_plateau(tibia, tibial_frame)
+    measured_ml, measured_ap = femoral_measure.ml_mm, femoral_measure.ap_mm
 
     sizing = solve_parametric_size(
         chart, measured_ml_mm=measured_ml, measured_ap_mm=measured_ap
     )
     discrete = select_discrete_size(
         chart, measured_ml_mm=measured_ml, measured_ap_mm=measured_ap
+    )
+
+    # -- Alignment ----------------------------------------------------
+    target = MECHANICAL if args.philosophy == "mechanical" else KINEMATIC
+    surgical = plan_alignment(
+        landmarks, femoral_frame, tibial_frame,
+        target=target,
+        femoral_thickness_mm=sizing.femoral_thickness_mm,
+        tibial_resection_mm=args.tibial_resection,
+        native_slope_deg=metrics["posterior_slope_medial_deg"].value,
     )
 
     # -- Report -------------------------------------------------------
@@ -183,6 +155,9 @@ def _measure(args: argparse.Namespace) -> int:
         tibial_frame=tibial_frame,
         sizing=sizing,
         comparison_sizing=discrete,
+        surgical=surgical,
+        measurements={"femur": femoral_measure.to_dict(),
+                      "tibia": tibial_measure.to_dict()},
         coverage={"femur": femur_coverage, "tibia": tibia_coverage},
         qc_findings=qc.to_dict(),
         inputs=[
@@ -211,23 +186,12 @@ def _measure(args: argparse.Namespace) -> int:
         "frames": {"femoral": femoral_frame.to_dict(),
                    "tibial": tibial_frame.to_dict()},
         "metrics": {name: metric.to_dict() for name, metric in metrics.items()},
+        "surgical_plan": surgical.to_dict(),
         "sizing": {
             "parametric": sizing.to_dict(),
             "discrete": discrete.to_dict(),
-            "measurement": {
-                "method": "sizing.measure.frame_aligned_condylar_bbox.v1",
-                "note": (
-                    "Width is measured along the anatomical frame's mediolateral axis "
-                    "over the distal fifth of the femur. The legacy pipeline instead "
-                    "measured a world-aligned bounding box, which differs whenever the "
-                    "leg lies rotated in the scanner; both are reported so the effect "
-                    "of the change is visible per case."
-                ),
-                "frame_aligned_ml_mm": round(measured_ml, 2),
-                "frame_aligned_ap_mm": round(measured_ap, 2),
-                "world_aligned_ml_mm": round(float(femur.extent[0]), 2),
-                "world_aligned_ap_mm": round(float(femur.extent[1]), 2),
-            },
+            "femoral_measurement": femoral_measure.to_dict(),
+            "tibial_measurement": tibial_measure.to_dict(),
         },
         "quality_control": qc.to_dict(),
         "intended_use": "research_and_demonstration_only__not_a_medical_device",
@@ -242,6 +206,19 @@ def _measure(args: argparse.Namespace) -> int:
     for name, metric in metrics.items():
         value = f"{metric.value:8.2f}" if metric.value is not None else "       -"
         print(f"  {name:28s} {value} {metric.unit:4s} {metric.quality.value}")
+    femoral_cut = surgical.resections["femoral_distal"]
+    tibial_cut = surgical.resections["tibial_proximal"]
+    print()
+    print(f"  valgus cut       {surgical.distal_femoral_valgus_cut_deg:5.1f} deg  "
+          f"({surgical.valgus_quality.value})")
+    print(f"  posterior slope  {surgical.tibial_slope_deg:5.1f} deg")
+    print(f"  femoral resect   medial {femoral_cut.medial_depth_mm:5.1f} / "
+          f"lateral {femoral_cut.lateral_depth_mm:5.1f} mm")
+    print(f"  tibial resect    medial {tibial_cut.medial_depth_mm:5.1f} / "
+          f"lateral {tibial_cut.lateral_depth_mm:5.1f} mm")
+    print(f"  plateau AP       {tibial_measure.ap_mm:5.1f} mm  "
+          f"(naive bbox would say "
+          f"{tibial_measure.diagnostics['naive_proximal_bbox_ap_mm']:.1f})")
     print()
     print(f"  sizing: parameter {sizing.size_parameter:.3f}, "
           f"implant ML {sizing.implant_ml_mm:.1f} mm "
@@ -278,6 +255,14 @@ def main(argv: list[str] | None = None) -> int:
         help="landmark file; omit to estimate them automatically",
     )
     measure.add_argument("--size-chart", default=str(DEFAULT_SIZE_CHART))
+    measure.add_argument(
+        "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
+        help="alignment philosophy",
+    )
+    measure.add_argument(
+        "--tibial-resection", type=float, default=10.0,
+        help="tibial resection depth below the higher plateau, in mm",
+    )
     measure.set_defaults(func=_measure)
 
     args = parser.parse_args(argv)

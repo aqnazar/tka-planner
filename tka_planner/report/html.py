@@ -131,6 +131,8 @@ def render_report(
     tibial_frame=None,
     sizing=None,
     comparison_sizing=None,
+    surgical=None,
+    measurements: dict | None = None,
     coverage: dict | None = None,
     qc_findings: list | None = None,
     inputs: list | None = None,
@@ -210,6 +212,42 @@ def render_report(
             )
         parts.append("</tbody></table></div>")
 
+    # -- Surgical plan -------------------------------------------------
+    if surgical is not None:
+        parts.append("<h2>Correction and resections</h2>")
+        parts.append('<dl class="kv">')
+        parts.append(
+            f"<dt>Distal femoral valgus cut</dt>"
+            f"<dd>{surgical.distal_femoral_valgus_cut_deg:.1f}&deg; "
+            f"{_tag(surgical.valgus_quality)}<div class=\"note\">"
+            f"{_escape(surgical.valgus_source)}</div></dd>"
+        )
+        parts.append(
+            f"<dt>Tibial posterior slope</dt>"
+            f"<dd>{surgical.tibial_slope_deg:.1f}&deg;</dd>"
+        )
+        parts.append(
+            f"<dt>Alignment philosophy</dt>"
+            f"<dd>{_escape(surgical.philosophy)}</dd>"
+        )
+        parts.append("</dl>")
+
+        parts.append('<div class="overflow"><table><thead><tr>'
+                     "<th>Resection</th><th>Medial</th><th>Lateral</th>"
+                     "<th>Reference</th></tr></thead><tbody>")
+        for name, resection in surgical.resections.items():
+            parts.append(
+                f"<tr><td><strong>"
+                f"{_escape(name.replace('_', ' '))}</strong></td>"
+                f'<td class="num">{resection.medial_depth_mm:.1f} mm</td>'
+                f'<td class="num">{resection.lateral_depth_mm:.1f} mm</td>'
+                f'<td class="note">{_escape(resection.reference)}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+
+        for warning in surgical.warnings:
+            parts.append(f'<div class="panel flag">{_escape(warning)}</div>')
+
     # -- Sizing --------------------------------------------------------
     if sizing is not None:
         parts.append("<h2>Implant sizing</h2>")
@@ -229,6 +267,28 @@ def render_report(
             parts.append(f"<dt>{_escape(key)}</dt><dd>{_escape(value)}</dd>")
         parts.append("</dl>")
         parts.append(f'<div class="note">{_escape(sizing.rationale)}</div>')
+
+        if measurements:
+            parts.append(
+                '<div class="panel"><h3>How the dimensions were measured</h3>'
+            )
+            for bone, record in measurements.items():
+                parts.append(
+                    f"<div><strong>{_escape(bone)}</strong>: "
+                    f"ML {record['ml_mm']:.1f} mm, AP {record['ap_mm']:.1f} mm "
+                    f"<code>{_escape(record['method'])}</code></div>"
+                )
+            naive = measurements.get("tibia", {}).get(
+                "diagnostics", {}
+            ).get("naive_proximal_bbox_ap_mm")
+            if naive is not None:
+                parts.append(
+                    f'<div class="note">The tibial anteroposterior dimension is taken '
+                    f'from the resection cross-section, not a bounding box. A bounding '
+                    f'box of the proximal tibia would read {naive:.1f} mm here, '
+                    f'inflated by the intercondylar eminence and the tubercle.</div>'
+                )
+            parts.append("</div>")
 
         if comparison_sizing is not None:
             parts.append(

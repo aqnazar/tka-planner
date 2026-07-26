@@ -45,25 +45,46 @@ tests are marked `blender` and excluded by default.
 
 Geometry production additionally needs Blender 4.4+ on the path.
 
-## Use
+## How to operate it
 
-```bash
-# Measure a case and write a plan (no Blender required)
-tka measure --femur FD1Left.stl --tibia TD1Left.stl \
-            --landmarks landmarks.json --out plan.json
+There are two ways in. The Blender add-on is the one to stand in front of.
 
-# Check a plan's integrity and input hashes
-tka validate plan.json
+### The planning screen (Blender)
 
-# Render a self-contained HTML report
-tka report plan.json --out report.html
+1. Open Blender. **Edit > Preferences > File Paths > Scripts**, point it at this
+   repository, and restart Blender.
+2. **Edit > Preferences > Add-ons**, search "TKA", enable **TKA Planner**.
+3. In the 3D viewport press **N** and open the **TKA** tab.
+4. Set **Patient folder** to a folder holding one knee's segmented bones, choose the
+   side, and press **Plan**.
+
+The bones load, the resection planes and mechanical axes appear in the viewport, and
+the correction angle, resection depths and sizing appear in the sidebar beside them.
+Switch between mechanical and kinematic alignment and press Plan again to see the cuts
+move.
+
+The folder is expected to contain `FD1Left.stl` and `TD1Left.stl` (or the Right
+equivalents). Files named for the bone — anything containing "femur" and "tibia" — also
+work, so a folder exported straight out of 3D Slicer can be used as-is.
+
+If Blender's Python lacks numpy, install it once:
+
+```
+"C:\Program Files\Blender Foundation\Blender 4.4\4.4\python\bin\python.exe" -m pip install numpy
 ```
 
-To build the cut geometry and export STLs:
+### The command line
+
+Same computation, no Blender, useful for batches and for the paper's figures:
 
 ```bash
-blender --background --python -m tka_planner.blender.build -- plan.json
+tka measure --femur FD1Left.stl --tibia TD1Left.stl --side left --out plan/
+tka measure ... --philosophy kinematic --tibial-resection 8
 ```
+
+It writes `plan.json` (hash-anchored to the input files), `report.html`
+(self-contained), and `landmarks.json`. Pass `--landmarks` to use reviewed landmarks
+instead of the automatic estimate.
 
 ## Inputs
 
