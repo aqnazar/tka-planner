@@ -34,6 +34,10 @@ __all__ = ["build_scene", "SceneResult", "add_component", "update_scene",
 # matters because the two run in different operator invocations and Blender properties
 # cannot carry Python objects between them.
 INSERT_SPACER = "TibialInsertSpacer"
+# Every boolean the resection uses, by name, so the planning screen can mute them
+# all while a control is moving. The exact solver costs seconds on a real
+# segmentation, which is far too long to sit inside a slider drag.
+RESECTION_MODIFIERS = ("BlockResection", "Resection", "Shell")
 CUT_PLANES = {"femoral_distal": "femoral", "tibial_proximal": "tibial"}
 
 BONE_COLOUR = (0.88, 0.85, 0.78)
@@ -42,6 +46,7 @@ IMPLANT_COLOUR = (0.62, 0.66, 0.72)
 PLANE_COLOUR = (0.20, 0.60, 0.95)
 AXIS_COLOUR = (0.95, 0.35, 0.25)
 BLOCK_COLOUR = (0.35, 0.72, 0.45)
+SHELL_COLOUR = (0.95, 0.62, 0.35)
 # Landmark colour encodes provenance, so a glance says which were picked and which
 # the estimator guessed.
 LANDMARK_COLOURS = {
@@ -78,6 +83,9 @@ def build_scene(
     show_axes: bool = True,
     show_landmarks: bool = False,
     perform_cuts: bool = True,
+    cut_with_blocks: bool = True,
+    build_bone_shells: bool = True,
+    cuts_visible: bool = True,
     live_cuts: bool = True,
     cut_solver: str = "EXACT",
     animate_flexion: bool = True,
@@ -160,6 +168,44 @@ def build_scene(
         marks = ensure_collection("Landmarks")
         result.objects["landmarks"] = _make_landmarks(landmarks, marks)
 
+    # ---- Cutting blocks against the bone ------------------------------
+    #
+    # Done before any plane resection, because the shells must be taken from the intact
+    # bone: a shell intersected with an already-resected femur is missing the surface it
+    # is meant to sit on.
+    shells = ensure_collection("BoneShells")
+    cut_by_block: set = set()
+    if cut_with_blocks:
+        for bone_obj, bone_name, group in (
+            (femur, "Femur", "femoral"),
+            (tibia, "Tibia", "tibial"),
+        ):
+            shell_block = result.objects.get(f"{group}_cutting_block_shell")
+            if shell_block is not None and build_bone_shells:
+                shell = make_bone_shell(
+                    bone_obj, shell_block, f"{bone_name}.Shell", live=live_cuts,
+                    visible=cuts_visible,
+                )
+                set_material(shell, "BoneShell", SHELL_COLOUR, alpha=0.55)
+                move_to_collection(shell, shells)
+                result.objects[f"{group}_bone_shell"] = shell
+            else:
+                result.notes.append(
+                    f"{bone_name}: no cutting block shell in the library, "
+                    f"no bone shell made"
+                )
+
+            block = result.objects.get(f"{group}_cutting_block")
+            if block is not None:
+                cut_with_block(bone_obj, block, live=live_cuts,
+                               visible=cuts_visible)
+                set_material(bone_obj, "BoneCut", RESECTED_COLOUR)
+                cut_by_block.add(bone_name)
+            else:
+                result.notes.append(
+                    f"{bone_name}: no cutting block in the library, not cut by block"
+                )
+
     # ---- The insert -----------------------------------------------------
     #
     # Drawn before the cuts so it joins the tibial group that flexes.
@@ -181,11 +227,17 @@ def build_scene(
             (femur, "femoral_distal", "proximal"),
             (tibia, "tibial_proximal", "distal"),
         ):
+            # A bone already cut by its block is not cut again by the plane box. The two
+            # are alternatives rather than a stack: the box removes everything beyond
+            # the plane, so it would swallow the very surfaces the block was shaping and
+            # leave the block boolean with nothing to do.
+            if bone_obj.name in cut_by_block:
+                continue
             resection = plan.resections[resection_name]
             outcome, cutter = resect_bone(
                 bone_obj, resection.point, resection.normal,
                 keep=keep, name=resection_name,
-                live=live_cuts, solver=cut_solver,
+                live=live_cuts, solver=cut_solver, visible=cuts_visible,
             )
             if cutter is not None:
                 cutters[resection_name] = cutter
@@ -334,12 +386,87 @@ def _flexion_axis(plan, femoral_frame, landmarks):
     return plan.components["femoral_component"][:3, 3], direction
 
 
+# Block and shell booleans are always exact, and the panel's solver choice does not
+# reach them. The fast solver does not merely lose precision on these pairs, it returns
+# confident nonsense: on the real cohort it reduced a 409k-vertex femur to 4k, and
+# returned a "shell" 227 mm across -- larger than the bone it was intersected with --
+# without raising. A cut that looks like a cut and is not is exactly the failure this
+# project keeps running into, so the choice is withheld rather than offered.
+BOOLEAN_SOLVER = "EXACT"
+
+
+def cut_with_block(bone_obj, block_obj, *, live: bool = True,
+                   visible: bool = True):
+    """Resect a bone with the cutting block itself, as the first pipeline did.
+
+    The plane says what the plan specifies; the block is the instrument that would
+    realise it in theatre, and subtracting it shows what the bone would actually look
+    like afterwards -- the slot, the captured surfaces, and whatever the block does not
+    reach. The two are different by design and are meant to agree; where they do not,
+    that is worth seeing.
+
+    Left unapplied by default so the resection follows the block as the plan is adjusted.
+    """
+    modifier = bone_obj.modifiers.new(name="BlockResection", type="BOOLEAN")
+    modifier.operation = "DIFFERENCE"
+    modifier.object = block_obj
+    modifier.solver = BOOLEAN_SOLVER
+    modifier.show_viewport = visible
+    if live:
+        return True
+
+    bpy.context.view_layer.objects.active = bone_obj
+    try:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+        return True
+    except RuntimeError:
+        bone_obj.modifiers.remove(modifier)
+        return False
+
+
+def make_bone_shell(bone_obj, shell_obj, name: str, *, live: bool = True,
+                    visible: bool = True):
+    """The patient-specific shell: the bone intersected with the block's shell.
+
+    A copy of the bone kept only where the shell encloses it, which is the mating
+    surface a printed guide would sit on.
+
+    The copy is taken **before** the bone is resected, and that ordering is the whole
+    trick. A shell cut from an already-resected femur would be missing the condylar
+    surface it is supposed to mate with, so it would fit nothing. Taking it early also
+    means the object copy carries an empty modifier stack, and the intersection is the
+    only boolean on it.
+
+    The copy shares the bone's mesh datablock rather than duplicating two and a half
+    million vertices; a modifier belongs to the object, so the shared mesh is untouched.
+    """
+    shell = bone_obj.copy()
+    shell.name = name
+    shell.parent = None
+    bpy.context.scene.collection.objects.link(shell)
+
+    modifier = shell.modifiers.new(name="Shell", type="BOOLEAN")
+    modifier.operation = "INTERSECT"
+    modifier.object = shell_obj
+    modifier.solver = BOOLEAN_SOLVER
+    modifier.show_viewport = visible
+    if live:
+        return shell
+
+    bpy.context.view_layer.objects.active = shell
+    try:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+    except RuntimeError:
+        shell.modifiers.remove(modifier)
+    return shell
+
+
 CUTTER_SIZE_MM = 400.0
 
 
 def resect_bone(
     obj, point_mm, normal_mm, *, keep: str, name: str,
-    live: bool = False, solver: str = "EXACT",
+    live: bool = False, solver: str = "EXACT", visible: bool = True,
 ):
     """Cut a bone along a resection plane, keeping one side.
 
@@ -381,7 +508,7 @@ def resect_bone(
         return modifier
 
     if live:
-        attach(solver)
+        attach(solver).show_viewport = visible
         cutter.hide_viewport = True
         cutter.hide_render = True
         cutter.display_type = "WIRE"
@@ -845,3 +972,21 @@ def resolve_component_meshes(
                 "source_ml": source_ml,
             }
     return resolved
+
+
+def set_cuts_visible(visible: bool) -> int:
+    """Mute or restore every resection boolean in the scene.
+
+    The exact solver takes seconds on a real segmentation, so it cannot run inside a
+    slider drag. Muting the modifiers leaves the planes, components and blocks moving at
+    full speed -- which is what alignment is actually judged on -- and the cut is
+    recomputed once the controls come to rest.
+    """
+    changed = 0
+    for obj in bpy.data.objects:
+        for modifier in obj.modifiers:
+            if modifier.type == "BOOLEAN" and modifier.name in RESECTION_MODIFIERS:
+                if modifier.show_viewport != visible:
+                    modifier.show_viewport = visible
+                    changed += 1
+    return changed

@@ -96,7 +96,7 @@ blocks seat on the cuts, and the correction angle, resection depths and sizing a
 the sidebar.
 
 Everything below **Plan** in the panel then adjusts that plan in place, and the scene
-follows as the value changes — around 27 updates a second on a full-resolution pair:
+follows as the value changes, at 15 to 26 updates a second on a full-resolution pair:
 
 | Control | What moves |
 |---|---|
@@ -106,10 +106,29 @@ follows as the value changes — around 27 updates a second on a full-resolution
 | Tibial: resection, slope, varus, rotation, AP and ML position | The proximal cut and the tray, insert and blocks |
 | Insert thickness | The insert slab, and the extension gap reported per compartment |
 
-The bone re-cuts along with the planes, because the resection boolean is left live rather
-than applied. On a dense segmentation that can feel heavy during a drag: turn off **Live
-cuts** under Display, or switch the solver to Fast. The per-cut varus controls break the
-mediolateral agreement between the two cuts on purpose, and the plan warns when they do.
+**Resect with** chooses what removes the bone. *Cutting block* subtracts the block
+itself and intersects a copy of each bone with the block's shell, giving the
+patient-specific mating surface — the same pair of booleans the first pipeline used.
+*Cut plane* removes everything beyond the planned plane instead. The two are
+alternatives, never stacked: the plane would swallow the surfaces the block is shaping.
+
+The resection is **muted while a control is moving and recomputed once you stop**, which
+is what keeps a drag responsive. An exact boolean against a real segmentation is not
+cheap, measured on Patient_005 at full resolution:
+
+| | dragging | settling after you stop |
+|---|---|---|
+| Cutting block, with bone shells | 15 fps | 22 s |
+| Cutting block, no shells | 22 fps | 17 s |
+| Cut plane | 24 fps | 6 s |
+| No resection | 26 fps | — |
+
+Turn off **Hide cuts while adjusting** to keep the resection live throughout, and expect
+the panel to stall for that long on every change. Bone shells have their own toggle, as
+they are an export deliverable rather than something alignment is judged on.
+
+The per-cut varus controls break the mediolateral agreement between the two cuts on
+purpose, and the plan warns when they do.
 
 **Reset to plan** returns every manual control to the computed plan. Adjustments are part
 of the plan record, so an adjusted plan still re-derives from its own file.

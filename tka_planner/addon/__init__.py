@@ -19,6 +19,7 @@ disk, then press N in the 3D viewport and open the "TKA" tab.
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -77,6 +78,58 @@ _SESSION: dict = {}
 
 def _session():
     return _SESSION.get("current")
+
+
+# ----------------------------------------------------------------------
+# Deferring the cut
+# ----------------------------------------------------------------------
+#
+# Moving a plane or a component costs milliseconds. Re-cutting the bone does not: an
+# exact boolean against a real segmentation takes about 6 seconds for the plane box and
+# 25 with the cutting blocks and shells, measured on Patient_005. That cannot run inside
+# a slider drag, and the first version of this panel appeared to manage it only because
+# it was timed headless, where Blender never evaluates a modifier nobody is looking at.
+#
+# So the resection booleans are muted the moment a control moves and restored once the
+# controls have been still for a moment. Alignment is judged on the planes, the axes and
+# the components, and all of those keep moving at full speed.
+
+RECUT_IDLE_SECONDS = 0.6
+_LAST_CHANGE = [0.0]
+_TIMER_ARMED = [False]
+
+
+def _restore_cuts_when_idle():
+    """Timer callback: put the cuts back once the controls have settled.
+
+    Returns the seconds to wait before being called again, or ``None`` to stop -- which
+    is Blender's timer protocol, and is what lets one timer debounce a whole drag
+    instead of one being registered per change.
+    """
+    remaining = RECUT_IDLE_SECONDS - (time.monotonic() - _LAST_CHANGE[0])
+    if remaining > 0.0:
+        return remaining
+
+    _TIMER_ARMED[0] = False
+    try:
+        from tka_planner.blender.build import set_cuts_visible
+        set_cuts_visible(True)
+    except Exception:
+        traceback.print_exc()
+    return None
+
+
+def _defer_cuts() -> None:
+    """Hide the cuts now, and arrange for them to come back."""
+    from tka_planner.blender.build import set_cuts_visible
+
+    _LAST_CHANGE[0] = time.monotonic()
+    set_cuts_visible(False)
+    if not _TIMER_ARMED[0]:
+        _TIMER_ARMED[0] = True
+        bpy.app.timers.register(
+            _restore_cuts_when_idle, first_interval=RECUT_IDLE_SECONDS
+        )
 
 
 ADJUSTMENT_PROPERTIES = (
@@ -249,13 +302,16 @@ def _replan(properties, context) -> None:
     try:
         from tka_planner.blender.build import update_scene
 
+        if properties.defer_cuts:
+            _defer_cuts()
+
         plan, sizing = _plan_from(session, properties)
         update_scene(
             plan,
             insert_thickness_mm=(
                 properties.insert_thickness_mm if properties.use_insert else None
             ),
-            live_cuts=properties.live_cuts and properties.perform_cuts,
+            live_cuts=properties.live_cuts and properties.resection_mode != "none",
             implant_ml_mm=sizing.implant_ml_mm,
         )
         properties.result_lines = "\n".join(_report_lines(session, plan, sizing))
@@ -499,9 +555,33 @@ class TKAPlannerProperties(PropertyGroup):
     show_planes: BoolProperty(name="Cut planes", default=True)
     show_axes: BoolProperty(name="Axes", default=True)
     show_landmarks: BoolProperty(name="Show landmarks", default=False)
-    perform_cuts: BoolProperty(
-        name="Perform cuts", default=True,
-        description="Resect the bones along the planned cut planes",
+    resection_mode: EnumProperty(
+        name="Resect with",
+        description="What removes the bone",
+        items=[
+            ("block", "Cutting block",
+             "Subtract the cutting block itself, and intersect a copy of the bone "
+             "with the block's shell. Needs the implant library"),
+            ("plane", "Cut plane",
+             "Remove everything beyond the planned resection plane"),
+            ("none", "Nothing", "Leave both bones whole"),
+        ],
+        default="block",
+    )
+    defer_cuts: BoolProperty(
+        name="Hide cuts while adjusting", default=True,
+        description=(
+            "Mute the resection while a control is moving and recompute it once you "
+            "stop. An exact boolean takes seconds on a dense segmentation, so leaving "
+            "it on during a drag makes the whole panel unresponsive"
+        ),
+    )
+    build_bone_shells: BoolProperty(
+        name="Bone shells", default=True,
+        description=(
+            "Intersect a copy of each bone with its cutting block shell, giving the "
+            "patient-specific mating surface. Roughly triples the cost of re-cutting"
+        ),
     )
     live_cuts: BoolProperty(
         name="Live cuts", default=True,
@@ -562,6 +642,9 @@ class TKA_OT_plan(Operator):
             properties.status = f"{type(error).__name__}: {error}"
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
+
+        if properties.defer_cuts:
+            _defer_cuts()
 
         properties.result_lines = "\n".join(lines)
         properties.has_result = True
@@ -626,7 +709,13 @@ class TKA_OT_plan(Operator):
             show_planes=properties.show_planes,
             show_axes=properties.show_axes,
             show_landmarks=properties.show_landmarks,
-            perform_cuts=properties.perform_cuts,
+            perform_cuts=properties.resection_mode == "plane",
+            cut_with_blocks=properties.resection_mode == "block",
+            build_bone_shells=properties.build_bone_shells,
+            # Built muted when deferring, so pressing Plan returns as soon as the
+            # anatomy is on screen and the resection fills in a moment later,
+            # rather than holding the button for the length of a boolean.
+            cuts_visible=not properties.defer_cuts,
             live_cuts=properties.live_cuts,
             cut_solver=properties.cut_solver,
             animate_flexion=properties.animate_flexion,
@@ -795,13 +884,18 @@ class TKA_PT_panel(Panel):
         row.prop(properties, "show_planes", toggle=True)
         row.prop(properties, "show_axes", toggle=True)
         box.prop(properties, "show_landmarks", toggle=True)
-        row = box.row(align=True)
-        row.prop(properties, "perform_cuts", toggle=True)
-        row.prop(properties, "animate_flexion", toggle=True)
-        if properties.perform_cuts:
+        box.label(text="Resect with")
+        box.prop(properties, "resection_mode", text="")
+        if properties.resection_mode == "block" and not properties.implant_library:
+            box.label(text="Needs the implant library", icon="ERROR")
+        if properties.resection_mode != "none":
             box.prop(properties, "live_cuts", toggle=True)
-            if properties.live_cuts:
+            box.prop(properties, "defer_cuts", toggle=True)
+            if properties.resection_mode == "block":
+                box.prop(properties, "build_bone_shells", toggle=True)
+            if properties.live_cuts and properties.resection_mode == "plane":
                 box.prop(properties, "cut_solver", expand=True)
+        box.prop(properties, "animate_flexion", toggle=True)
         if properties.animate_flexion:
             box.prop(properties, "max_flexion_deg")
         box.label(text="Rebuild to apply", icon="INFO")

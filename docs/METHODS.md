@@ -226,6 +226,35 @@ maths is 1.7 ms. Projecting the vertices as `vertices @ normal` minus a scalar r
 than `(vertices - seat) @ normal` avoids materialising a full copy of the vertex array
 and took that step from 56 ms per cut to 17.
 
+**Re-cutting the bone is a different order of cost, and the resection is muted during a
+drag because of it.** An exact boolean takes about 6 s for the plane box and 22 s for the
+cutting blocks and their shells, against 1 ms with no resection at all. Those numbers
+were missed at first because they were measured headless, where Blender never evaluates
+a modifier nobody is looking at — the panel appeared to manage 27 updates a second while
+doing none of the work. Muting the booleans on the first change and restoring them once
+the controls have been still for 0.6 s keeps the planes, axes and components moving at
+15 to 26 fps, and those are what alignment is judged on. The same deferral applies to the
+first build, so pressing Plan returns in 3 s rather than 55.
+
+## Resecting with the cutting block
+
+The block and its shell are booleaned against the bone as the first pipeline did: the
+bone minus the block, and a copy of the bone intersected with the block's shell, which
+gives the patient-specific mating surface a printed guide would sit on. The copy is taken
+**before** the bone is resected — a shell cut from an already-resected femur is missing
+the condylar surface it is meant to fit.
+
+The plane box and the block are alternatives rather than a stack. The box removes
+everything beyond the plane, so it would swallow the very surfaces the block is shaping
+and leave the block boolean with nothing to do; a bone cut by its block is therefore
+skipped by the plane pass.
+
+**These booleans are always exact, and the panel's solver choice does not reach them.**
+The fast solver does not lose a little precision here, it returns confident nonsense: on
+the real cohort it reduced a 409k-vertex femur to 4k and produced a "shell" 227 mm across
+— larger than the bone it was intersected with — without raising. A cut that looks like a
+cut and is not is precisely the failure this project keeps having to catch by measuring.
+
 ## Automatic landmark estimation
 
 A complete first pass from two STL files, so a plan can be produced with no manual
