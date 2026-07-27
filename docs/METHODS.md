@@ -122,7 +122,8 @@ variable for an alignment target.
 > **Open question.** `tibia_proximal_cut` runs 16.3–22.1 mm where a clinical proximal
 > tibial resection is 8–10 mm. It looks like resection *plus* construct height, or a
 > distance from a different datum. Needs a CAD cross-check before any resection metric
-> derived from it is published.
+> derived from it is published. Tracked as question 3.1 in
+> [CLINICAL_QUESTIONS.md](CLINICAL_QUESTIONS.md).
 
 ## Alignment planning
 
@@ -185,6 +186,45 @@ rotation**, as in theatre — not off the frame's epicondylar axis, which serves
 coronal construction and differs by the condylar twist angle. The direction of that
 rotation is "toward the epicondylar axis", which is what the clinical rule means;
 deriving it geometrically sent it the wrong way and left the component 6° short.
+
+## Manual adjustment
+
+Every control on the planning screen is a field in an `Adjustments` record passed *into*
+the planner, never an edit applied to its output. An adjusted plan is therefore still a
+pure function of `(landmarks, frames, target, adjustments)`, serialises whole, and
+re-derives exactly. Nudging objects in the viewport instead would leave the scene showing
+geometry the plan file does not describe — which would quietly cost the project its main
+claim.
+
+Signs are anatomical rather than spatial: positive is valgus, deeper, more slope, more
+external rotation, more anterior, more lateral, on both knees. A signed rotation about a
+world axis means the opposite thing on a right knee, and the mirror-invariance tests
+cover each control for exactly that reason.
+
+**Varus/valgus rotates the shared reference, before the two cuts are separated.** Both
+cuts descend from that one direction, so they move together and go on sharing a
+mediolateral slope exactly. Rotating the two finished cuts by the same angle instead
+looks identical and is not: once the sagittal angles are applied their hinges differ, and
+the slopes drift apart.
+
+Per-cut varus overrides exist and deliberately do break that agreement — so the plan
+measures the disagreement and warns, rather than absorbing it silently.
+
+**Extension gaps** are reported per compartment when an insert thickness is set, measured
+normal to the tibial cut, with the femoral component, tray and insert subtracted. Normal
+to the *tibial* cut because with posterior slope the two cuts are not parallel and there
+is no single separation between them; that is the direction the insert stacks in and a
+trial spacer enters. The femoral thickness is subtracted as though perpendicular to the
+same direction, exact only for parallel cuts, and wrong by about 0.01 mm at 3° of slope.
+
+**No flexion gap is reported.** It needs the posterior condylar resection, which this
+pipeline does not plan.
+
+Re-planning costs about 37 ms on a real 2.5-million-vertex pair, which is what makes the
+controls follow a drag. Almost all of it is finding the cut cross-section: the anatomy
+maths is 1.7 ms. Projecting the vertices as `vertices @ normal` minus a scalar rather
+than `(vertices - seat) @ normal` avoids materialising a full copy of the vertex array
+and took that step from 56 ms per cut to 17.
 
 ## Automatic landmark estimation
 

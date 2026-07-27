@@ -26,8 +26,15 @@ from .io import (
     set_material,
 )
 
-__all__ = ["build_scene", "SceneResult", "add_component",
+__all__ = ["build_scene", "SceneResult", "add_component", "update_scene",
            "resolve_component_meshes"]
+
+# Object names the live update path looks for. Keeping them in one place is what lets
+# `update_scene` find what `build_scene` made without either holding a reference, which
+# matters because the two run in different operator invocations and Blender properties
+# cannot carry Python objects between them.
+INSERT_SPACER = "TibialInsertSpacer"
+CUT_PLANES = {"femoral_distal": "femoral", "tibial_proximal": "tibial"}
 
 BONE_COLOUR = (0.88, 0.85, 0.78)
 RESECTED_COLOUR = (0.92, 0.72, 0.62)
@@ -71,8 +78,12 @@ def build_scene(
     show_axes: bool = True,
     show_landmarks: bool = False,
     perform_cuts: bool = True,
+    live_cuts: bool = True,
+    cut_solver: str = "EXACT",
     animate_flexion: bool = True,
     max_flexion_deg: float = 120.0,
+    insert_thickness_mm: float | None = None,
+    insert_footprint_mm: tuple | None = None,
     clear: bool = True,
 ) -> SceneResult:
     """Build the full scene from an already-computed plan.
@@ -131,7 +142,8 @@ def build_scene(
             continue
         obj = add_component(
             spec["path"], component_name,
-            pose=pose, scale_factor=spec.get("scale", 1.0),
+            pose=pose, scale_factor=spec.get("scale", 1.0), group=group,
+            source_ml_mm=spec.get("source_ml"),
         )
         is_block = "cutting_block" in component_name
         set_material(
@@ -148,17 +160,36 @@ def build_scene(
         marks = ensure_collection("Landmarks")
         result.objects["landmarks"] = _make_landmarks(landmarks, marks)
 
+    # ---- The insert -----------------------------------------------------
+    #
+    # Drawn before the cuts so it joins the tibial group that flexes.
+    if insert_thickness_mm is not None and "tibial_component" in plan.components:
+        footprint = insert_footprint_mm or (70.0, 48.0)
+        spacer = make_insert_spacer(
+            plan.components["tibial_component"],
+            ml_mm=footprint[0], ap_mm=footprint[1],
+            thickness_mm=insert_thickness_mm,
+        )
+        set_material(spacer, "Insert", (0.90, 0.90, 0.82), alpha=0.65)
+        move_to_collection(spacer, implants)
+        result.objects["tibial_insert_spacer"] = spacer
+
     # ---- Resection ---------------------------------------------------
+    cutters = {}
     if perform_cuts:
         for bone_obj, resection_name, keep in (
             (femur, "femoral_distal", "proximal"),
             (tibia, "tibial_proximal", "distal"),
         ):
             resection = plan.resections[resection_name]
-            outcome = resect_bone(
+            outcome, cutter = resect_bone(
                 bone_obj, resection.point, resection.normal,
                 keep=keep, name=resection_name,
+                live=live_cuts, solver=cut_solver,
             )
+            if cutter is not None:
+                cutters[resection_name] = cutter
+                move_to_collection(cutter, planning)
             if outcome is False:
                 result.notes.append(f"{resection_name}: boolean failed, bone left whole")
             elif outcome == "fast":
@@ -167,16 +198,26 @@ def build_scene(
                     f"(the resulting geometry differs)"
                 )
             set_material(bone_obj, "BoneCut", RESECTED_COLOUR)
+        if live_cuts:
+            result.notes.append(
+                "cuts are live: the resection follows the plan as it is adjusted"
+            )
 
     # ---- Flexion ------------------------------------------------------
     if animate_flexion:
         axis_point, axis_direction = _flexion_axis(
             plan, femoral_frame, landmarks
         )
-        moving = [tibia] + [
-            result.objects[name] for name in result.objects
+        moving = [tibia]
+        moving += [
+            obj for name, obj in result.objects.items()
             if name.startswith("tibial")
         ]
+        # The tibial discard box travels with the tibia. Left behind, a live boolean
+        # would carve a fixed plane through a bone that is moving, and the tibia would
+        # appear to melt away as it flexed.
+        if "tibial_proximal" in cutters:
+            moving.append(cutters["tibial_proximal"])
         pivot = add_flexion_animation(
             moving, axis_point_mm=axis_point, axis_direction=axis_direction,
             max_flexion_deg=max_flexion_deg,
@@ -203,6 +244,8 @@ def add_component(
     *,
     pose,
     scale_factor: float = 1.0,
+    group: str = "femoral",
+    source_ml_mm: float | None = None,
 ):
     """Load an implant component, scale it parametrically, and seat it on a cut plane.
 
@@ -223,21 +266,41 @@ def add_component(
     by bounding box put the femoral component 42 mm below its cut and 32 mm off to the
     side, and the tibial tray 40 mm above its own.
     """
-    import mathutils
-
     obj = import_stl(path, name)
 
+    # Remembered on the object itself, so a later live update can re-pose this part
+    # without being told anything about it. Blender custom properties survive between
+    # operator runs, which Python references do not.
+    obj["tka_scale"] = float(scale_factor)
+    obj["tka_group"] = str(group)
+    if source_ml_mm:
+        # The width the exported mesh was drawn at. Because the library is one master
+        # geometry under a uniform scale, a size change needs no re-import at all: the
+        # mesh already in the scene is the same part, and rescaling it by the ratio of
+        # widths *is* the new size rather than an approximation to it.
+        obj["tka_source_ml"] = float(source_ml_mm)
+
+    seat_component(obj, pose, scale_factor=scale_factor)
+    return obj
+
+
+def seat_component(obj, pose, *, scale_factor: float = 1.0) -> None:
+    """Put a component's CAD origin on a cut, at a parametric scale.
+
+    Split out of :func:`add_component` because the live controls re-pose parts that are
+    already in the scene. Both paths must compute the world matrix identically, or a
+    component would shift the first time a slider moved.
+    """
+    import mathutils
+
     pose = np.asarray(pose, dtype=float)
-    matrix = mathutils.Matrix(
-        [[float(v) for v in row] for row in pose]
-    )
+    matrix = mathutils.Matrix([[float(v) for v in row] for row in pose])
     # Scale about the CAD origin, so the parametric factor never shifts the seating.
     matrix = matrix @ mathutils.Matrix.Scale(scale_factor, 4)
     matrix.translation = mathutils.Vector(
         tuple(float(c) * MM_TO_BU for c in pose[:3, 3])
     )
     obj.matrix_world = matrix
-    return obj
 
 
 def _flexion_axis(plan, femoral_frame, landmarks):
@@ -271,7 +334,13 @@ def _flexion_axis(plan, femoral_frame, landmarks):
     return plan.components["femoral_component"][:3, 3], direction
 
 
-def resect_bone(obj, point_mm, normal_mm, *, keep: str, name: str):
+CUTTER_SIZE_MM = 400.0
+
+
+def resect_bone(
+    obj, point_mm, normal_mm, *, keep: str, name: str,
+    live: bool = False, solver: str = "EXACT",
+):
     """Cut a bone along a resection plane, keeping one side.
 
     The cut is made with a box large enough to swallow the discarded side, rather than
@@ -281,26 +350,44 @@ def resect_bone(obj, point_mm, normal_mm, *, keep: str, name: str):
 
     ``keep="proximal"`` retains the bone above the plane, which is the femur; the tibia
     keeps ``"distal"``.
-    """
-    import mathutils
 
+    With ``live=True`` the boolean is left unapplied and the cutter box is kept, hidden,
+    in the scene. Moving that box then re-cuts the bone by itself, which is what lets a
+    resection-depth slider change the bone in the viewport rather than only the plane.
+    The cost is that the solver re-runs on every change, so on a dense segmentation the
+    exact solver may not keep up with a drag -- hence the solver choice, and hence the
+    panel's ability to turn live cutting off and still move everything else.
+
+    Returns ``(outcome, cutter)``. ``outcome`` is ``True``, ``"fast"`` when the exact
+    solver failed and the fast one stood in, or ``False`` when both failed and the bone
+    was left whole. ``cutter`` is the retained box in live mode and ``None`` otherwise.
+    """
     normal = np.asarray(normal_mm, dtype=float)
     normal = normal / np.linalg.norm(normal)
     discard = -normal if keep == "proximal" else normal
 
-    size_mm = 400.0
-    centre = np.asarray(point_mm, dtype=float) + discard * (size_mm / 2.0)
-    bpy.ops.mesh.primitive_cube_add(size=size_mm * MM_TO_BU, location=_v(centre))
+    bpy.ops.mesh.primitive_cube_add(size=CUTTER_SIZE_MM * MM_TO_BU)
     cutter = bpy.context.active_object
     cutter.name = f"_{name}_cutter"
-    cutter.rotation_mode = "QUATERNION"
-    cutter.rotation_quaternion = _rotation_to(discard)
+    cutter["tka_cutter_for"] = name
+    cutter["tka_keep"] = keep
+    place_cutter(cutter, point_mm, normal_mm, keep=keep)
 
-    modifier = obj.modifiers.new(name="Resection", type="BOOLEAN")
-    modifier.operation = "DIFFERENCE"
-    modifier.object = cutter
-    modifier.solver = "EXACT"
+    def attach(which: str):
+        modifier = obj.modifiers.new(name="Resection", type="BOOLEAN")
+        modifier.operation = "DIFFERENCE"
+        modifier.object = cutter
+        modifier.solver = which
+        return modifier
 
+    if live:
+        attach(solver)
+        cutter.hide_viewport = True
+        cutter.hide_render = True
+        cutter.display_type = "WIRE"
+        return True, cutter
+
+    modifier = attach("EXACT")
     bpy.context.view_layer.objects.active = obj
     try:
         bpy.ops.object.modifier_apply(modifier=modifier.name)
@@ -309,10 +396,7 @@ def resect_bone(obj, point_mm, normal_mm, *, keep: str, name: str):
         # Exact can fail on a non-manifold segmentation; fall back and say so, since
         # the fast solver produces different geometry.
         obj.modifiers.remove(modifier)
-        modifier = obj.modifiers.new(name="Resection", type="BOOLEAN")
-        modifier.operation = "DIFFERENCE"
-        modifier.object = cutter
-        modifier.solver = "FAST"
+        modifier = attach("FAST")
         try:
             bpy.ops.object.modifier_apply(modifier=modifier.name)
             applied = "fast"
@@ -321,7 +405,31 @@ def resect_bone(obj, point_mm, normal_mm, *, keep: str, name: str):
             applied = False
 
     bpy.data.objects.remove(cutter, do_unlink=True)
-    return applied
+    return applied, None
+
+
+def place_cutter(cutter, point_mm, normal_mm, *, keep: str) -> None:
+    """Put the discard box against a resection plane.
+
+    The box's near face lies on the plane and its bulk sits on the side being thrown
+    away, so the boolean difference leaves exactly the retained bone.
+
+    The pose is assigned as a world matrix rather than as a location and rotation,
+    because the tibial cutter is parented to the flexion pivot so that the cut travels
+    with the bone through the arc. Setting ``location`` on a parented object would place
+    it in the parent's space and slide the cut through the tibia.
+    """
+    import mathutils
+
+    normal = np.asarray(normal_mm, dtype=float)
+    normal = normal / np.linalg.norm(normal)
+    discard = -normal if keep == "proximal" else normal
+    centre = np.asarray(point_mm, dtype=float) + discard * (CUTTER_SIZE_MM / 2.0)
+
+    cutter.rotation_mode = "QUATERNION"
+    cutter.matrix_world = mathutils.Matrix.LocRotScale(
+        mathutils.Vector(_v(centre)), _rotation_to(discard), (1.0, 1.0, 1.0)
+    )
 
 
 def add_flexion_animation(
@@ -400,6 +508,134 @@ def add_flexion_animation(
 
     scene.frame_set(1)
     return pivot
+
+
+def make_insert_spacer(pose, *, ml_mm: float, ap_mm: float, thickness_mm: float):
+    """A slab standing in for the plastic insert, at the planned thickness.
+
+    The parametric insert model is not in the library yet, so what matters now is the
+    number and the space it occupies: a block of the requested thickness sitting on the
+    tibial cut, in the tray's own footprint, so the joint gap it fills is visible rather
+    than only tabulated.
+
+    Built from eight vertices rather than a scaled primitive because the thickness has to
+    read exactly off the ruler. The base sits at local ``z = 0``, which is the tibial
+    CAD origin and therefore the cut surface, so the slab's top face is the articulating
+    surface the femoral component meets.
+    """
+    mesh = bpy.data.meshes.new(INSERT_SPACER)
+    half_ml, half_ap = ml_mm / 2.0, ap_mm / 2.0
+    # Tibial parts use local +X patient-left, +Y posterior, +Z proximal.
+    corners = [
+        (x * MM_TO_BU, y * MM_TO_BU, z * MM_TO_BU)
+        for z in (0.0, thickness_mm)
+        for x, y in ((-half_ml, -half_ap), (half_ml, -half_ap),
+                     (half_ml, half_ap), (-half_ml, half_ap))
+    ]
+    faces = [
+        (0, 1, 2, 3), (7, 6, 5, 4),
+        (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0),
+    ]
+    mesh.from_pydata(corners, [], faces)
+    mesh.update()
+
+    obj = bpy.data.objects.new(INSERT_SPACER, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj["tka_group"] = "tibial"
+    obj["tka_ml_mm"] = float(ml_mm)
+    obj["tka_ap_mm"] = float(ap_mm)
+    seat_component(obj, pose)
+    return obj
+
+
+def update_scene(
+    plan,
+    *,
+    insert_thickness_mm: float | None = None,
+    live_cuts: bool = True,
+    implant_ml_mm: float | None = None,
+) -> None:
+    """Re-pose an existing scene from a re-planned :class:`SurgicalPlan`.
+
+    This is the path every slider takes. Nothing is imported, created or deleted: the cut
+    planes, the components, the discard boxes and the insert slab are all already in the
+    scene and only their transforms change. Planning itself is a few dozen numpy
+    operations, so the whole round trip is fast enough to run on each change of a value
+    rather than on a button press.
+
+    Rebuilding instead would mean re-reading the meshes, re-estimating the landmarks and
+    re-applying the booleans -- seconds of work, and it would also discard the user's
+    viewport selection on every drag.
+
+    A change of implant size needs no re-import either. ``implant_ml_mm`` re-derives each
+    part's scale from the width its own mesh was exported at, and because the library is
+    one master geometry under a uniform scale, the part already in the scene at the new
+    factor *is* the new size rather than a stand-in for it.
+    """
+    scene_objects = bpy.data.objects
+
+    # The plan is expressed in the extended pose, so the arc has to be at extension for
+    # the world transforms it carries to mean anything.
+    if bpy.context.scene.frame_current != bpy.context.scene.frame_start:
+        bpy.context.scene.frame_set(bpy.context.scene.frame_start)
+
+    for name, resection in plan.resections.items():
+        plane = scene_objects.get(name)
+        if plane is not None:
+            plane.rotation_mode = "QUATERNION"
+            plane.matrix_world = _plane_matrix(resection.point, resection.normal)
+
+        cutter = scene_objects.get(f"_{name}_cutter")
+        if cutter is not None and live_cuts:
+            place_cutter(
+                cutter, resection.point, resection.normal,
+                keep=cutter.get("tka_keep", "proximal"),
+            )
+
+    for obj in scene_objects:
+        group = obj.get("tka_group")
+        if group is None or obj.name == INSERT_SPACER:
+            continue
+        pose = plan.components.get(f"{group}_component")
+        if pose is None:
+            continue
+        source_ml = obj.get("tka_source_ml")
+        scale = (
+            implant_ml_mm / source_ml
+            if implant_ml_mm and source_ml
+            else obj.get("tka_scale", 1.0)
+        )
+        seat_component(obj, pose, scale_factor=scale)
+
+    spacer = scene_objects.get(INSERT_SPACER)
+    if spacer is not None:
+        if insert_thickness_mm is None:
+            spacer.hide_viewport = True
+        else:
+            spacer.hide_viewport = False
+            _restretch_spacer(spacer, insert_thickness_mm)
+            seat_component(spacer, plan.components["tibial_component"])
+
+
+def _restretch_spacer(spacer, thickness_mm: float) -> None:
+    """Set the slab's height in place, leaving its footprint alone.
+
+    The mesh is built base-first, so vertices 0-3 lie on the cut at ``z = 0`` and 4-7
+    are the top face. Only the top four move.
+    """
+    height = thickness_mm * MM_TO_BU
+    for vertex in spacer.data.vertices[4:]:
+        vertex.co.z = height
+    spacer.data.update()
+
+
+def _plane_matrix(point_mm, normal_mm):
+    """World matrix putting a disc on a cut plane."""
+    import mathutils
+
+    return mathutils.Matrix.LocRotScale(
+        mathutils.Vector(_v(point_mm)), _rotation_to(normal_mm), (1.0, 1.0, 1.0)
+    )
 
 
 def _make_plane(name: str, point_mm, normal_mm, *, radius_mm: float):
@@ -589,6 +825,7 @@ def resolve_component_meshes(
                 "scale": sizing.implant_ml_mm / source_ml,
                 "group": group,
                 "source_size": found_label,
+                "source_ml": source_ml,
             }
 
     # The plastic insert is sometimes exported without "tibial" in its name.
@@ -605,5 +842,6 @@ def resolve_component_meshes(
                 "scale": sizing.implant_ml_mm / source_ml,
                 "group": "tibial",
                 "source_size": found_label,
+                "source_ml": source_ml,
             }
     return resolved

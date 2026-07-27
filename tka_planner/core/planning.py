@@ -47,12 +47,79 @@ from .provenance import Quality
 
 __all__ = [
     "AlignmentTarget",
+    "Adjustments",
     "ResectionPlane",
     "SurgicalPlan",
     "plan_alignment",
     "MECHANICAL",
     "KINEMATIC",
 ]
+
+
+@dataclass(frozen=True)
+class Adjustments:
+    """Manual departures from the computed plan, in the surgeon's own terms.
+
+    These are what the planning screen's controls write. They are inputs to
+    :func:`plan_alignment` rather than edits applied to its output, which is the whole
+    point: an adjusted plan is still a pure function of the landmarks, the frames, the
+    target and this object, so it serialises into ``plan.json`` and re-derives exactly.
+    Nudging the scene instead would leave the geometry describing something the plan file
+    does not.
+
+    Signs are anatomical, never spatial. Positive is valgus, deeper, more slope, more
+    external rotation, more anterior and more lateral -- on both knees. A signed rotation
+    about a world axis would mean the opposite thing on a right knee, which is the class
+    of bug the mirror-invariance tests exist to catch.
+
+    ``insert_thickness_mm`` alters no cut. It sets the construct height the gap report
+    is measured against, and ``None`` means no gap is reported at all rather than one
+    computed from an assumed insert.
+    """
+
+    coronal_correction_deg: float = 0.0       # + valgus, applied to BOTH cuts together
+
+    femoral_resection_delta_mm: float = 0.0   # + removes more bone
+    femoral_varus_delta_deg: float = 0.0      # + valgus, this cut only
+    femoral_flexion_delta_deg: float = 0.0
+    femoral_rotation_delta_deg: float = 0.0   # + external
+    femoral_shift_ap_mm: float = 0.0          # + anterior
+    femoral_shift_ml_mm: float = 0.0          # + lateral
+
+    tibial_resection_delta_mm: float = 0.0
+    tibial_varus_delta_deg: float = 0.0
+    tibial_slope_delta_deg: float = 0.0
+    tibial_rotation_delta_deg: float = 0.0
+    tibial_shift_ap_mm: float = 0.0
+    tibial_shift_ml_mm: float = 0.0
+
+    insert_thickness_mm: float | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "coronal_correction_deg": self.coronal_correction_deg,
+            "femoral_resection_delta_mm": self.femoral_resection_delta_mm,
+            "femoral_varus_delta_deg": self.femoral_varus_delta_deg,
+            "femoral_flexion_delta_deg": self.femoral_flexion_delta_deg,
+            "femoral_rotation_delta_deg": self.femoral_rotation_delta_deg,
+            "femoral_shift_ap_mm": self.femoral_shift_ap_mm,
+            "femoral_shift_ml_mm": self.femoral_shift_ml_mm,
+            "tibial_resection_delta_mm": self.tibial_resection_delta_mm,
+            "tibial_varus_delta_deg": self.tibial_varus_delta_deg,
+            "tibial_slope_delta_deg": self.tibial_slope_delta_deg,
+            "tibial_rotation_delta_deg": self.tibial_rotation_delta_deg,
+            "tibial_shift_ap_mm": self.tibial_shift_ap_mm,
+            "tibial_shift_ml_mm": self.tibial_shift_ml_mm,
+            "insert_thickness_mm": self.insert_thickness_mm,
+        }
+
+    @property
+    def is_identity(self) -> bool:
+        """Whether anything was actually moved, so a report can say "as planned"."""
+        return self == Adjustments(insert_thickness_mm=self.insert_thickness_mm)
+
+
+NO_ADJUSTMENT = Adjustments()
 
 
 @dataclass(frozen=True)
@@ -121,6 +188,7 @@ class SurgicalPlan:
     components: dict[str, np.ndarray]
     warnings: tuple[str, ...] = ()
     diagnostics: dict = field(default_factory=dict)
+    adjustments: Adjustments = NO_ADJUSTMENT
 
     def to_dict(self) -> dict:
         return {
@@ -137,6 +205,7 @@ class SurgicalPlan:
             },
             "warnings": list(self.warnings),
             "diagnostics": self.diagnostics,
+            "adjustments": self.adjustments.to_dict(),
         }
 
 
@@ -180,7 +249,9 @@ def plan_alignment(
     target: AlignmentTarget = MECHANICAL,
     femoral_thickness_mm: float = 9.0,
     tibial_resection_mm: float = 10.0,
+    tibial_tray_thickness_mm: float = 0.0,
     native_slope_deg: float | None = None,
+    adjustments: Adjustments = NO_ADJUSTMENT,
     femur_mesh=None,
     tibia_mesh=None,
 ) -> SurgicalPlan:
@@ -207,6 +278,15 @@ def plan_alignment(
     ``femoral_thickness_mm`` is the distal thickness of the femoral component, a property
     of the implant taken from the size chart. ``tibial_resection_mm`` is measured from the
     *higher* (less worn) plateau, since the other has lost bone to disease.
+
+    ``adjustments`` carries whatever a surgeon has changed by hand. It enters here rather
+    than being applied to the returned plan so that the plan remains reproducible from
+    its inputs; see :class:`Adjustments`.
+
+    ``tibial_tray_thickness_mm`` defaults to zero because the tray's height is not a
+    column in the size chart and has not been confirmed against the CAD. Until it is,
+    the gap report understates the construct by exactly that height rather than assuming
+    a figure -- see ``docs/CLINICAL_QUESTIONS.md`` 3.1.
     """
     warnings: list[str] = []
 
@@ -260,6 +340,28 @@ def plan_alignment(
     # which is what makes this well defined: +Z superior, -Y anterior.
     reference = unit(reference - np.dot(reference, LPS_ANTERIOR) * LPS_ANTERIOR)
 
+    # ---- Varus/valgus correction -------------------------------------
+    #
+    # This is the one control that has to move the whole construct, so it is applied to
+    # the shared reference *before* the two cuts are separated. Both cuts descend from
+    # this direction, so both rotate by the same angle and they go on sharing a
+    # mediolateral slope exactly -- which is the guarantee the rest of this function is
+    # built around. Rotating the two finished cuts by the same amount afterwards would
+    # look identical and would not be: their hinges differ once the sagittal angles are
+    # applied, so the slopes would drift apart.
+    #
+    # Positive is valgus. The sense is resolved by aiming at the frame's own lateral
+    # direction, so the same number means the same correction on a left and a right knee.
+    if abs(adjustments.coronal_correction_deg) > 1e-9:
+        reference = _tilt_about(
+            reference, LPS_ANTERIOR, adjustments.coronal_correction_deg,
+            posterior=femoral_frame.lateral,
+        )
+        femoral_reference += (
+            f", {adjustments.coronal_correction_deg:+.1f} degrees manual coronal "
+            f"correction"
+        )
+
     # One hinge for both cuts: the mediolateral direction perpendicular to the
     # reference. Rotating about it sweeps the normal purely anteroposteriorly and leaves
     # the ratio of the mediolateral to proximal components untouched, so every cut built
@@ -268,12 +370,27 @@ def plan_alignment(
     hinge = unit(np.cross(reference, LPS_ANTERIOR))
 
     # ---- Femoral distal resection -----------------------------------
-    femoral_normal = _tilt_about(
-        reference, hinge, target.femoral_flexion_deg, posterior=-LPS_ANTERIOR
+    femoral_flexion_deg = (
+        target.femoral_flexion_deg + adjustments.femoral_flexion_delta_deg
     )
-    if abs(target.femoral_flexion_deg) > 1e-9:
-        femoral_reference += f", {target.femoral_flexion_deg:.1f} degrees flexion"
+    femoral_normal = _tilt_about(
+        reference, hinge, femoral_flexion_deg, posterior=-LPS_ANTERIOR
+    )
+    if abs(adjustments.femoral_varus_delta_deg) > 1e-9:
+        # A per-cut varus override, deliberately applied after the split. It breaks the
+        # shared mediolateral slope, which is why it is reported below rather than
+        # absorbed silently.
+        femoral_normal = _tilt_about(
+            femoral_normal, LPS_ANTERIOR, adjustments.femoral_varus_delta_deg,
+            posterior=femoral_frame.lateral,
+        )
+    if abs(femoral_flexion_deg) > 1e-9:
+        femoral_reference += f", {femoral_flexion_deg:.1f} degrees flexion"
 
+    # The manual delta is folded into the seating depth rather than applied to the
+    # finished plane, so the plane is still centred on the cross-section it actually
+    # makes through the bone at its final level.
+    femoral_seat_mm = femoral_thickness_mm + adjustments.femoral_resection_delta_mm
     distal_points = np.array(landmarks.require(
         "femur.condyle_distal_medial", "femur.condyle_distal_lateral"
     ))
@@ -281,7 +398,7 @@ def plan_alignment(
     femoral_point = _plane_origin(
         distal_points, femoral_normal,
         seat=distal_points[int(np.argmin(projections))]
-        + femoral_thickness_mm * femoral_normal,
+        + femoral_seat_mm * femoral_normal,
         mesh=femur_mesh,
     )
     femoral_medial, femoral_lateral = _plane_depths(
@@ -295,14 +412,20 @@ def plan_alignment(
         target.tibial_slope_deg
         if target.tibial_slope_deg is not None
         else (native_slope_deg if native_slope_deg is not None else 3.0)
-    )
+    ) + adjustments.tibial_slope_delta_deg
     # Same reference and same hinge as the femur, tilted posteriorly. A posterior slope
     # drops the back of the cut, which tilts the plane normal posteriorly; an earlier
     # version tilted it the other way and produced cuts that sloped forwards.
     tibial_normal = _tilt_about(
         reference, hinge, slope_deg, posterior=-LPS_ANTERIOR
     )
+    if abs(adjustments.tibial_varus_delta_deg) > 1e-9:
+        tibial_normal = _tilt_about(
+            tibial_normal, LPS_ANTERIOR, adjustments.tibial_varus_delta_deg,
+            posterior=tibial_frame.lateral,
+        )
 
+    tibial_seat_mm = tibial_resection_mm + adjustments.tibial_resection_delta_mm
     plateau_points = np.array(landmarks.require(
         "tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"
     ))
@@ -310,7 +433,7 @@ def plan_alignment(
     tibial_point = _plane_origin(
         plateau_points, tibial_normal,
         seat=plateau_points[int(np.argmax(plateau_projections))]
-        - tibial_resection_mm * tibial_normal,
+        - tibial_seat_mm * tibial_normal,
         mesh=tibia_mesh,
     )
     tibial_medial, tibial_lateral = _plane_depths(
@@ -338,7 +461,14 @@ def plan_alignment(
     # differ by the condylar twist angle, so using the frame's would rotate the
     # component by that much.
     femoral_anterior = _rotational_reference(
-        landmarks, femoral_frame, femoral_normal, target.femoral_rotation_deg
+        landmarks, femoral_frame, femoral_normal,
+        target.femoral_rotation_deg + adjustments.femoral_rotation_delta_deg,
+    )
+    tibial_anterior = _rotate_in_plane(
+        _in_plane_of(tibial_frame.x_anterior, tibial_normal),
+        tibial_normal,
+        adjustments.tibial_rotation_delta_deg,
+        toward=tibial_frame.lateral,
     )
     components = {
         "femoral_component": _component_pose(
@@ -347,12 +477,53 @@ def plan_alignment(
         ),
         "tibial_component": _component_pose(
             tibial_point, tibial_normal, convention="tibial",
-            anterior=_in_plane_of(tibial_frame.x_anterior, tibial_normal),
+            anterior=tibial_anterior,
         ),
     }
-    # A cutting block shares its implant's CAD origin, so it shares its pose exactly.
+
+    # Component position is not resection. A shift slides the implant across the cut it
+    # sits on, so it is applied to the pose alone and both shift directions are taken in
+    # the plane of that cut -- otherwise moving a component forwards would also lift it
+    # off its own cut surface.
+    components["femoral_component"] = _shift_component(
+        components["femoral_component"], femoral_normal,
+        anterior=femoral_anterior, lateral=femoral_frame.lateral,
+        ap_mm=adjustments.femoral_shift_ap_mm,
+        ml_mm=adjustments.femoral_shift_ml_mm,
+    )
+    components["tibial_component"] = _shift_component(
+        components["tibial_component"], tibial_normal,
+        anterior=tibial_anterior, lateral=tibial_frame.lateral,
+        ap_mm=adjustments.tibial_shift_ap_mm,
+        ml_mm=adjustments.tibial_shift_ml_mm,
+    )
+
+    # A cutting block shares its implant's CAD origin, so it shares its pose exactly --
+    # including any manual shift, since the block is the instrument that would realise
+    # the cut the implant then sits on.
     components["femoral_cutting_block"] = components["femoral_component"]
     components["tibial_cutting_block"] = components["tibial_component"]
+
+    # ---- Did the cuts stay parallel in the coronal plane? -------------
+    ml_disagreement = float(np.degrees(angle_between(
+        _in_plane_of(femoral_normal, LPS_ANTERIOR),
+        _in_plane_of(tibial_normal, LPS_ANTERIOR),
+    )))
+    if ml_disagreement > 0.01:
+        warnings.append(
+            f"The femoral and tibial cuts disagree in mediolateral slope by "
+            f"{ml_disagreement:.1f} degrees. A per-cut varus override was applied, so "
+            f"the construct has to absorb the difference across the articulation."
+        )
+
+    gaps = _extension_gaps(
+        landmarks,
+        femoral_point=femoral_point, femoral_normal=femoral_normal,
+        tibial_point=tibial_point, tibial_normal=tibial_normal,
+        femoral_thickness_mm=femoral_thickness_mm,
+        tray_thickness_mm=tibial_tray_thickness_mm,
+        insert_thickness_mm=adjustments.insert_thickness_mm,
+    )
 
     return SurgicalPlan(
         philosophy=target.philosophy,
@@ -368,20 +539,23 @@ def plan_alignment(
             "tibial_proximal": ResectionPlane(
                 "tibial_proximal", tibial_point, tibial_normal,
                 tibial_medial, tibial_lateral,
-                f"{tibial_resection_mm:.0f} mm below the higher plateau, "
+                f"{tibial_seat_mm:.0f} mm below the higher plateau, "
                 f"{slope_deg:.1f} degrees posterior slope, sharing the femoral "
                 f"coronal reference",
             ),
         },
         components=components,
         warnings=tuple(warnings),
+        adjustments=adjustments,
         diagnostics={
             "target": target.description,
             "femoral_component_thickness_mm": femoral_thickness_mm,
-            "tibial_resection_reference_mm": tibial_resection_mm,
-            "femoral_flexion_deg": target.femoral_flexion_deg,
+            "tibial_resection_reference_mm": tibial_seat_mm,
+            "femoral_flexion_deg": femoral_flexion_deg,
             "coronal_axis_disagreement_deg": round(coronal_disagreement, 2),
-            "cut_ml_slope_shared": True,
+            "cut_ml_slope_shared": ml_disagreement <= 0.01,
+            "cut_ml_disagreement_deg": round(ml_disagreement, 3),
+            **gaps,
             "reference_sagittal_tilt_removed": True,
             "cut_angle_between_deg": round(float(np.degrees(
                 angle_between(femoral_normal, tibial_normal)
@@ -398,6 +572,126 @@ def _in_plane_of(vector: np.ndarray, normal: np.ndarray) -> np.ndarray:
     """The part of ``vector`` lying in the plane whose normal is ``normal``."""
     normal = unit(normal)
     return unit(np.asarray(vector, dtype=float) - np.dot(vector, normal) * normal)
+
+
+def _rotate_in_plane(
+    vector: np.ndarray,
+    normal: np.ndarray,
+    angle_deg: float,
+    *,
+    toward: np.ndarray,
+) -> np.ndarray:
+    """Turn a direction about a plane's normal, with the sense fixed anatomically.
+
+    Used for component rotation, where positive means external. Which way that is
+    depends on the knee, so the sense is settled by asking which turn carries the vector
+    toward the frame's lateral direction rather than by a sign convention that would be
+    right on one side only.
+    """
+    vector = _in_plane_of(vector, normal)
+    if abs(angle_deg) < 1e-9:
+        return vector
+
+    axis = unit(normal)
+    angle = np.radians(abs(angle_deg))
+    turns = [
+        unit(vector * np.cos(t) + np.cross(axis, vector) * np.sin(t))
+        for t in (angle, -angle)
+    ]
+    aim = _in_plane_of(np.asarray(toward, dtype=float), normal)
+    chooser = max if angle_deg > 0 else min
+    return chooser(turns, key=lambda v: float(np.dot(v, aim)))
+
+
+def _shift_component(
+    pose: np.ndarray,
+    normal: np.ndarray,
+    *,
+    anterior: np.ndarray,
+    lateral: np.ndarray,
+    ap_mm: float,
+    ml_mm: float,
+) -> np.ndarray:
+    """Slide a component across the cut it sits on.
+
+    Both directions are taken in the plane of the cut, so a shift never changes the
+    component's seating depth -- moving an implant forwards must not also lift it off the
+    bone. Positive is anterior and lateral, on either knee.
+    """
+    if abs(ap_mm) < 1e-12 and abs(ml_mm) < 1e-12:
+        return pose
+
+    anterior = _in_plane_of(anterior, normal)
+    lateral = _in_plane_of(lateral, normal)
+
+    shifted = pose.copy()
+    shifted[:3, 3] = pose[:3, 3] + ap_mm * anterior + ml_mm * lateral
+    return shifted
+
+
+def _extension_gaps(
+    landmarks: LandmarkSet,
+    *,
+    femoral_point: np.ndarray,
+    femoral_normal: np.ndarray,
+    tibial_point: np.ndarray,
+    tibial_normal: np.ndarray,
+    femoral_thickness_mm: float,
+    tray_thickness_mm: float,
+    insert_thickness_mm: float | None,
+) -> dict:
+    """What is left between the two cuts once the construct is in, per compartment.
+
+    The space between the resected surfaces is measured at each compartment, and the
+    components that fill it are subtracted: the femoral component's distal thickness
+    hangs below the femoral cut, the tray and the insert stack above the tibial one. A
+    negative result means the construct overstuffs that compartment.
+
+    Each compartment is measured at its own plateau landmark, projected onto the tibial
+    cut, because the whole reason to report a gap is the difference between the two
+    sides. A single mid-joint figure would hide it.
+
+    The measurement runs **normal to the tibial cut**. With posterior slope the two cuts
+    are not parallel, so there is no single separation between them, and this is the
+    direction that matches how the space is filled and judged: the insert seats on the
+    tibial cut and its thickness is a dimension perpendicular to that surface, and a
+    trial spacer enters the same way. The femoral component's thickness is subtracted as
+    though perpendicular to the same direction, which is exact only when the cuts are
+    parallel; at a typical 3 degrees of slope the discrepancy is
+    ``thickness x (1 - cos 3 deg)``, about 0.01 mm, which is far below anything the
+    landmarks themselves support.
+
+    Returns an empty mapping when no insert thickness has been set. That is the
+    pipeline's standing rule and it matters more here than usual: a gap computed against
+    an assumed insert would look like a measurement of this knee.
+
+    Only the **extension** gap is reported. The flexion gap needs the posterior condylar
+    resection, which this pipeline does not plan, so there is no honest way to state it.
+    """
+    if insert_thickness_mm is None:
+        return {}
+
+    required = ("tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest")
+    if not landmarks.available(*required):
+        return {}
+
+    femoral_normal = unit(femoral_normal)
+    tibial_normal = unit(tibial_normal)
+    occupied = float(femoral_thickness_mm) + float(tray_thickness_mm) \
+        + float(insert_thickness_mm)
+
+    gaps = {}
+    for compartment, landmark_id in (("medial", required[0]),
+                                     ("lateral", required[1])):
+        landmark = np.asarray(landmarks.position(landmark_id), dtype=float)
+        on_tibial_cut = landmark - np.dot(
+            landmark - tibial_point, tibial_normal
+        ) * tibial_normal
+        space = float(np.dot(femoral_point - on_tibial_cut, tibial_normal))
+        gaps[f"extension_gap_{compartment}_mm"] = round(space - occupied, 3)
+
+    gaps["extension_gap_construct_mm"] = round(occupied, 3)
+    return gaps
 
 
 def _plane_origin(
@@ -421,7 +715,14 @@ def _plane_origin(
 
     centre = None
     if mesh is not None:
-        offsets = (mesh.vertices - seat) @ normal
+        # Projected as a matvec minus a scalar rather than as ``(vertices - seat) @
+        # normal``. The two are identical arithmetic, but the second form materialises a
+        # full copy of the vertex array first, and on a real segmentation that is 2.5
+        # million points. This is the whole cost of re-planning -- the anatomy maths is
+        # about 1.7 ms and this was 56 ms per cut -- and re-planning happens on every
+        # movement of a control.
+        offsets = mesh.vertices @ normal
+        offsets -= float(np.dot(seat, normal))
         for half_width in (1.5, 3.0, 6.0):
             on_plane = np.abs(offsets) <= half_width
             if int(on_plane.sum()) >= 30:

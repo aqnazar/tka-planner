@@ -270,6 +270,7 @@ def solve_parametric_size(
     measured_ap_mm: float | None = None,
     driving_dimension: str = "femur_ML",
     reference_size: str | None = None,
+    parameter_override: float | None = None,
 ) -> SizingDecision:
     """Solve for the continuous size parameter matching this patient's anatomy.
 
@@ -282,8 +283,13 @@ def solve_parametric_size(
     limit of a one-parameter family: matching mediolateral and anteroposterior width
     independently needs two parameters, and this reports how much that would be worth
     per patient rather than asserting it in the abstract.
+
+    ``parameter_override`` is a size chosen by hand instead of solved. The measurement is
+    still carried and still compared, so the decision records what the anatomy asked for
+    alongside what was actually chosen -- which is the point of overriding it at all.
     """
-    parameter = chart.parameter_for(driving_dimension, measured_ml_mm)
+    solved = chart.parameter_for(driving_dimension, measured_ml_mm)
+    parameter = solved if parameter_override is None else float(parameter_override)
 
     reference_size = reference_size or chart.labels[chart.n_sizes // 2]
     reference_parameter = chart.label_parameter(reference_size)
@@ -312,13 +318,24 @@ def solve_parametric_size(
     else:
         placement = f"Nearest discrete size is {nearest}. "
 
-    rationale = (
-        f"Measured {driving_dimension} of {measured_ml_mm:.1f} mm maps to size "
-        f"parameter {parameter:.3f} (chart sizes sit at integers). "
-        + placement
-        + f"Implant width {implant_ml:.1f} mm, scale "
-          f"{implant_ml / reference_ml:.4f} relative to {reference_size}."
-    )
+    if parameter_override is not None:
+        flags.append("SIZE_OVERRIDDEN")
+        rationale = (
+            f"Size set by hand to parameter {parameter:.3f}, implant width "
+            f"{implant_ml:.1f} mm. The measurement itself was {driving_dimension} "
+            f"{measured_ml_mm:.1f} mm, which solves to parameter {solved:.3f} "
+            f"({chart.value_at('femur_ML', solved):.1f} mm). "
+            + placement
+            + f"Scale {implant_ml / reference_ml:.4f} relative to {reference_size}."
+        )
+    else:
+        rationale = (
+            f"Measured {driving_dimension} of {measured_ml_mm:.1f} mm maps to size "
+            f"parameter {parameter:.3f} (chart sizes sit at integers). "
+            + placement
+            + f"Implant width {implant_ml:.1f} mm, scale "
+              f"{implant_ml / reference_ml:.4f} relative to {reference_size}."
+        )
 
     return SizingDecision(
         method="sizing.parametric.v1",

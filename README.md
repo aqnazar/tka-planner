@@ -47,9 +47,13 @@ From two segmented bone surfaces, with no manual picking required:
 - **Places** the implants, cutting blocks, shells and insert, each on its own cut
 - **Cuts** both bones along the planned planes
 - **Animates** flexion, femur fixed, tibia swinging about the transepicondylar axis
+- **Adjusts** by hand — varus/valgus, both resection depths, slope, femoral flexion,
+  component rotation and position, insert thickness and size — with the cuts, the
+  components and the bone following as the value changes
 
 Methodology, including what each decision replaced and why, is in
-[docs/METHODS.md](docs/METHODS.md).
+[docs/METHODS.md](docs/METHODS.md). The clinical assumptions still awaiting a surgeon's
+answer are collected in [docs/CLINICAL_QUESTIONS.md](docs/CLINICAL_QUESTIONS.md).
 
 ## Install
 
@@ -88,8 +92,26 @@ pick the side, optionally point at the implant library, and press **Plan**.
 
 The bones load, the cut planes and mechanical axes appear, the implants and cutting
 blocks seat on the cuts, and the correction angle, resection depths and sizing appear in
-the sidebar. Switch between mechanical and kinematic and press Plan again to see the
-cuts change.
+the sidebar.
+
+Everything below **Plan** in the panel then adjusts that plan in place, and the scene
+follows as the value changes — around 27 updates a second on a full-resolution pair:
+
+| Control | What moves |
+|---|---|
+| Varus / valgus | Both cuts together, with every component, keeping their shared mediolateral slope |
+| Alignment, size, tibial resection | The whole plan; size rescales the implants without re-importing them |
+| Femoral: resection, flexion, varus, rotation, AP and ML position | The distal cut and the femoral component and blocks |
+| Tibial: resection, slope, varus, rotation, AP and ML position | The proximal cut and the tray, insert and blocks |
+| Insert thickness | The insert slab, and the extension gap reported per compartment |
+
+The bone re-cuts along with the planes, because the resection boolean is left live rather
+than applied. On a dense segmentation that can feel heavy during a drag: turn off **Live
+cuts** under Display, or switch the solver to Fast. The per-cut varus controls break the
+mediolateral agreement between the two cuts on purpose, and the plan warns when they do.
+
+**Reset to plan** returns every manual control to the computed plan. Adjustments are part
+of the plan record, so an adjusted plan still re-derives from its own file.
 
 The folder is expected to contain `FD1Left.stl` and `TD1Left.stl` (or the Right
 equivalents). Files named for the bone also work, so a folder exported straight out of
