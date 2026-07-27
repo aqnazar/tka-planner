@@ -8,6 +8,8 @@ the answer can be a correction rather than a design exercise.
 > establish which of our assumptions are clinically defensible before any of them are
 > published as method.
 
+*Русская версия: [CLINICAL_QUESTIONS.ru.md](CLINICAL_QUESTIONS.ru.md) — same numbering.*
+
 **How to use this.** Sections 1–3 are blocking: the plan is not clinically meaningful
 until they are answered, and several of them change code. Sections 4–7 shape what the
 system should become. Section 8 is process. A question marked **[decision]** needs a

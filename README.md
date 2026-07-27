@@ -53,7 +53,8 @@ From two segmented bone surfaces, with no manual picking required:
 
 Methodology, including what each decision replaced and why, is in
 [docs/METHODS.md](docs/METHODS.md). The clinical assumptions still awaiting a surgeon's
-answer are collected in [docs/CLINICAL_QUESTIONS.md](docs/CLINICAL_QUESTIONS.md).
+answer are collected in [docs/CLINICAL_QUESTIONS.md](docs/CLINICAL_QUESTIONS.md), also in
+Russian as [docs/CLINICAL_QUESTIONS.ru.md](docs/CLINICAL_QUESTIONS.ru.md).
 
 ## Install
 
