@@ -1,7 +1,8 @@
 # Standalone application: design
 
 Date: 2026-09-09
-Status: approved, pending implementation plan
+Status: approved. Milestones 1 to 8 built; milestone 9 held open deliberately, see
+section 11.
 
 Turns the Blender-dependent planner into a standalone application: a local web
 application with a Python backend and a browser viewer, with no Blender required to
@@ -302,6 +303,28 @@ Milestones 1 to 5 are the engine extraction and get the first implementation pla
 end with the add-on running unchanged on a Blender-free engine, which is a complete and
 useful state on its own. Milestones 6 to 9 are the application and get a second plan,
 written once the engine exists and its shape is known rather than guessed at now.
+
+### Status
+
+Milestones 1 to 8 are built. Two decisions differ from what section 7 called for, and
+both are recorded with their reasoning in `docs/METHODS.md`: the HTTP layer is the
+standard library rather than FastAPI, and the delta comes back in the response rather
+than over a WebSocket. Neither changes the delta format, and both were taken to keep the
+shipped dependency set at numpy and manifold3d.
+
+**Milestone 9 is deliberately not done.** The add-on is the only front end a person has
+driven, and the parity list in section 9 is checked headlessly against the API rather
+than in a browser. Retiring the add-on before somebody has planned a real case in the
+viewer would remove the only working tool on the strength of tests that cannot see. It
+should be retired after a first real session, not before, and `archive/` already holds
+the frozen copy either way.
+
+Section 12's first open question is answered: the stencil cap pass is not worth its
+complexity. A bone is closed, so a second copy drawn inside out behind the same clipping
+plane shows the back faces visible through the cut, and in resected-bone colour that
+reads as solid. The second question, whether repair changes committed geometry enough to
+matter, was answered by the agreement gate: the two solvers agree to within 0.0001 mm on
+the fixtures.
 
 Test 3 in section 10 requires a Blender installation and is marked `blender`, so it
 stays excluded from the default run like the existing Blender-dependent tests.

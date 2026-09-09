@@ -83,39 +83,42 @@ def build_scene(
         read_stl(tibia_path),
     )
 
-    if show_planes:
-        plane_mesh = gm.disc(PLANE_RADIUS_MM)
-        for name, resection in plan.resections.items():
-            scene.add(
-                Node(
-                    name=name,
-                    set_id=_set_for(name),
-                    rest=gm.plane_matrix(resection.point, resection.normal),
-                    colour=PLANE_COLOUR,
-                    alpha=0.35,
-                    tags={"plane": True, "edit_only": True},
-                ),
-                plane_mesh,
-            )
+    # Planes and axes are always built and their toggles set visibility, rather than
+    # the toggles deciding whether they exist. A node that is not there cannot be shown
+    # again without a rebuild, and rebuilding re-reads the segmentation.
+    plane_mesh = gm.disc(PLANE_RADIUS_MM)
+    for name, resection in plan.resections.items():
+        scene.add(
+            Node(
+                name=name,
+                set_id=_set_for(name),
+                rest=gm.plane_matrix(resection.point, resection.normal),
+                colour=PLANE_COLOUR,
+                alpha=0.35,
+                visible=show_planes,
+                tags={"plane": True, "edit_only": True},
+            ),
+            plane_mesh,
+        )
 
-    if show_axes:
-        for label, frame, set_id, length in (
-            ("FemoralMechanicalAxis", femoral_frame, FEMORAL, AXIS_LENGTH_MM),
-            ("TibialMechanicalAxis", tibial_frame, TIBIAL, -AXIS_LENGTH_MM),
-        ):
-            direction = np.asarray(frame.z_proximal, dtype=float)
-            direction = direction / np.linalg.norm(direction)
-            midpoint = np.asarray(frame.origin, dtype=float) + direction * (length / 2.0)
-            scene.add(
-                Node(
-                    name=label,
-                    set_id=set_id,
-                    rest=gm.plane_matrix(midpoint, direction),
-                    colour=AXIS_COLOUR,
-                    tags={"axis": True, "edit_only": True},
-                ),
-                gm.cylinder(AXIS_RADIUS_MM, abs(length)),
-            )
+    for label, frame, set_id, length in (
+        ("FemoralMechanicalAxis", femoral_frame, FEMORAL, AXIS_LENGTH_MM),
+        ("TibialMechanicalAxis", tibial_frame, TIBIAL, -AXIS_LENGTH_MM),
+    ):
+        direction = np.asarray(frame.z_proximal, dtype=float)
+        direction = direction / np.linalg.norm(direction)
+        midpoint = np.asarray(frame.origin, dtype=float) + direction * (length / 2.0)
+        scene.add(
+            Node(
+                name=label,
+                set_id=set_id,
+                rest=gm.plane_matrix(midpoint, direction),
+                colour=AXIS_COLOUR,
+                visible=show_axes,
+                tags={"axis": True, "edit_only": True},
+            ),
+            gm.cylinder(AXIS_RADIUS_MM, abs(length)),
+        )
 
     if landmarks is not None:
         # One shared sphere, instanced by rest transform. The Blender builder made a

@@ -229,14 +229,24 @@ class PlanningSession:
                     self.scene, self.controls.isolate_landmarks
                 )
             )
-        if "show_landmarks" in changes and not self.controls.isolate_landmarks:
-            delta = delta.merge(
-                scene_update.set_visibility(
-                    self.scene,
-                    lambda node: bool(node.tags.get("landmark")),
-                    self.controls.show_landmarks,
+        # Isolation owns visibility while it is on, so the individual toggles stand
+        # aside rather than fight it. What they set is remembered and applied when
+        # isolation ends, which is why they are still written to the controls.
+        if not self.controls.isolate_landmarks:
+            for control, tag in (
+                ("show_landmarks", "landmark"),
+                ("show_planes", "plane"),
+                ("show_axes", "axis"),
+            ):
+                if control not in changes:
+                    continue
+                delta = delta.merge(
+                    scene_update.set_visibility(
+                        self.scene,
+                        lambda node, tag=tag: bool(node.tags.get(tag)),
+                        getattr(self.controls, control),
+                    )
                 )
-            )
 
         if self.bones_affected_by(tuple(changes)):
             self.stale = True

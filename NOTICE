@@ -23,3 +23,14 @@ upon. That purpose is served by openness, not by clinical deployment.
 Every plan file produced by this software carries an `intended_use` field
 recording this restriction, and every generated report carries it in the
 header. Do not remove them.
+
+===============================================================================
+THIRD-PARTY COMPONENTS
+===============================================================================
+
+The browser viewer under web/ includes three.js (r169) and its OrbitControls,
+copyright 2010-2024 three.js authors, used under the MIT licence. The licence
+text travels with them in web/vendor/LICENSE-three.txt, and their provenance is
+recorded in web/vendor/README.md.
+
+No component of the shipped dependency set is licensed under the GPL.

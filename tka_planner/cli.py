@@ -232,6 +232,29 @@ def _measure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve(args: argparse.Namespace) -> int:
+    """Start the local application.
+
+    Imported here rather than at module scope so that `tka measure` on a machine that
+    never opens a browser does not pay for the server package.
+    """
+    from .server.__main__ import DEFAULT_STORE
+    from .server.__main__ import main as serve_main
+
+    argv = [
+        "--store", args.store or str(DEFAULT_STORE),
+        "--port", str(args.port),
+        "--host", args.host,
+    ]
+    if args.cases:
+        argv += ["--cases", args.cases]
+    if args.library:
+        argv += ["--library", args.library]
+    if args.no_browser:
+        argv.append("--no-browser")
+    return serve_main(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="tka",
@@ -265,6 +288,22 @@ def main(argv: list[str] | None = None) -> int:
         help="tibial resection depth below the higher plateau, in mm",
     )
     measure.set_defaults(func=_measure)
+
+    # `serve` runs the planner as an application: a local server and a browser viewer.
+    # Its arguments are defined by the server package rather than repeated here, so
+    # there is one description of them.
+    serve = subparsers.add_parser(
+        "serve", help="run the planner as a local application in a browser"
+    )
+    serve.add_argument("--cases", default=None, help="folder holding one case per "
+                       "subfolder")
+    serve.add_argument("--library", default=None, help="implant library folder")
+    serve.add_argument("--store", default=None, help="where cases, plans and "
+                       "committed geometry are kept")
+    serve.add_argument("--port", type=int, default=8731)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--no-browser", action="store_true")
+    serve.set_defaults(func=_serve)
 
     args = parser.parse_args(argv)
     return args.func(args)
