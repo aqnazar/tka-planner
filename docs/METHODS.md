@@ -236,6 +236,20 @@ the controls have been still for 0.6 s keeps the planes, axes and components mov
 15 to 26 fps, and those are what alignment is judged on. The same deferral applies to the
 first build, so pressing Plan returns in 3 s rather than 55.
 
+**The settle no longer costs more than the change that caused it.** A drag that only
+touches the tibia used to also re-bake the femur, because the deferral was scene-wide
+rather than per-control: `set_cuts_visible` mutes and restores every boolean it finds,
+with no idea which one the control that just moved actually depends on. That question has
+one clean answer without hand-mapping every control to an effect: diff the newly computed
+plan's resections and component poses against the last one actually cut. If a bone's
+resection plane and pose both come back identical, nothing about it changed, and it is
+left alone — no mute, no re-solve, no re-bake. Confirmed against all fourteen adjustment
+fields in both resection modes headlessly: fields that only reposition a component (AP/ML
+shift, in-plane rotation) diff to no change at all in Cut plane mode, where the plane
+cutter tracks the resection alone, and to exactly the one bone whose component moved in
+Cutting block mode, where the block's pose *is* the component's pose. Insert thickness
+diffs to no change in either mode, since it touches neither.
+
 ## Resecting with the cutting block
 
 The block and its shell are booleaned against the bone as the first pipeline did: the
@@ -290,6 +304,48 @@ epicondyles it holds between 5.3 and 9.1 mm.
 rotation near extension are not modelled, and the tibia is treated as a rigid body
 hinging in one plane.
 
+**Playback needs no baked copy, because the geometry is committed before it moves.**
+This is worth recording as history, because the machinery it replaced was substantial and
+the reason for it was real. The first version parented the tibia and its *unapplied*
+resection boolean straight to the flexion pivot. Blender does not cache a modifier's
+result across a frame change: it re-solves an unapplied boolean in full on every frame it
+evaluates, whether or not the cutter moved. Confirmed with a headless repro before
+touching any real code — a dense mesh with a *static* cutter cost the same per frame as
+one with a moving cutter, both around 11 s, because the tibia's own transform changing
+each frame was already enough to invalidate the cached result. A 120-frame animation at
+that cost is not a slow animation, it is a hang.
+
+The answer at the time was to apply the plan once to a plain copy of each bone with the
+modifiers baked in and removed, parent only that copy to anything that moved, and hide
+the live cuttable originals whenever the construct was posed. It worked: per-frame cost
+fell from about 11 s to under a millisecond. But it meant two parallel copies of the
+anatomy, a visibility handler to swap between them, an `EDIT_ONLY` tagging scheme, and a
+selective rebake to keep the copies in step.
+
+None of that survives the Plan / Commit / Reduce split. A committed resection is real
+geometry with no modifier behind it, so there is nothing to re-solve on a frame change
+and nothing to bake. Flexion is a rigid transform of the committed bones. The two copies,
+the handler, the tags and the rebake are all gone, and the cost is the same sub-millisecond
+it was after baking.
+
+**Trial reduction is a function of its three control values.** Flexion, a varus/valgus
+stress and an AP drawer, composed about a stored pivot whose basis is anatomical: local X
+the transepicondylar axis, local Y anterior. The stress composes onto the *already-flexed*
+frame rather than the fixed one, matching how a hands-on exam is actually relative to the
+tibia's current position; the drawer slides along the pivot's **rest** Y instead, because
+"anterior" for that test means the joint's own anterior rather than wherever flexion left
+the tibia pointing.
+
+The pose is computed as `pivot @ R @ pivot⁻¹` and *assigned*, never accumulated. That is
+the fix for a real bug, made structural. The parented version overwrote the pivot's
+rotation with just the requested turn, silently dropping the fixed anatomical basis the
+parenting was built against, so "zero" on every trial control no longer returned to the
+actual rest pose. It was caught by an isolated parent-chain repro and fixed by composing
+onto the basis. In the current model the mistake cannot be expressed: every node stores a
+rest transform, a set pose is assigned on top of it, and the world transform is always
+`set_pose @ rest`. Returning the controls to zero returns the construct to extension
+exactly, and a test asserts it.
+
 ## Quality control
 
 Scan coverage is **detected from the geometry, not declared**. Letting an operator tick
@@ -331,3 +387,48 @@ where compartments were labelled by world position and so were right on one side
 Blender-side geometry is verified headless and numerically — component offset from its
 cut plane, whether parts coincide, whether the joint stays articulated through the arc —
 rather than by inspection.
+
+## The boolean kernel
+
+Cutting is the one job the pipeline used to borrow Blender for, and Blender is GPL while
+this project is Apache 2.0. The cut now goes through a two-method interface — difference
+and intersection over meshes in millimetres — with two backends behind it.
+
+**`manifold3d` is the default**, and the only one in the shipped dependency set. It is
+Apache 2.0, it is fast enough that a full-resolution resection is seconds rather than
+tens of them, and it *refuses* a non-manifold input rather than guessing. That refusal is
+worth more than the speed. A solver that silently accepts a broken mesh returns broken
+geometry, and a cut that looks like a cut and is not is the failure this project keeps
+guarding against.
+
+Because segmentations are not reliably manifold, a repair pass runs first: weld, then
+drop degenerate and duplicated faces. It is deliberately conservative — it never moves a
+vertex and never fills a hole, so the honest answer to a hole in a segmentation is still
+that there is a hole. Whatever it did is recorded rather than done quietly, and lands in
+`plan.json` beside the measurement provenance.
+
+**Blender's exact solver is kept as a cross-check**, behind an optional extra, never
+imported at runtime. Four cases are cut in Blender once and committed as STL, and the
+gate asserts the two solvers agree on volume, surface area, bounding box and a symmetric
+Hausdorff distance to within 0.0001 mm. Keeping the reference in the repository rather
+than the dependency in the environment is deliberate: `bpy` importable in the working
+environment makes it far too easy to depend on Blender by accident.
+
+Two measurement decisions are worth stating, because both started as wrong answers.
+
+*Agreement is measured on the solid, never on its triangulation.* Two solvers producing
+the identical solid triangulate it differently, so a vertex of one routinely lands in the
+middle of a face of the other. A vertex-to-vertex comparison reported that as a 1 mm
+error. The metric is point-to-surface, by the standard barycentric-region method.
+
+*A triangle fan cannot read back a boolean's output.* A difference leaves non-convex
+n-gons — cutting a notch out of a face's edge produces one — and fanning such a polygon
+yields overlapping triangles whose signed areas cancel. The volume stays correct and the
+surface stays in the right place while the unsigned surface area is inflated, measured
+here at 12%. It presented as the two solvers disagreeing; it was the reader, not either
+solver. Blender's own triangulation is used now.
+
+`Mesh64` is used throughout rather than the float32 path. Anatomical coordinates run to
+several hundred millimetres, where single precision resolves to about 3e-5 mm. That is
+below any clinically meaningful tolerance, but it is a needless loss on a round trip and
+a planner that publishes its methods should not quietly discard digits.

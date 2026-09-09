@@ -9,10 +9,12 @@ description = "Open, reproducible pre-operative planning pipeline for total knee
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-dependencies = ["numpy>=1.24"]
+dependencies = ["numpy>=1.24", "manifold3d>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
+# GPL. Never imported at runtime; used only by the kernel cross-check test.
+blender = ["bpy>=4.4"]
 
 [project.scripts]
 tka = "tka_planner.cli:main"
@@ -22,6 +24,7 @@ include = ["tka_planner*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["archive", "legacy", ".git", "*.egg-info"]
 # Blender-dependent tests are opt-in: they need `blender --background`.
 addopts = "-m 'not blender'"
 markers = [
