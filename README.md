@@ -27,13 +27,13 @@ the same plan. Blender renders a plan into geometry; it does not decide anything
 geometry driven by continuous parameters. Discrete sizes are a legacy convenience, and
 a bone that falls between them — or beyond the largest — is not a problem to be clamped.
 
-**Nothing needs Blender.** Measurement, metrics, sizing, alignment planning, the scene
-and the cutting all run in plain Python on numpy and `manifold3d`. The anatomical maths
-is unit-tested against known-by-construction synthetic geometry, the sensitivity study
-runs thousands of Monte Carlo iterations in minutes, and you can audit the methods
-without installing anything heavy. Blender is now one optional front end that draws a
-scene the engine has already decided; it makes none of the decisions and can be removed
-without losing a feature.
+**Nothing needs Blender, and nothing needs the internet.** Measurement, metrics,
+sizing, alignment planning, the scene and the cutting all run in plain Python on numpy
+and `manifold3d`. It runs as an application of its own: a local server and a browser
+viewer, started with one command, binding the loopback interface only, with the
+JavaScript served from this repository rather than a content delivery network. Blender
+is one optional front end that draws a scene the engine has already decided; it makes
+none of the decisions and can be removed without losing a feature.
 
 **Geometry says how it was made, too.** Every cut records which solver ran, what it had
 to repair in the segmentation first, and whether it fell back — the same guarantee the
@@ -63,6 +63,9 @@ From two segmented bone surfaces, with no manual picking required:
 - **Trials** the finished construct by hand — flexion, a varus/valgus stress, an AP
   drawer — to check range of motion and impingement once it is cut and implanted,
   instantly and without touching the plan
+- **Remembers** what it cut, keyed on the geometry the cut depends on rather than on
+  the controls, so returning to a plan already committed costs a disk read instead of a
+  second run of the booleans
 
 Methodology, including what each decision replaced and why, is in
 [docs/METHODS.md](docs/METHODS.md). The clinical assumptions still awaiting a surgeon's
@@ -76,7 +79,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-`pytest` runs the whole suite, cutting included, with no Blender installed.
+`pytest` runs the whole suite, cutting included, with no Blender installed. Node is
+used by three of the tests to read a glTF file the Python encoder wrote, using the
+viewer's own reader; they skip if it is absent.
 
 Blender 4.4+ is needed only to use the add-on, and is tested through 5.1. Two checks
 have to be run inside it deliberately, and both gate on their exit code:
@@ -92,7 +97,43 @@ those cases change.
 
 ## How to operate it
 
-There are two ways in. The Blender add-on is the one to stand in front of.
+Three ways in. The application is the one to stand in front of. Blender is now optional
+and draws a scene it no longer computes; the command line does measurement and reporting
+without a screen at all.
+
+### The application
+
+```bash
+tka serve --cases path/to/cases --library path/to/implant/library
+```
+
+That starts a local server and opens a browser at `http://127.0.0.1:8731/`. Nothing
+leaves the machine: the server binds the loopback interface only, the viewer's
+JavaScript is served from the repository rather than a content delivery network, and no
+request goes anywhere else. It works with the network cable out.
+
+Pick a case, or type the path to a patient folder, and press Open.
+
+**Plan.** The panel carries every control: alignment philosophy, implant size, resection
+depths, slope, rotation, component position and insert thickness. The planned cut is
+previewed by clipping the bone against the planned half-space, so the cut follows the
+slider at the refresh rate of the screen. Nothing is carved yet. The readout on the
+right rebuilds on every change, so it cannot lag the plan.
+
+**Commit.** One press cuts the bones for real, at full resolution. On a 1.2 million
+triangle segmentation that is around forty seconds with the bone shells on. Only the
+bones whose cut actually moved are recomputed, and a cut computed once is stored: coming
+back to a plan already committed takes under a second, in this session or in a later
+one.
+
+**Reduce.** Flexion, a varus or valgus stress, an anteroposterior drawer, and a scripted
+flexion arc, all on the committed geometry. Every one is a rigid transform of the tibial
+set, so the response is immediate and stays immediate on integrated graphics. Editing a
+plan control here says so and offers the way back to Plan, because the application never
+shows a pose of geometry that no longer matches the plan.
+
+`Export plan` writes `plan.json`, `report.html`, `landmarks.json` and the geometry as
+STL, including the manual adjustments, which the command line has no way to record.
 
 ### The planning screen (Blender)
 
@@ -215,6 +256,10 @@ points do not land on the mesh is rejected rather than silently mis-placed.
 | `tka_planner/geom/` | Meshes and booleans. `manifold3d` by default, Blender only as a cross-check. |
 | `tka_planner/scene/` | The scene: sets, rest transforms, builder, updater, resection, motion. No `bpy`. |
 | `tka_planner/session.py` | One planning session, driveable with no user interface. |
+| `tka_planner/panel.py` | The control panel described once, so every front end builds the same one. |
+| `tka_planner/store/` | Cases and plans in SQLite, geometry in a content-addressed directory. |
+| `tka_planner/server/` | The local application: routes, sessions, and an HTTP adapter. |
+| `web/` | The browser viewer. three.js vendored, so it runs with no internet. |
 | `tka_planner/blender/` | Blender adapter. Draws a scene the engine built. The only place millimetres become metres. |
 | `tka_planner/addon/` | The planning screen: patient in, models and numbers out. |
 | `tka_planner/report/` | Single-file HTML reports, no external assets. |

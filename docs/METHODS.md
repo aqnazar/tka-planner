@@ -432,3 +432,102 @@ solver. Blender's own triangulation is used now.
 several hundred millimetres, where single precision resolves to about 3e-5 mm. That is
 below any clinically meaningful tolerance, but it is a needless loss on a round trip and
 a planner that publishes its methods should not quietly discard digits.
+
+## Persistence
+
+Records go in SQLite, geometry goes in a directory addressed by content hash, and the
+database refers to geometry by that hash. The split is what lets a hundred-megabyte
+femur be stored once and referenced by every plan that did not change it, and it keeps
+the database itself small enough to copy.
+
+**A commit is cached on what the boolean reads, not on what the surgeon set.** The key
+covers both source mesh digests, the resection mode, the shell flag, and the resection
+planes and component poses the plan resolved to; it does not cover the control values.
+Two things follow. A display toggle cannot throw away a commit that took forty seconds,
+because it changes no plane. And two different routes through the controls that arrive
+at the same cut hit the same entry, which keying the inputs would have missed.
+
+**The key is per bone.** Adjusting the tibial slope re-cuts the tibia and leaves the
+committed femur untouched. A single key over the whole plan would have thrown both away,
+which is the behaviour the add-on had and the reason a slope change used to cost a full
+re-cut.
+
+**A recut starts from the bone as it was read.** After a commit the scene holds the cut
+femur, so cutting again would subtract the moved block from geometry that is already
+missing its condyle: it removes more bone and can never put any back. The uncut mesh
+survives in the scene's content-addressed table at no cost, and the commit restores it
+before cutting. This was found by a test asserting that two commits either side of a
+0.001 mm change give the same volume.
+
+Every row carries an `owner`, empty for a single-user install and never read there. Its
+presence is the difference between multi-user being a filter and being a migration.
+
+Meshes are stored as compressed `npz` rather than STL. STL is float32 triangle soup, so
+a round trip through it would preserve neither the geometry nor the content hash that
+addresses it.
+
+## The application
+
+**The transport is the standard library, not a web framework.** The shipped dependency
+set is numpy and `manifold3d`. A local planner serving one surgeon on one machine gains
+nothing from an ASGI stack that `ThreadingHTTPServer` does not give it — there is no
+schema to publish, no third party calling in, no concurrency to manage. What it loses is
+worth avoiding: a clinical tool whose install can fail on a hospital machine because a
+transitive dependency moved. The routes are plain functions taking a method, a path and a
+body and returning a status and a payload, so a different transport is an adapter file.
+
+The same reasoning retires the WebSocket the design called for. Every delta in a local
+session answers a request the viewer itself just made, so a second channel to deliver it
+buys a socket, a reconnect policy and an ordering question in exchange for nothing. The
+delta format is unchanged and is exactly what a socket would have carried, so the channel
+can be added when a second writer — a tracker feed — exists to push from.
+
+Threaded, for one specific reason: a commit runs booleans that take tens of seconds, and
+the browser must still be able to fetch the meshes it is already drawing. Bound to the
+loopback interface, because a planner holding patient geometry has no business listening
+on a network interface, and a default cannot be forgotten.
+
+**Every mutating route answers with the same envelope** — the delta, the clipping
+half-spaces, the report lines, both sets of control values and the stale flag. The
+viewer therefore has one function for applying a response rather than one per control,
+and no route whose answer it has to special-case.
+
+**Millimetres stop at the glTF encoder.** Vertices are divided by a thousand there and
+node translations by the same factor in the viewer, which are the two halves of one
+boundary. A test asserts the two constants agree, because a mismatch puts every pose a
+metre out. Nothing else in the project sees a metre.
+
+## The browser viewer
+
+**Plan mode does not cut. It clips.** A planar resection is a half-space, and a clipping
+plane evaluates the same half-space per pixel instead of per triangle, so the previewed
+cut follows a slider at the refresh rate of the screen with no geometry work on either
+side. The only difference from the committed geometry is the triangulation of the cut
+face, which is why the preview is honest rather than an approximation of one.
+
+The design left open whether a stencil cap pass was worth its complexity. It is not.
+A bone is a closed surface, so drawing a second copy of it inside out behind the same
+clipping plane shows exactly the back faces visible through the cut; in resected-bone
+colour that reads as solid. It is a few lines against a multi-pass stencil setup, and the
+difference is a cut face that is shaded rather than flat.
+
+**The panel is described once, on the server.** Clinical ranges — the femoral cut may be
+flexed between -10 and +15 degrees — are not rendering details. A viewer that wrote its
+own copy of them would be a second place for a limit to live, and two places drift. The
+schema is served, the panel is built from it, and a test asserts it covers the session's
+controls exactly, so a control added to one and forgotten in the other fails the suite
+rather than becoming invisible.
+
+**The viewer computes nothing clinical.** Every number displayed comes from the server,
+which is what preserves the guarantee that the method behind a number is auditable. A
+test greps the viewer for the names of the planning functions; its job is to catch the
+moment somebody reimplements a measurement in JavaScript to save a round trip.
+
+**three.js is vendored, its glTF loader is not.** A tool holding patient geometry should
+not need the public internet to draw a bone, and a hospital machine frequently cannot
+reach it, so the library is committed with its MIT licence rather than fetched from a
+content delivery network. Its loader is left out because the server emits one mesh with
+one primitive, positions and indices: reading exactly that is forty lines against
+vendoring a loader for a format we deliberately do not use. Node reads a file the Python
+encoder wrote, using the viewer's own parser, so a disagreement about padding or accessor
+offsets fails in the test suite instead of silently in a browser console.
