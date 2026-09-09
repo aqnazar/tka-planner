@@ -29,7 +29,23 @@ from .api import Api, Binary
 
 __all__ = ["PlannerServer", "WEB_ROOT"]
 
-WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
+
+def _find_web_root() -> Path:
+    """Where the viewer's files live.
+
+    Beside the package when it has been installed with them, and at the repository root
+    when running from a checkout. Searching both means `python -m tka_planner.server`
+    works either way, which matters because a research tool is usually run from the
+    checkout it is being edited in.
+    """
+    here = Path(__file__).resolve()
+    for candidate in (here.parents[1] / "web", here.parents[2] / "web"):
+        if (candidate / "index.html").is_file():
+            return candidate
+    return here.parents[2] / "web"
+
+
+WEB_ROOT = _find_web_root()
 
 # Serving the wrong type for a JavaScript module makes the browser refuse it outright,
 # and Windows registers .js from the registry, where it is frequently wrong.

@@ -22,7 +22,7 @@ from tka_planner.panel import TRIAL_SCHEMA, with_sizes
 from tka_planner.report.bundle import export_session
 from tka_planner.scene.model import SceneDelta
 
-from .encode import clip_planes, scene_snapshot
+from .encode import clip_planes, node_payload, scene_snapshot
 
 __all__ = ["Api", "Binary", "ApiError"]
 
@@ -225,7 +225,7 @@ def _envelope(entry, delta=None, **extra) -> dict:
         "session_id": entry.session_id,
         "case_id": session.case_id,
         "side": session.side,
-        "delta": (delta or SceneDelta()).to_dict(),
+        "delta": _delta_payload(entry, delta or SceneDelta()),
         "clip": clip_planes(session.plan),
         "report": session.report_lines(),
         "controls": asdict(session.controls),
@@ -233,6 +233,24 @@ def _envelope(entry, delta=None, **extra) -> dict:
         "stale": bool(session.stale),
         **extra,
     }
+
+
+def _delta_payload(entry, delta) -> dict:
+    """The delta, with a description of any node the viewer has not seen before.
+
+    A commit does not only replace geometry; in cutting-block mode it *adds* the bone
+    shells, which exist nowhere in the snapshot the viewer drew from. Sending the node
+    alongside its mesh means the viewer's rule is simply "replace it if I have it, add
+    it if I do not", with no route whose answer it has to special-case.
+    """
+    payload = delta.to_dict()
+    scene = entry.session.scene
+    payload["nodes"] = {
+        name: node_payload(scene.nodes[name])
+        for name in payload["meshes"]
+        if name in scene.nodes
+    }
+    return payload
 
 
 def _segments(path: str) -> list:

@@ -221,14 +221,19 @@ export class Viewer {
     // node whose geometry did not change is never refetched.
     await Promise.all(
       Object.entries(delta.meshes || {}).map(([name, meshId]) =>
-        this.replaceMesh(name, meshId)
+        this.replaceMesh(name, meshId, delta.nodes?.[name])
       )
     );
   }
 
-  async replaceMesh(name, meshId) {
+  async replaceMesh(name, meshId, description) {
     const entry = this.nodes.get(name);
-    if (!entry) return null;
+    // A commit in cutting-block mode adds the bone shells, which were not in the scene
+    // the viewer drew from. The server sends the node beside its mesh, so a name the
+    // viewer does not know is added rather than dropped.
+    if (!entry) {
+      return description ? this.addNode({ ...description, mesh: meshId }) : null;
+    }
     const geometry = await this.geometry(meshId);
     entry.mesh.geometry = geometry;
     if (entry.cap) entry.cap.geometry = geometry;

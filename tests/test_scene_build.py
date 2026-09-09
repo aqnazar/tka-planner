@@ -77,8 +77,9 @@ def test_the_femoral_plane_belongs_to_the_femoral_set(scene):
 
 
 def test_planes_can_be_turned_off(build):
+    """Turned off means hidden, not absent, for the same reason the axes are."""
     scene = build(show_planes=False)
-    assert "femoral_distal" not in scene.nodes
+    assert scene.nodes["femoral_distal"].visible is False
 
 
 def test_both_mechanical_axes_are_drawn(scene):
@@ -95,8 +96,13 @@ def test_the_axis_lies_along_the_frame_it_was_built_from(knee, scene):
 
 
 def test_axes_can_be_turned_off(build):
+    """Turned off means hidden, not absent.
+
+    A node that does not exist cannot be shown again without rebuilding the scene, and
+    rebuilding re-reads the segmentation. So the toggle sets visibility.
+    """
     scene = build(show_axes=False)
-    assert "FemoralMechanicalAxis" not in scene.nodes
+    assert scene.nodes["FemoralMechanicalAxis"].visible is False
 
 
 def test_landmarks_become_nodes_tagged_as_landmarks(knee, scene):

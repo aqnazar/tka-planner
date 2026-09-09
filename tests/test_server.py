@@ -618,3 +618,45 @@ def test_the_real_viewer_is_served_with_types_a_browser_accepts(manager):
             assert body
     finally:
         server.stop()
+
+
+def test_a_commit_describes_the_shells_it_created(api, session_id):
+    """The shells exist nowhere in the snapshot the viewer drew from.
+
+    Without their node descriptions the viewer would receive a mesh id for a name it
+    has never heard of, and would silently drop the geometry a commit just spent
+    seconds computing.
+    """
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+
+    nodes = payload["delta"]["nodes"]
+    assert "Femur.Shell" in nodes
+    assert nodes["Femur.Shell"]["tags"]["shell"] is True
+    assert nodes["Femur.Shell"]["set"] == "femoral"
+    assert nodes["Femur.Shell"]["mesh"] == payload["delta"]["meshes"]["Femur.Shell"]
+
+
+def test_a_reused_commit_describes_its_shells_too(api, session_id, manager, folder):
+    """A cache hit must land in the viewer the same way a fresh cut does."""
+    post(api, f"/api/sessions/{session_id}/commit")
+
+    second = Api(SessionManager(store=manager.store))
+    reopened = post(second, "/api/sessions", {"folder": str(folder), "side": "left"})
+    payload = post(second, f"/api/sessions/{reopened['session_id']}/commit")
+
+    assert payload["commit"]["reused"]
+    assert "Femur.Shell" in payload["delta"]["nodes"]
+
+
+def test_toggling_the_planes_and_axes_changes_visibility(api, session_id):
+    hidden = post(
+        api, f"/api/sessions/{session_id}/controls",
+        {"changes": {"show_planes": False, "show_axes": False}},
+    )
+    assert hidden["delta"]["visibility"]["femoral_distal"] is False
+    assert hidden["delta"]["visibility"]["FemoralMechanicalAxis"] is False
+
+    shown = post(
+        api, f"/api/sessions/{session_id}/controls", {"changes": {"show_planes": True}}
+    )
+    assert shown["delta"]["visibility"]["femoral_distal"] is True
