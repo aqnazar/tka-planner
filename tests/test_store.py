@@ -160,3 +160,14 @@ def test_the_plan_key_notices_the_resection_mode(session):
 def test_the_plan_key_needs_a_plan(raw_session):
     with pytest.raises(ValueError, match="no plan"):
         plan_key(raw_session)
+
+
+def test_a_bone_key_ignores_the_other_bone(session):
+    """The whole point of a per-bone key: a tibial change must not recut the femur."""
+    femur_before = plan_key(session, ("Femur",))
+    tibia_before = plan_key(session, ("Tibia",))
+
+    session.replan(tibial_slope_delta_deg=2.0)
+
+    assert plan_key(session, ("Femur",)) == femur_before
+    assert plan_key(session, ("Tibia",)) != tibia_before
