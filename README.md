@@ -275,6 +275,12 @@ Cases are identified as `CASE_00N` only. The mapping to real identities is never
 committed; see `.gitignore`. Full-resolution meshes stay out of the repository, so the
 committed fixtures are coarse meshes and landmark coordinates.
 
+The application keeps a store — the cases it has opened, the plans it has computed and
+the geometry it has cut. It lives outside the repository, at `~/.tka-planner` unless
+`--store` says otherwise, and it holds patient-derived geometry. Treat it as patient
+data: it belongs wherever the segmentations belong, under the same handling, and it is
+not something to copy into a checkout.
+
 ## Citing
 
 This is the second part of published work on a custom parametric TKA implant system.
