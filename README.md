@@ -27,12 +27,20 @@ the same plan. Blender renders a plan into geometry; it does not decide anything
 geometry driven by continuous parameters. Discrete sizes are a legacy convenience, and
 a bone that falls between them — or beyond the largest — is not a problem to be clamped.
 
-**The core needs no Blender.** `tka_planner.core` depends only on numpy. Measurement,
-metrics, sizing and alignment planning all run in plain Python, which means the
-anatomical maths is unit-tested against known-by-construction synthetic geometry, the
-sensitivity study runs thousands of Monte Carlo iterations in minutes, and you can audit
-the methods without installing anything heavy. Blender renders decisions already made;
-it does not make any of them.
+**Nothing needs Blender.** Measurement, metrics, sizing, alignment planning, the scene
+and the cutting all run in plain Python on numpy and `manifold3d`. The anatomical maths
+is unit-tested against known-by-construction synthetic geometry, the sensitivity study
+runs thousands of Monte Carlo iterations in minutes, and you can audit the methods
+without installing anything heavy. Blender is now one optional front end that draws a
+scene the engine has already decided; it makes none of the decisions and can be removed
+without losing a feature.
+
+**Geometry says how it was made, too.** Every cut records which solver ran, what it had
+to repair in the segmentation first, and whether it fell back — the same guarantee the
+measurements already carried. `manifold3d` is the default and refuses a non-manifold
+input rather than guessing, which turns a class of silent wrong answers into a loud one.
+It is checked against Blender's exact solver on committed fixtures, where the two agree
+to within 0.0001 mm on volume, surface area, bounding box and Hausdorff distance.
 
 ## What it does
 
@@ -46,9 +54,9 @@ From two segmented bone surfaces, with no manual picking required:
   per-compartment resection depths, under mechanical or kinematic alignment
 - **Places** the implants, cutting blocks, shells and insert, each on its own cut
 - **Cuts** both bones along the planned planes
-- **Animates** flexion, femur fixed, tibia swinging about the transepicondylar axis, on
-  a baked, modifier-free copy of the construct so playback stays smooth regardless of
-  segmentation density
+- **Flexes** the joint, femur fixed, tibia swinging about the transepicondylar axis, as
+  a rigid transform of the committed geometry, so playback needs no bake and stays
+  smooth regardless of segmentation density
 - **Adjusts** by hand — varus/valgus, both resection depths, slope, femoral flexion,
   component rotation and position, insert thickness and size — with the cuts, the
   components and the bone following as the value changes
@@ -68,12 +76,19 @@ pip install -e ".[dev]"
 pytest
 ```
 
-`pytest` runs the full core test suite with no Blender installed. Blender-dependent
-tests are marked `blender` and excluded by default.
+`pytest` runs the whole suite, cutting included, with no Blender installed.
 
-Geometry production additionally needs Blender 4.4+ on the path. Tested through 5.1,
-which replaced Action's flat `fcurves` list with a layered model the add-on detects and
-handles either way.
+Blender 4.4+ is needed only to use the add-on, and is tested through 5.1. Two checks
+have to be run inside it deliberately, and both gate on their exit code:
+
+```bash
+blender --background --factory-startup --python tests/addon_parity.py
+blender --background --factory-startup --python tests/kernel_reference.py
+```
+
+The first drives the engine through the Blender renderer. The second regenerates the
+reference geometry the kernel agreement gate compares against, and is needed only when
+those cases change.
 
 ## How to operate it
 
@@ -121,30 +136,23 @@ patient-specific mating surface — the same pair of booleans the first pipeline
 *Cut plane* removes everything beyond the planned plane instead. The two are
 alternatives, never stacked: the plane would swallow the surfaces the block is shaping.
 
-The resection is **muted while a control is moving and recomputed once you stop**, which
-is what keeps a drag responsive. An exact boolean against a real segmentation is not
-cheap, measured on Patient_005 at full resolution:
+Cutting is a separate, explicit step. **Plan** puts the anatomy, the planes, the axes
+and the implants on screen and every control moves them at full speed; **Commit cuts**
+runs the resection at full resolution, once, when you ask for it.
 
-| | dragging | settling after you stop |
-|---|---|---|
-| Cutting block, with bone shells | 15 fps | 22 s |
-| Cutting block, no shells | 22 fps | 17 s |
-| Cut plane | 24 fps | 6 s |
-| No resection | 26 fps | — |
+That split is the whole performance story. An exact boolean against a real segmentation
+costs seconds, which cannot live inside a slider drag. The previous version hid it
+behind a mute-and-recompute debounce and still paid up to twenty two seconds of stall
+every time a drag settled. Taking the boolean out of the drag entirely removes both the
+stall and the machinery that managed it, and a control change becomes what it always
+should have been: a few dozen numpy operations and a matrix assignment.
 
-Two refinements sit on top of that measured baseline. First, a settle only re-solves
-whichever bone actually moved — adjusting the tibial slope no longer also re-copies an
-untouched femur. Second, a control that never moves a cutter skips the mute-and-recompute
-cycle entirely rather than merely shortening it: AP/ML position, in-plane rotation, and
-insert thickness change nothing a boolean depends on **in Cut plane mode**, so they are
-instant there. In Cutting block mode the same controls are not free, because the cutting
-block shares its implant's pose exactly — moving the implant moves the tool that would
-cut it, on purpose (the block is described as realising the cut, not decorating it) — so
-only insert thickness is free in that mode.
+A commit re-cuts only the bones whose cut actually changed, so adjusting the tibial
+slope leaves an untouched femur alone. Bone shells have their own toggle, as they are an
+export deliverable rather than something alignment is judged on.
 
-Turn off **Hide cuts while adjusting** to keep the resection live throughout, and expect
-the panel to stall for that long on every change. Bone shells have their own toggle, as
-they are an export deliverable rather than something alignment is judged on.
+The panel says **press Commit to cut** whenever the plan has moved since the last one,
+so the viewport never claims geometry that no longer matches the plan.
 
 The per-cut varus controls break the mediolateral agreement between the two cuts on
 purpose, and the plan warns when they do.
@@ -154,14 +162,13 @@ purpose, and the plan warns when they do.
 Once a plan is cut and implanted, **Trial reduction** poses the finished construct by
 hand — Flexion (trial), Varus/valgus stress, AP drawer — the way a surgeon checks range
 of motion, ligament balance and impingement intraoperatively. These three are rigid
-transforms of the same baked, modifier-free bones the flexion animation plays back on:
-no boolean is involved, so they are instant regardless of resection mode, and they never
-alter the plan. Moving the timeline out of frame 1, or moving any trial control away from
-zero, both mean the same thing to the viewport — show the implanted construct rather than
-the live editing geometry — so the two switch automatically and can be combined: scrub to
-a point in the scripted flexion arc, then dial in a stress there to see how the
-construct behaves at that angle. Needs **Animate flexion** on when the plan is built;
-**Reset trial pose** returns all three to zero.
+transforms of the committed bones: no boolean is involved, so they are instant
+regardless of resection mode, and they never alter the plan.
+
+A pose is a function of the three values alone, composed onto a stored rest basis rather
+than accumulated onto wherever the last one left the construct. Setting the same values
+twice gives the same pose and zeroing them returns exactly to extension, which the
+previous parented rig did not manage. **Reset trial pose** returns all three to zero.
 
 Distinct from Femoral's **Flexion (cut)**, which changes the femoral cut's sagittal angle
 and therefore the plan — the two are named to tell them apart, and each control's tooltip
@@ -205,11 +212,15 @@ points do not land on the mesh is rejected rather than silently mis-placed.
 | Path | Contents |
 |---|---|
 | `tka_planner/core/` | numpy only, no `bpy`. Frames, metrics, measurement, sizing, alignment planning. |
-| `tka_planner/blender/` | Blender adapter and scene builder. The only place millimetres become metres. |
+| `tka_planner/geom/` | Meshes and booleans. `manifold3d` by default, Blender only as a cross-check. |
+| `tka_planner/scene/` | The scene: sets, rest transforms, builder, updater, resection, motion. No `bpy`. |
+| `tka_planner/session.py` | One planning session, driveable with no user interface. |
+| `tka_planner/blender/` | Blender adapter. Draws a scene the engine built. The only place millimetres become metres. |
 | `tka_planner/addon/` | The planning screen: patient in, models and numbers out. |
 | `tka_planner/report/` | Single-file HTML reports, no external assets. |
 | `tka_planner/validation/` | Cohort runner and landmark sensitivity analysis. |
 | `docs/METHODS.md` | Every methodological decision, why it was made, and what it replaced. |
+| `archive/blender-addon/` | The add-on before the port, kept as its parity reference. |
 | `legacy/` | The frozen script behind the first paper. Do not modify — see its `PROVENANCE.md`. |
 | `tests/` | Runs without Blender. |
 
