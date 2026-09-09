@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TKA Planner</title>
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<header>
+  <h1>TKA Planner</h1>
+  <form id="open-form">
+    <label>Case
+      <select id="case-picker"><option value="">choose or type a folder</option></select>
+    </label>
+    <label>Folder <input id="folder" type="text" placeholder="path to the patient folder" size="34"></label>
+    <label>Side
+      <select id="side"><option value="left">Left</option><option value="right">Right</option></select>
+    </label>
+    <label>Library <input id="library" type="text" placeholder="implant library (optional)" size="24"></label>
+    <button type="submit" id="open">Open</button>
+  </form>
+  <p class="disclaimer">Research and demonstration only. Not a medical device.</p>
+</header>
+
+<main>
+  <aside id="panel">
+    <nav id="modes">
+      <button type="button" data-mode="plan" class="active">Plan</button>
+      <button type="button" data-mode="reduce">Reduce</button>
+    </nav>
+
+    <section id="plan-mode">
+      <div class="actions">
+        <button type="button" id="commit">Commit</button>
+        <button type="button" id="reset">Reset adjustments</button>
+      </div>
+      <div id="controls"></div>
+    </section>
+
+    <section id="reduce-mode" hidden>
+      <div id="trial"></div>
+      <div class="actions">
+        <button type="button" id="play">Play arc</button>
+        <button type="button" id="reset-trial">Reset pose</button>
+      </div>
+      <label class="arc">Arc to
+        <input id="arc-max" type="number" value="120" min="10" max="150" step="5"> deg
+      </label>
+    </section>
+
+    <section class="actions export">
+      <label>Export to <input id="export-path" type="text" placeholder="output folder" size="22"></label>
+      <button type="button" id="export">Export plan</button>
+    </section>
+
+    <label class="clean"><input id="clean" type="checkbox"> Clean viewport</label>
+  </aside>
+
+  <div id="view"></div>
+
+  <aside id="readout">
+    <div id="banner" hidden></div>
+    <div id="report"></div>
+    <div id="notes"></div>
+  </aside>
+</main>
+
+<div id="busy" hidden><span></span></div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

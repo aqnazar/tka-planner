@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from tka_planner.geom.gltf import write_glb
+from tka_planner.panel import TRIAL_SCHEMA, with_sizes
 from tka_planner.report.bundle import export_session
 from tka_planner.scene.model import SceneDelta
 
@@ -76,6 +77,8 @@ class Api:
             return {"status": "ok", "sessions": self.manager.open_sessions}
         if rest == ["cases"] and method == "GET":
             return {"cases": self.manager.available_cases()}
+        if rest == ["schema"] and method == "GET":
+            return self.schema()
         if rest == ["sessions"] and method == "POST":
             return self.open_session(body)
 
@@ -124,6 +127,22 @@ class Api:
             folder, side=body.get("side", "left"), library=body.get("library")
         )
         return self.snapshot(entry)
+
+    def schema(self) -> dict:
+        """The panel description, with the size menu filled from the loaded chart.
+
+        Served rather than hard-coded in the viewer so a clinical range lives in one
+        place. A front end that invented its own would be a second place for a limit to
+        live, and two places drift.
+        """
+        from tka_planner.core.sizing import load_size_chart
+        from tka_planner.session import find_size_chart
+
+        try:
+            labels = list(load_size_chart(find_size_chart()).labels)
+        except (FileNotFoundError, OSError, ValueError):
+            labels = []
+        return {"controls": with_sizes(labels), "trial": TRIAL_SCHEMA}
 
     def snapshot(self, entry) -> dict:
         """Everything a viewer needs to draw from cold."""

@@ -599,3 +599,22 @@ def test_an_unknown_file_is_not_found(running):
 
 def test_the_server_binds_loopback_only(running):
     assert running.address[0] == "127.0.0.1"
+
+
+def test_the_real_viewer_is_served_with_types_a_browser_accepts(manager):
+    """A JavaScript module served as text/plain is refused outright by the browser."""
+    server = PlannerServer(manager, port=free_port())
+    server.start()
+    try:
+        for path, expected in (
+            ("", "text/html"),
+            ("app.js", "application/javascript"),
+            ("style.css", "text/css"),
+            ("vendor/three.module.js", "application/javascript"),
+        ):
+            status, body, headers = _get(server.url + path)
+            assert status == 200, path
+            assert headers["Content-Type"].startswith(expected), path
+            assert body
+    finally:
+        server.stop()
