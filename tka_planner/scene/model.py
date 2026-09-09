@@ -21,7 +21,7 @@ import numpy as np
 
 from tka_planner.core.meshio import Mesh
 
-__all__ = ["FEMORAL", "TIBIAL", "Node", "Scene", "SceneDelta"]
+__all__ = ["FEMORAL", "TIBIAL", "Node", "Scene", "SceneDelta", "mesh_id"]
 
 FEMORAL = "femoral"
 TIBIAL = "tibial"
@@ -64,9 +64,9 @@ class Scene:
         the bone it was taken from without a second copy of two million triangles.
         """
         if mesh is not None:
-            mesh_id = _mesh_id(mesh)
-            self.meshes.setdefault(mesh_id, mesh)
-            node.mesh_id = mesh_id
+            digest = mesh_id(mesh)
+            self.meshes.setdefault(digest, mesh)
+            node.mesh_id = digest
         self.nodes[node.name] = node
         return node
 
@@ -94,10 +94,10 @@ class Scene:
 
     def replace_mesh(self, name: str, mesh: Mesh) -> str:
         """Swap a node's mesh, returning the new id."""
-        mesh_id = _mesh_id(mesh)
-        self.meshes[mesh_id] = mesh
-        self.nodes[name].mesh_id = mesh_id
-        return mesh_id
+        digest = mesh_id(mesh)
+        self.meshes[digest] = mesh
+        self.nodes[name].mesh_id = digest
+        return digest
 
 
 @dataclass
@@ -133,8 +133,12 @@ class SceneDelta:
         }
 
 
-def _mesh_id(mesh: Mesh) -> str:
-    """A content hash, so identical geometry is stored and transferred once."""
+def mesh_id(mesh: Mesh) -> str:
+    """A content hash, so identical geometry is stored and transferred once.
+
+    The same id addresses a mesh in the scene, in the store on disk and on the wire to
+    the viewer, which is what lets a bone that did not change at commit skip all three.
+    """
     digest = hashlib.sha256()
     digest.update(np.ascontiguousarray(mesh.vertices, dtype=np.float64).tobytes())
     digest.update(np.ascontiguousarray(mesh.faces, dtype=np.int64).tobytes())
