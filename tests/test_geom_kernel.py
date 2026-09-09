@@ -83,3 +83,27 @@ def test_a_cut_preserves_millimetre_precision(kernel):
 
     assert result.mesh.vertices.dtype == np.float64
     assert result.mesh.vertices[:, 0].min() == pytest.approx(295.0, abs=1e-9)
+
+
+def test_a_cut_result_can_be_cut_again(kernel):
+    """A second commit cuts an already-cut bone, so results must be re-usable inputs.
+
+    manifold3d hands its output back as read-only views onto its own buffers, which
+    nanobind then refuses on the way back in. The kernel copies out at the boundary.
+    """
+    once = kernel.difference(
+        gm.uv_sphere(20.0, segments=32, rings=24),
+        gm.box(20.0, gm.translation((15.0, 0.0, 0.0))),
+    ).mesh
+    twice = kernel.difference(
+        once, gm.box(20.0, gm.translation((0.0, 15.0, 0.0)))
+    ).mesh
+
+    assert gm.volume(twice) < gm.volume(once)
+
+
+def test_a_cut_result_owns_writable_data(kernel):
+    result = kernel.difference(gm.box(10.0), gm.box(4.0)).mesh
+
+    assert result.vertices.flags["WRITEABLE"]
+    assert result.faces.flags["WRITEABLE"]

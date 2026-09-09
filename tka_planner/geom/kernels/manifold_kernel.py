@@ -100,10 +100,19 @@ class ManifoldKernel:
 
     @staticmethod
     def _from_manifold(solid, like: Mesh) -> Mesh:
+        """Copy the result out of manifold3d's own buffers.
+
+        ``to_mesh64`` hands back read-only views onto memory the C++ solid owns. Two
+        reasons not to keep them. Their lifetime is tied to a solid this function is
+        about to drop, and a read-only array is rejected on the way back in, so a cut
+        bone could not be cut again -- which is exactly what a second commit does.
+        """
         surface = solid.to_mesh64()
         return Mesh(
-            vertices=np.asarray(surface.vert_properties, dtype=np.float64)[:, :3],
-            faces=np.asarray(surface.tri_verts, dtype=np.int64),
+            vertices=np.array(
+                surface.vert_properties[:, :3], dtype=np.float64, copy=True
+            ),
+            faces=np.array(surface.tri_verts, dtype=np.int64, copy=True),
             source_path=like.source_path,
             metadata={**like.metadata, "kernel": "manifold3d"},
         )
