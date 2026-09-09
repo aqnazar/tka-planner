@@ -50,11 +50,19 @@ def _is_4x() -> bool:
 
 
 def clear_scene() -> None:
-    """Empty the scene, including orphaned data, so repeated runs do not accumulate."""
+    """Empty the scene, including orphaned data, so repeated runs do not accumulate.
+
+    Removes objects directly through ``bpy.data`` rather than selecting and deleting
+    them. ``select_all`` silently skips anything with ``hide_viewport`` set, which the
+    plane cutters always have and the flexion animation's editing objects have while
+    the timeline sits away from frame 1 -- either one left a hidden object out of the
+    old select-and-delete, orphaned to survive the "clear" and duplicate on the next
+    Plan press, which is what surfaced as extra cutting blocks in the scene.
+    """
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=False)
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
 
     for collection in (bpy.data.meshes, bpy.data.materials, bpy.data.collections):
         for item in list(collection):

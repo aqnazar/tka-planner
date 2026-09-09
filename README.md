@@ -46,10 +46,15 @@ From two segmented bone surfaces, with no manual picking required:
   per-compartment resection depths, under mechanical or kinematic alignment
 - **Places** the implants, cutting blocks, shells and insert, each on its own cut
 - **Cuts** both bones along the planned planes
-- **Animates** flexion, femur fixed, tibia swinging about the transepicondylar axis
+- **Animates** flexion, femur fixed, tibia swinging about the transepicondylar axis, on
+  a baked, modifier-free copy of the construct so playback stays smooth regardless of
+  segmentation density
 - **Adjusts** by hand — varus/valgus, both resection depths, slope, femoral flexion,
   component rotation and position, insert thickness and size — with the cuts, the
   components and the bone following as the value changes
+- **Trials** the finished construct by hand — flexion, a varus/valgus stress, an AP
+  drawer — to check range of motion and impingement once it is cut and implanted,
+  instantly and without touching the plan
 
 Methodology, including what each decision replaced and why, is in
 [docs/METHODS.md](docs/METHODS.md). The clinical assumptions still awaiting a surgeon's
@@ -66,7 +71,9 @@ pytest
 `pytest` runs the full core test suite with no Blender installed. Blender-dependent
 tests are marked `blender` and excluded by default.
 
-Geometry production additionally needs Blender 4.4+ on the path.
+Geometry production additionally needs Blender 4.4+ on the path. Tested through 5.1,
+which replaced Action's flat `fcurves` list with a layered model the add-on detects and
+handles either way.
 
 ## How to operate it
 
@@ -96,13 +103,15 @@ blocks seat on the cuts, and the correction angle, resection depths and sizing a
 the sidebar.
 
 Everything below **Plan** in the panel then adjusts that plan in place, and the scene
-follows as the value changes, at 15 to 26 updates a second on a full-resolution pair:
+follows as the value changes — 15 to 26 updates a second on a full-resolution pair while
+a control that moves a cutter is being dragged, and instantly for the few that never do
+(below):
 
 | Control | What moves |
 |---|---|
 | Varus / valgus | Both cuts together, with every component, keeping their shared mediolateral slope |
 | Alignment, size, tibial resection | The whole plan; size rescales the implants without re-importing them |
-| Femoral: resection, flexion, varus, rotation, AP and ML position | The distal cut and the femoral component and blocks |
+| Femoral: resection, flexion (cut), varus, rotation, AP and ML position | The distal cut and the femoral component and blocks |
 | Tibial: resection, slope, varus, rotation, AP and ML position | The proximal cut and the tray, insert and blocks |
 | Insert thickness | The insert slab, and the extension gap reported per compartment |
 
@@ -123,12 +132,40 @@ cheap, measured on Patient_005 at full resolution:
 | Cut plane | 24 fps | 6 s |
 | No resection | 26 fps | — |
 
+Two refinements sit on top of that measured baseline. First, a settle only re-solves
+whichever bone actually moved — adjusting the tibial slope no longer also re-copies an
+untouched femur. Second, a control that never moves a cutter skips the mute-and-recompute
+cycle entirely rather than merely shortening it: AP/ML position, in-plane rotation, and
+insert thickness change nothing a boolean depends on **in Cut plane mode**, so they are
+instant there. In Cutting block mode the same controls are not free, because the cutting
+block shares its implant's pose exactly — moving the implant moves the tool that would
+cut it, on purpose (the block is described as realising the cut, not decorating it) — so
+only insert thickness is free in that mode.
+
 Turn off **Hide cuts while adjusting** to keep the resection live throughout, and expect
 the panel to stall for that long on every change. Bone shells have their own toggle, as
 they are an export deliverable rather than something alignment is judged on.
 
 The per-cut varus controls break the mediolateral agreement between the two cuts on
 purpose, and the plan warns when they do.
+
+### Trial reduction
+
+Once a plan is cut and implanted, **Trial reduction** poses the finished construct by
+hand — Flexion (trial), Varus/valgus stress, AP drawer — the way a surgeon checks range
+of motion, ligament balance and impingement intraoperatively. These three are rigid
+transforms of the same baked, modifier-free bones the flexion animation plays back on:
+no boolean is involved, so they are instant regardless of resection mode, and they never
+alter the plan. Moving the timeline out of frame 1, or moving any trial control away from
+zero, both mean the same thing to the viewport — show the implanted construct rather than
+the live editing geometry — so the two switch automatically and can be combined: scrub to
+a point in the scripted flexion arc, then dial in a stress there to see how the
+construct behaves at that angle. Needs **Animate flexion** on when the plan is built;
+**Reset trial pose** returns all three to zero.
+
+Distinct from Femoral's **Flexion (cut)**, which changes the femoral cut's sagittal angle
+and therefore the plan — the two are named to tell them apart, and each control's tooltip
+points at the other.
 
 **Reset to plan** returns every manual control to the computed plan. Adjustments are part
 of the plan record, so an adjusted plan still re-derives from its own file.

@@ -24,6 +24,7 @@ import traceback
 from pathlib import Path
 
 import bpy
+import numpy as np
 from bpy.props import (
     BoolProperty,
     EnumProperty,
@@ -97,6 +98,10 @@ def _session():
 RECUT_IDLE_SECONDS = 0.6
 _LAST_CHANGE = [0.0]
 _TIMER_ARMED = [False]
+# Bones a settled drag actually needs to re-cut, accumulated across every change made
+# during the drag (a drag can touch more than one control before it settles) and
+# consumed once by the idle timer. See `_cut_affecting_bones`.
+_PENDING_BONES: set = set()
 
 
 def _restore_cuts_when_idle():
@@ -111,19 +116,97 @@ def _restore_cuts_when_idle():
         return remaining
 
     _TIMER_ARMED[0] = False
+    bones = tuple(_PENDING_BONES)
+    _PENDING_BONES.clear()
     try:
         from tka_planner.blender.build import set_cuts_visible
         set_cuts_visible(True)
+        _rebake_for_animation(bones)
     except Exception:
         traceback.print_exc()
     return None
 
 
-def _defer_cuts() -> None:
-    """Hide the cuts now, and arrange for them to come back."""
+def _cut_affecting_bones(session, properties, plan) -> tuple[str, ...]:
+    """Which of Femur/Tibia actually need their boolean re-solved for this plan.
+
+    One ``update`` callback serves every control -- Blender does not say which
+    property fired it -- so this diffs the new plan against the last one actually cut,
+    rather than mapping each control to an effect by hand. That mapping would also be
+    mode-dependent: a position or rotation adjustment never moves the plane cutter, but
+    it does move the cutting block, because the block's pose *is* the component's pose
+    by design (the block is the instrument that would realise the cut the implant then
+    sits on). So the same control is free in "Cut plane" mode and not free in "Cutting
+    block" mode, and diffing the actual output sidesteps having to encode that by hand.
+
+    Returns the empty tuple when nothing that matters to either bone changed -- an
+    insert-thickness or use-insert toggle, for instance -- which is what lets those
+    controls skip the mute-recut-rebake cycle entirely.
+    """
+    previous = session.get("last_plan")
+    if previous is None:
+        return ("Femur", "Tibia")
+
+    def resection_changed(name):
+        old, new = previous.resections[name], plan.resections[name]
+        return not (
+            np.allclose(old.point, new.point, atol=1e-6)
+            and np.allclose(old.normal, new.normal, atol=1e-9)
+        )
+
+    def component_changed(name):
+        old, new = previous.components.get(name), plan.components.get(name)
+        if old is None or new is None:
+            return old is not new
+        return not np.allclose(old, new, atol=1e-6)
+
+    if properties.resection_mode == "block":
+        femur_changed = component_changed("femoral_component")
+        tibia_changed = component_changed("tibial_component")
+    else:
+        femur_changed = resection_changed("femoral_distal")
+        tibia_changed = resection_changed("tibial_proximal")
+
+    bones = []
+    if femur_changed:
+        bones.append("Femur")
+    if tibia_changed:
+        bones.append("Tibia")
+    return tuple(bones)
+
+
+def _rebake_for_animation(bones=("Femur", "Tibia")) -> None:
+    """Refresh the animation-ready bones once the true cut is visible again.
+
+    A no-op unless the current scene actually animates, or nothing that reaches the
+    baked pair changed: without a flexion animation there is nothing parented to it,
+    and re-baking an unchanged bone would just be wasted boolean-sized work for a mesh
+    identical to what is already there.
+    """
+    if not bones:
+        return
+    session = _session()
+    properties = bpy.context.scene.tka_planner
+    if session is None or not properties.has_scene or not properties.animate_flexion:
+        return
+    from tka_planner.blender.build import bake_animation_bones, sync_animation_visibility
+
+    bake_animation_bones(bones=bones)
+    sync_animation_visibility(bpy.context.scene)
+
+
+def _defer_cuts(bones=("Femur", "Tibia")) -> None:
+    """Hide the cuts now, and arrange for them to come back.
+
+    ``bones`` accumulates into ``_PENDING_BONES`` rather than replacing it, because a
+    drag can touch more than one control -- coronal correction, say, moving both --
+    before the idle timer fires, and the rebake it triggers must cover everything that
+    changed across the whole drag, not only the most recent control.
+    """
     from tka_planner.blender.build import set_cuts_visible
 
     _LAST_CHANGE[0] = time.monotonic()
+    _PENDING_BONES.update(bones)
     set_cuts_visible(False)
     if not _TIMER_ARMED[0]:
         _TIMER_ARMED[0] = True
@@ -146,6 +229,12 @@ ADJUSTMENT_PROPERTIES = (
     "tibial_rotation_delta_deg",
     "tibial_shift_ap_mm",
     "tibial_shift_ml_mm",
+)
+
+TRIAL_PROPERTIES = (
+    "trial_flexion_deg",
+    "trial_varus_valgus_deg",
+    "trial_drawer_ap_mm",
 )
 
 
@@ -302,10 +391,16 @@ def _replan(properties, context) -> None:
     try:
         from tka_planner.blender.build import update_scene
 
-        if properties.defer_cuts:
-            _defer_cuts()
-
         plan, sizing = _plan_from(session, properties)
+        changed_bones = _cut_affecting_bones(session, properties, plan)
+
+        # Nothing that reaches a cutter or a cutting block changed -- a shift, an
+        # in-plane rotation in "Cut plane" mode, an insert-only change -- so there is
+        # nothing to mute and nothing to recompute; only the planes and the components
+        # move, at full speed, below.
+        if changed_bones and properties.defer_cuts:
+            _defer_cuts(changed_bones)
+
         update_scene(
             plan,
             insert_thickness_mm=(
@@ -314,6 +409,12 @@ def _replan(properties, context) -> None:
             live_cuts=properties.live_cuts and properties.resection_mode != "none",
             implant_ml_mm=sizing.implant_ml_mm,
         )
+        if changed_bones and not properties.defer_cuts:
+            # No idle timer is coming to trigger the rebake, and the cutter has just been
+            # moved to its new position above, so the change just made is already the
+            # true settled state.
+            _rebake_for_animation(changed_bones)
+        session["last_plan"] = plan
         properties.result_lines = "\n".join(_report_lines(session, plan, sizing))
         properties.status_is_error = False
         properties.status = (
@@ -323,6 +424,54 @@ def _replan(properties, context) -> None:
         traceback.print_exc()
         properties.status_is_error = True
         properties.status = f"{type(error).__name__}: {error}"
+
+
+def _apply_trial_pose(properties, context) -> None:
+    """Pose the finished, implanted construct by hand -- flexion, a varus/valgus
+    stress, an AP drawer -- to check fit and impingement once the plan is cut.
+
+    This is the control every trial slider calls, and it never re-plans: it moves one
+    empty. Nothing here can be slow, so unlike `_replan` it does not need deferring,
+    diffing, or a settle timer -- the whole reason those exist is that a boolean is
+    involved, and none is here.
+    """
+    session = _session()
+    if session is None or not properties.has_scene:
+        return
+
+    from tka_planner.blender.build import set_trial_pose, sync_animation_visibility
+
+    posed = set_trial_pose(
+        flexion_deg=properties.trial_flexion_deg,
+        varus_valgus_deg=properties.trial_varus_valgus_deg,
+        drawer_ap_mm=properties.trial_drawer_ap_mm,
+    )
+    sync_animation_visibility(context.scene)
+    if not posed:
+        properties.status_is_error = True
+        properties.status = (
+            "No trial rig: rebuild with Animate flexion on to pose the implanted "
+            "construct by hand"
+        )
+
+
+def _toggle_isolate_landmarks(properties, context) -> None:
+    """Show only the landmarks, or put everything back -- a visibility flip, not a
+    re-plan, so it applies the moment the checkbox changes."""
+    session = _session()
+    if session is None or not properties.has_scene:
+        return
+
+    from tka_planner.blender.build import sync_animation_visibility
+    sync_animation_visibility(context.scene)
+
+
+def _toggle_clean_viewport(properties, context) -> None:
+    """Flip the open 3D viewports to a plain white background with no grid or axis
+    lines, or back. A display preference rather than scene state, so unlike everything
+    else in this file it needs no session and no plan to have been built."""
+    from tka_planner.blender.build import set_clean_viewport
+    set_clean_viewport(properties.clean_viewport)
 
 
 def _report_lines(session, plan, sizing) -> list[str]:
@@ -457,8 +606,12 @@ class TKAPlannerProperties(PropertyGroup):
         update=_replan,
     )
     femoral_flexion_delta_deg: FloatProperty(
-        name="Flexion",
-        description="Sagittal flexion of the femoral component; positive flexes it",
+        name="Flexion (cut)",
+        description=(
+            "Sagittal flexion of the femoral cut and component; positive flexes it. "
+            "Changes the cut, unlike Trial reduction's Flexion below, which only poses "
+            "the already-cut construct"
+        ),
         default=0.0, min=-10.0, max=15.0, step=25, precision=1,
         update=_replan,
     )
@@ -554,7 +707,16 @@ class TKAPlannerProperties(PropertyGroup):
     # ---- Display ----------------------------------------------------
     show_planes: BoolProperty(name="Cut planes", default=True)
     show_axes: BoolProperty(name="Axes", default=True)
-    show_landmarks: BoolProperty(name="Show landmarks", default=False)
+    show_landmarks: BoolProperty(name="Show landmarks", default=True)
+    isolate_landmarks: BoolProperty(
+        name="Isolate landmarks", default=False,
+        description=(
+            "Hide everything but the landmarks -- bones, implants, blocks, shells, "
+            "planes and axes -- for watching how they move relative to each other "
+            "through flexion or a trial pose without anything else in the way"
+        ),
+        update=_toggle_isolate_landmarks,
+    )
     resection_mode: EnumProperty(
         name="Resect with",
         description="What removes the bone",
@@ -607,10 +769,52 @@ class TKAPlannerProperties(PropertyGroup):
         description="Peak flexion angle for the animation, in degrees",
     )
 
+    # ---- Trial reduction ---------------------------------------------
+    #
+    # A hand exam of the finished, implanted construct -- flexion, a coronal stress,
+    # an AP drawer -- checking fit and impingement rather than adjusting the plan. Pure
+    # rigid transforms of the baked pair, so unlike everything above they carry no
+    # boolean cost and need no deferring: `_apply_trial_pose` just moves an empty.
+    trial_flexion_deg: FloatProperty(
+        name="Flexion (trial)", default=0.0, min=-10.0, max=150.0, step=25, precision=1,
+        description=(
+            "Flex the implanted construct by hand, about the transepicondylar axis -- "
+            "instant, poses the baked construct without touching the cut, unlike "
+            "Femoral's Flexion (cut) above. Independent of the scripted flexion "
+            "animation -- leave the timeline at frame 1 while using this, or the two "
+            "add together"
+        ),
+        update=_apply_trial_pose,
+    )
+    trial_varus_valgus_deg: FloatProperty(
+        name="Varus / valgus stress", default=0.0, min=-15.0, max=15.0,
+        step=25, precision=1,
+        description=(
+            "Apply a coronal stress at the current trial flexion angle, the way a "
+            "manual laxity exam does. Rigid: this does not touch the cuts or the plan"
+        ),
+        update=_apply_trial_pose,
+    )
+    trial_drawer_ap_mm: FloatProperty(
+        name="AP drawer", default=0.0, min=-15.0, max=15.0, step=10, precision=1,
+        description="Slide the tibia anterior/posterior to check an AP drawer test",
+        update=_apply_trial_pose,
+    )
+
     # ---- Panel state ------------------------------------------------
     show_femoral: BoolProperty(name="Femoral", default=True)
     show_tibial: BoolProperty(name="Tibial", default=True)
+    show_trial: BoolProperty(name="Trial reduction", default=True)
     show_display: BoolProperty(name="Display", default=False)
+    clean_viewport: BoolProperty(
+        name="White background, no lines", default=False,
+        description=(
+            "Plain white background with the floor grid and axis lines hidden, in "
+            "every open 3D viewport -- a display preference, applies immediately, "
+            "needs no plan built"
+        ),
+        update=_toggle_clean_viewport,
+    )
 
     # Results, written by the operator and read by the panel.
     has_result: BoolProperty(default=False)
@@ -693,6 +897,7 @@ class TKA_OT_plan(Operator):
         _SESSION["current"] = session
 
         plan, sizing = _plan_from(session, properties)
+        session["last_plan"] = plan
 
         components = {}
         library = Path(bpy.path.abspath(properties.implant_library or ""))
@@ -750,6 +955,22 @@ class TKA_OT_reset(Operator):
         return {"FINISHED"}
 
 
+class TKA_OT_reset_trial(Operator):
+    """Put the trial rig back to extension, no stress, no drawer."""
+
+    bl_idname = "tka.reset_trial"
+    bl_label = "Reset trial pose"
+    bl_description = "Return the hand exam -- flexion, stress, drawer -- to zero"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        properties = context.scene.tka_planner
+        for name in TRIAL_PROPERTIES:
+            properties.property_unset(name)
+        _apply_trial_pose(properties, context)
+        return {"FINISHED"}
+
+
 class TKA_OT_clear(Operator):
     """Empty the scene."""
 
@@ -759,9 +980,11 @@ class TKA_OT_clear(Operator):
 
     def execute(self, context):
         _ensure_package_importable()
+        from tka_planner.blender.build import unregister_animation_visibility_handler
         from tka_planner.blender.io import clear_scene
 
         clear_scene()
+        unregister_animation_visibility_handler()
         _SESSION.pop("current", None)
         context.scene.tka_planner.has_result = False
         context.scene.tka_planner.has_scene = False
@@ -819,6 +1042,7 @@ class TKA_PT_panel(Panel):
         self._draw_femoral(layout, properties)
         self._draw_tibial(layout, properties)
         self._draw_insert(layout, properties)
+        self._draw_trial(layout, properties)
         self._draw_display(layout, properties)
 
         layout.separator()
@@ -876,14 +1100,35 @@ class TKA_PT_panel(Panel):
             box.prop(properties, "insert_thickness_mm", slider=True)
             box.label(text="Placeholder slab", icon="INFO")
 
+    def _draw_trial(self, layout, properties):
+        box = self._header(
+            layout, properties, "show_trial", "Trial reduction", "ARMATURE_DATA"
+        )
+        if not properties.show_trial:
+            return
+        box.label(
+            text="Hand exam of the cut, implanted construct -- instant, no re-plan"
+        )
+        if not properties.animate_flexion:
+            box.label(text="Needs Animate flexion on, then Plan again", icon="ERROR")
+        column = box.column(align=True)
+        column.enabled = properties.animate_flexion
+        column.prop(properties, "trial_flexion_deg", slider=True)
+        column.prop(properties, "trial_varus_valgus_deg", slider=True)
+        column.prop(properties, "trial_drawer_ap_mm", slider=True)
+        box.operator("tka.reset_trial", icon="LOOP_BACK")
+
     def _draw_display(self, layout, properties):
         box = self._header(layout, properties, "show_display", "Display", "HIDE_OFF")
         if not properties.show_display:
             return
+        box.prop(properties, "clean_viewport", toggle=True)
         row = box.row(align=True)
         row.prop(properties, "show_planes", toggle=True)
         row.prop(properties, "show_axes", toggle=True)
         box.prop(properties, "show_landmarks", toggle=True)
+        if properties.show_landmarks:
+            box.prop(properties, "isolate_landmarks", toggle=True)
         box.label(text="Resect with")
         box.prop(properties, "resection_mode", text="")
         if properties.resection_mode == "block" and not properties.implant_library:
@@ -922,6 +1167,7 @@ _CLASSES = (
     TKAPlannerProperties,
     TKA_OT_plan,
     TKA_OT_reset,
+    TKA_OT_reset_trial,
     TKA_OT_clear,
     TKA_PT_panel,
 )
@@ -935,6 +1181,11 @@ def register():
 
 
 def unregister():
+    try:
+        from tka_planner.blender.build import unregister_animation_visibility_handler
+        unregister_animation_visibility_handler()
+    except Exception:
+        traceback.print_exc()
     del bpy.types.Scene.tka_planner
     for cls in reversed(_CLASSES):
         unregister_class(cls)

@@ -236,6 +236,20 @@ the controls have been still for 0.6 s keeps the planes, axes and components mov
 15 to 26 fps, and those are what alignment is judged on. The same deferral applies to the
 first build, so pressing Plan returns in 3 s rather than 55.
 
+**The settle no longer costs more than the change that caused it.** A drag that only
+touches the tibia used to also re-bake the femur, because the deferral was scene-wide
+rather than per-control: `set_cuts_visible` mutes and restores every boolean it finds,
+with no idea which one the control that just moved actually depends on. That question has
+one clean answer without hand-mapping every control to an effect: diff the newly computed
+plan's resections and component poses against the last one actually cut. If a bone's
+resection plane and pose both come back identical, nothing about it changed, and it is
+left alone — no mute, no re-solve, no re-bake. Confirmed against all fourteen adjustment
+fields in both resection modes headlessly: fields that only reposition a component (AP/ML
+shift, in-plane rotation) diff to no change at all in Cut plane mode, where the plane
+cutter tracks the resection alone, and to exactly the one bone whose component moved in
+Cutting block mode, where the block's pose *is* the component's pose. Insert thickness
+diffs to no change in either mode, since it touches neither.
+
 ## Resecting with the cutting block
 
 The block and its shell are booleaned against the bone as the first pipeline did: the
@@ -289,6 +303,35 @@ epicondyles it holds between 5.3 and 9.1 mm.
 **Stated simplifications:** the axis is fixed, so femoral rollback and the screw-home
 rotation near extension are not modelled, and the tibia is treated as a rigid body
 hinging in one plane.
+
+**Playback runs on a baked copy, not the live, boolean-modified bone.** The first version
+parented the tibia and its unapplied resection boolean straight to the flexion pivot, and
+played back fine in isolation — the bug only showed up once the panel's live-cut controls
+existed to unapply that boolean in the first place. Blender does not cache a modifier's
+result across a frame change: it re-solves an unapplied boolean in full on every frame it
+evaluates, whether or not the cutter that frame actually moved. Confirmed with a headless
+repro before touching any real code — a dense mesh with a *static* cutter cost the same
+per frame as one with a moving one, both around 11 s, because the tibia's own transform
+changing each frame was already enough to invalidate the cached result. A 120-frame
+animation at that cost is not a slow animation, it is a hang. So the plan is applied once,
+to a plain copy of each bone with the modifiers baked in and removed (`Femur.Baked` /
+`Tibia.Baked`), and only that copy is parented to anything that moves; the live, cuttable
+originals stay in the scene for editing but are hidden whenever the construct is posed,
+by frame or by hand. Confirmed against the real pipeline code, not only the isolated
+repro: per-frame cost fell from about 11 s to under a millisecond once playback moved to
+the baked pair.
+
+**Trial reduction poses the same baked pair by hand.** A second empty, parented under the
+flexion pivot with an explicit anatomical basis (local X the transepicondylar axis, local
+Y anterior) rather than the pivot's own minimal, unconstrained-roll orientation, carries
+flexion, a varus/valgus stress and an AP drawer as three independent rigid turns and a
+slide — never a boolean, so never a reason to defer. The stress composes onto the
+*already-flexed* frame rather than the fixed one, matching how a hands-on exam is actually
+relative to the tibia's current position. Its first version overwrote the pivot's rotation
+with just that turn, silently dropping the fixed anatomical basis the parenting was built
+against, so "zero" on every trial control no longer returned to the actual rest pose —
+caught by an isolated parent-chain repro before it shipped, fixed by composing the turn
+onto the basis instead of replacing it.
 
 ## Quality control
 

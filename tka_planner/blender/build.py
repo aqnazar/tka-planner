@@ -27,7 +27,9 @@ from .io import (
 )
 
 __all__ = ["build_scene", "SceneResult", "add_component", "update_scene",
-           "resolve_component_meshes"]
+           "resolve_component_meshes", "bake_animation_bones",
+           "sync_animation_visibility", "unregister_animation_visibility_handler",
+           "set_trial_pose", "set_clean_viewport"]
 
 # Object names the live update path looks for. Keeping them in one place is what lets
 # `update_scene` find what `build_scene` made without either holding a reference, which
@@ -40,19 +42,39 @@ INSERT_SPACER = "TibialInsertSpacer"
 RESECTION_MODIFIERS = ("BlockResection", "Resection", "Shell")
 CUT_PLANES = {"femoral_distal": "femoral", "tibial_proximal": "tibial"}
 
-BONE_COLOUR = (0.88, 0.85, 0.78)
-RESECTED_COLOUR = (0.92, 0.72, 0.62)
-IMPLANT_COLOUR = (0.62, 0.66, 0.72)
-PLANE_COLOUR = (0.20, 0.60, 0.95)
-AXIS_COLOUR = (0.95, 0.35, 0.25)
-BLOCK_COLOUR = (0.35, 0.72, 0.45)
-SHELL_COLOUR = (0.95, 0.62, 0.35)
-# Landmark colour encodes provenance, so a glance says which were picked and which
-# the estimator guessed.
+# Names of the two animation-ready bones -- see `bake_animation_bones`.
+BAKED_FEMUR = "Femur.Baked"
+BAKED_TIBIA = "Tibia.Baked"
+# Custom properties used to swap between the editing scene (live booleans, muted
+# while a control moves, exact once it settles) and the animation scene (two
+# plain baked meshes, nothing to re-solve). Set on objects rather than tracked by
+# name, so the swap needs no knowledge of which objects the current resection
+# mode happened to create.
+EDIT_ONLY = "tka_edit_only"
+BAKED_BONE = "tka_baked_bone"
+# Landmarks are neither: they are relevant while editing and while animated alike, so
+# they are not swapped by the rule above at all -- see `sync_animation_visibility`. This
+# only marks them for the separate "isolate landmarks" display mode.
+LANDMARK = "tka_landmark"
+
+# One colour per category, chosen to stay distinct from every other category at a
+# glance: bone grey, implant blue, cutting-block green, shell red, plane cyan, axis
+# orange, landmark yellow. Cut bone keeps its own slightly warmer grey rather than the
+# implant or shell colour, so a resected surface still reads as *bone*.
+BONE_COLOUR = (0.62, 0.62, 0.62)
+RESECTED_COLOUR = (0.55, 0.52, 0.50)
+IMPLANT_COLOUR = (0.18, 0.38, 0.85)
+PLANE_COLOUR = (0.25, 0.80, 0.85)
+AXIS_COLOUR = (0.95, 0.55, 0.10)
+BLOCK_COLOUR = (0.30, 0.70, 0.35)
+SHELL_COLOUR = (0.85, 0.18, 0.18)
+# Landmark colour is yellow throughout, per-status shade rather than a different hue, so
+# provenance (present/estimated/derived) still reads at a glance without leaving the
+# yellow family the category is known by.
 LANDMARK_COLOURS = {
-    "present": (0.20, 0.80, 0.35),
-    "estimated": (0.95, 0.75, 0.15),
-    "derived": (0.35, 0.65, 0.95),
+    "present": (1.00, 0.85, 0.05),
+    "estimated": (0.85, 0.60, 0.05),
+    "derived": (1.00, 0.95, 0.45),
 }
 
 
@@ -113,6 +135,8 @@ def build_scene(
     for obj in (femur, tibia):
         set_material(obj, "Bone", BONE_COLOUR)
         move_to_collection(obj, bones)
+        if animate_flexion:
+            obj[EDIT_ONLY] = True
     result.objects["femur"] = femur
     result.objects["tibia"] = tibia
 
@@ -123,6 +147,8 @@ def build_scene(
             )
             set_material(plane, "CutPlane", PLANE_COLOUR, alpha=0.35)
             move_to_collection(plane, planning)
+            if animate_flexion:
+                plane[EDIT_ONLY] = True
             result.objects[name] = plane
 
     if show_axes:
@@ -136,6 +162,8 @@ def build_scene(
             )
             set_material(axis, "Axis", AXIS_COLOUR)
             move_to_collection(axis, planning)
+            if animate_flexion:
+                axis[EDIT_ONLY] = True
             result.objects[label] = axis
 
     # Every part takes the pose of its bone group, because the library gives all parts
@@ -162,11 +190,19 @@ def build_scene(
             alpha=0.45 if "shell" in component_name else 1.0,
         )
         move_to_collection(obj, blocks if is_block else implants)
+        # The cutting blocks are the instrument used to make the cut, not the implant
+        # itself, so they belong to the editing scene only -- an animation shows the
+        # resected bone and the implant, not the tooling that shaped it.
+        if is_block and animate_flexion:
+            obj[EDIT_ONLY] = True
         result.objects[component_name] = obj
 
     if show_landmarks and landmarks is not None:
         marks = ensure_collection("Landmarks")
-        result.objects["landmarks"] = _make_landmarks(landmarks, marks)
+        made = _make_landmarks(landmarks, marks)
+        for obj in made:
+            obj[LANDMARK] = True
+        result.objects["landmarks"] = made
 
     # ---- Cutting blocks against the bone ------------------------------
     #
@@ -188,6 +224,8 @@ def build_scene(
                 )
                 set_material(shell, "BoneShell", SHELL_COLOUR, alpha=0.55)
                 move_to_collection(shell, shells)
+                if animate_flexion:
+                    shell[EDIT_ONLY] = True
                 result.objects[f"{group}_bone_shell"] = shell
             else:
                 result.notes.append(
@@ -221,7 +259,6 @@ def build_scene(
         result.objects["tibial_insert_spacer"] = spacer
 
     # ---- Resection ---------------------------------------------------
-    cutters = {}
     if perform_cuts:
         for bone_obj, resection_name, keep in (
             (femur, "femoral_distal", "proximal"),
@@ -240,7 +277,6 @@ def build_scene(
                 live=live_cuts, solver=cut_solver, visible=cuts_visible,
             )
             if cutter is not None:
-                cutters[resection_name] = cutter
                 move_to_collection(cutter, planning)
             if outcome is False:
                 result.notes.append(f"{resection_name}: boolean failed, bone left whole")
@@ -257,28 +293,53 @@ def build_scene(
 
     # ---- Flexion ------------------------------------------------------
     if animate_flexion:
+        # A boolean modifier left unapplied re-solves in full on every frame Blender
+        # evaluates it -- not only when its cutter moves, the dependency graph does not
+        # cache a modifier's result across a frame change at all. That is invisible while
+        # editing, where only one frame is ever shown, and it is why playing the flexion
+        # animation used to freeze: the tibia rides the pivot with its resection boolean
+        # still attached, so every one of 120 frames re-cut a real segmentation. Baking
+        # first removes the modifier stack entirely, so playback pulls an
+        # already-resolved mesh instead of re-cutting it every frame.
+        baked_femur, baked_tibia = bake_animation_bones()
+        if baked_femur is not None:
+            move_to_collection(baked_femur, bones)
+            result.objects["femoral_baked"] = baked_femur
+        if baked_tibia is not None:
+            move_to_collection(baked_tibia, bones)
+            result.objects["tibial_baked"] = baked_tibia
+
         axis_point, axis_direction = _flexion_axis(
             plan, femoral_frame, landmarks
         )
-        moving = [tibia]
+        moving = [baked_tibia if baked_tibia is not None else tibia]
         moving += [
             obj for name, obj in result.objects.items()
-            if name.startswith("tibial")
+            if name.startswith("tibial") and obj not in moving
+            and not obj.get(EDIT_ONLY)
         ]
-        # The tibial discard box travels with the tibia. Left behind, a live boolean
-        # would carve a fixed plane through a bone that is moving, and the tibia would
-        # appear to melt away as it flexed.
-        if "tibial_proximal" in cutters:
-            moving.append(cutters["tibial_proximal"])
-        pivot = add_flexion_animation(
+        # Landmarks on the tibia (and the fibula, which travels with it) are points on
+        # that bone, so they have to ride the same rig or they would stay behind in
+        # space while the tibia they were measured on swings away underneath them.
+        # Femoral landmarks are omitted: the femur never moves, so leaving them
+        # unparented is both correct and simpler.
+        moving += [
+            obj for obj in (result.objects.get("landmarks") or [])
+            if obj.name.startswith("tibia.") or obj.name.startswith("fibula.")
+        ]
+        pivot, trial = add_flexion_animation(
             moving, axis_point_mm=axis_point, axis_direction=axis_direction,
             max_flexion_deg=max_flexion_deg,
         )
         move_to_collection(pivot, planning)
+        move_to_collection(trial, planning)
         result.objects["flexion_axis"] = pivot
+        result.objects["trial_axis"] = trial
+        _register_animation_visibility_handler()
+        sync_animation_visibility(bpy.context.scene)
         result.notes.append(
             f"flexion animated 0 to {max_flexion_deg:.0f} degrees about the "
-            f"transepicondylar axis"
+            f"transepicondylar axis, playing back two baked (modifier-free) bones"
         )
 
     result.collections = {"bones": bones, "planning": planning}
@@ -287,6 +348,7 @@ def build_scene(
         f"{plan.distal_femoral_valgus_cut_deg:.1f} deg"
     )
     _frame_view()
+    _ensure_material_shading()
     return result
 
 
@@ -498,6 +560,7 @@ def resect_bone(
     cutter.name = f"_{name}_cutter"
     cutter["tka_cutter_for"] = name
     cutter["tka_keep"] = keep
+    cutter[EDIT_ONLY] = True
     place_cutter(cutter, point_mm, normal_mm, keep=keep)
 
     def attach(which: str):
@@ -559,6 +622,24 @@ def place_cutter(cutter, point_mm, normal_mm, *, keep: str) -> None:
     )
 
 
+def _action_fcurves(action):
+    """Every F-curve in an action, regardless of Blender's action data model.
+
+    Blender 4.x exposed a flat ``action.fcurves``. 5.0 removed that shim: an action's
+    curves live nested under ``action.layers[*].strips[*].channelbags[*].fcurves``, its
+    "layered action" model, with no flat accessor left at all. Checking for the
+    attribute rather than the version keeps this working if a future release changes
+    the threshold, or if a 4.x action was authored under the layered model already.
+    """
+    if hasattr(action, "fcurves"):
+        yield from action.fcurves
+        return
+    for layer in getattr(action, "layers", ()):
+        for strip in getattr(layer, "strips", ()):
+            for channelbag in getattr(strip, "channelbags", ()):
+                yield from channelbag.fcurves
+
+
 def add_flexion_animation(
     tibial_objects,
     *,
@@ -580,9 +661,12 @@ def add_flexion_animation(
     the femoral rollback and the screw-home rotation that accompany real flexion, which
     is a stated simplification rather than an oversight.
 
-    The moving parts are parented to an empty at the axis, so one keyframed rotation
-    carries the tibia and every tibial component together and their relative placement
-    cannot drift.
+    The moving parts are parented to a **second** empty, ``TrialAxis``, itself a child of
+    this one rather than parented here directly. That is what lets a surgeon manually
+    pose the finished, implanted construct -- flexion, a varus/valgus stress, an AP
+    drawer -- to check fit and impingement, entirely separately from this scripted
+    preview: the two are different objects with different rotations, so a manual pose
+    and the keyframed arc never fight over the same property. See `set_trial_pose`.
     """
     import mathutils
 
@@ -607,13 +691,54 @@ def add_flexion_animation(
     pivot.rotation_quaternion = base
     bpy.context.view_layer.update()
 
+    # ---- The trial rig -------------------------------------------------
+    #
+    # `base` above is the *minimal* rotation onto the flexion axis, which leaves its own
+    # roll about that axis unconstrained -- fine for a pivot that only ever turns about
+    # its local X, useless for one a control also has to turn about "anterior" or slide
+    # along it. So the trial pivot gets an explicit basis instead: local X the flexion
+    # axis, local Y anterior, local Z whatever completes a right-handed frame. That is
+    # what lets `set_trial_pose` mean "rotate about local X" as flexion and "translate
+    # along local Y" as a drawer test, unconditionally.
+    anterior_world = np.array([0.0, -1.0, 0.0])  # LPS: -Y is anterior
+    y_axis = anterior_world - np.dot(anterior_world, direction) * direction
+    y_axis = y_axis / np.linalg.norm(y_axis)
+    z_axis = np.cross(direction, y_axis)
+    trial_rotation = mathutils.Matrix((
+        (direction[0], y_axis[0], z_axis[0]),
+        (direction[1], y_axis[1], z_axis[1]),
+        (direction[2], y_axis[2], z_axis[2]),
+    )).to_quaternion()
+
+    trial = bpy.data.objects.new("TrialAxis", None)
+    trial.empty_display_type = "PLAIN_AXES"
+    trial.empty_display_size = 0.04
+    bpy.context.scene.collection.objects.link(trial)
+    trial.rotation_mode = "QUATERNION"
+    trial.location = _v(axis_point_mm)
+    trial.rotation_quaternion = trial_rotation
+    # Remembered so `set_trial_pose` can always rebuild the pose from this fixed rest
+    # state rather than accumulating drift onto whatever the sliders last left behind.
+    trial["tka_trial_rest_location"] = tuple(trial.location)
+    trial["tka_trial_rest_y_axis"] = tuple(float(c) for c in y_axis)
+    # `parent_inverse` below is computed from this rotation, so `set_trial_pose` must
+    # compose onto it rather than replace it -- overwriting `rotation_quaternion` with
+    # just the flexion/stress turn discards the anatomical basis, and "zero" on every
+    # trial slider would then no longer be the actual rest pose the children were
+    # parented against, silently leaving the construct offset from it.
+    trial["tka_trial_rest_rotation"] = tuple(trial_rotation)
+    bpy.context.view_layer.update()
+
+    trial.parent = pivot
+    trial.matrix_parent_inverse = pivot.matrix_world.inverted()
+
     # Parent with the inverse baked in, which is Blender's keep-transform parenting.
     # Assigning matrix_world afterwards would fight it.
-    parent_inverse = pivot.matrix_world.inverted()
+    parent_inverse = trial.matrix_world.inverted()
     for obj in tibial_objects:
         if obj is None:
             continue
-        obj.parent = pivot
+        obj.parent = trial
         obj.matrix_parent_inverse = parent_inverse
 
     scene = bpy.context.scene
@@ -629,12 +754,62 @@ def add_flexion_animation(
         pivot.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
     if pivot.animation_data and pivot.animation_data.action:
-        for curve in pivot.animation_data.action.fcurves:
+        for curve in _action_fcurves(pivot.animation_data.action):
             for keyframe in curve.keyframe_points:
                 keyframe.interpolation = "BEZIER"
 
     scene.frame_set(1)
-    return pivot
+    return pivot, trial
+
+
+def set_trial_pose(
+    *, flexion_deg: float = 0.0, varus_valgus_deg: float = 0.0, drawer_ap_mm: float = 0.0,
+) -> bool:
+    """Pose the trial rig: a pure rigid transform of the baked, implanted tibia relative
+    to the femur, for checking range of motion, stability and impingement on the
+    finished construct by hand. Never touches a boolean and never re-plans -- this is
+    the same reason the animation plays on the baked pair rather than the live one.
+
+    Flexion turns the trial pivot about its local X (the transepicondylar axis); a
+    varus/valgus stress then turns about its *own*, already-flexed local Y, which is
+    what a real stress exam is relative to -- the tibia's current position, not the
+    femur's fixed frame. The drawer test instead slides along the axis' fixed rest
+    direction, because "anterior" for that test means the joint's own anterior, not
+    wherever flexion happened to leave the tibia pointing.
+
+    Returns ``False`` if the scene has no trial rig -- Plan was run with the flexion
+    animation off, or has not been run at all -- so the caller can report that rather
+    than silently do nothing.
+    """
+    import mathutils
+
+    trial = bpy.data.objects.get("TrialAxis")
+    if trial is None:
+        return False
+
+    rest_location = trial.get("tka_trial_rest_location")
+    rest_y_axis = trial.get("tka_trial_rest_y_axis")
+    rest_rotation = trial.get("tka_trial_rest_rotation")
+    if rest_location is None or rest_y_axis is None or rest_rotation is None:
+        return False
+
+    # `parent_inverse` was baked against `rest_rotation`, so it has to stay the
+    # left-most term here: it is what "zero" on every slider must return to, not an
+    # arbitrary starting point flexion and stress then turn away from.
+    basis = mathutils.Quaternion(tuple(rest_rotation))
+    flexion = mathutils.Quaternion((1.0, 0.0, 0.0), np.radians(flexion_deg))
+    stress = mathutils.Quaternion((0.0, 1.0, 0.0), np.radians(varus_valgus_deg))
+    trial.rotation_quaternion = basis @ flexion @ stress
+
+    offset = mathutils.Vector(tuple(rest_y_axis)) * (drawer_ap_mm * MM_TO_BU)
+    trial.location = mathutils.Vector(tuple(rest_location)) + offset
+    # Without this, a script reading a child's matrix_world immediately after (as
+    # verification does) sees the pre-move value: Blender defers propagating a parent's
+    # transform to its children until the next depsgraph evaluation, which an
+    # interactive viewport gets for free on its next redraw but a caller with no redraw
+    # loop does not.
+    bpy.context.view_layer.update()
+    return True
 
 
 def make_insert_spacer(pose, *, ml_mm: float, ap_mm: float, thickness_mm: float):
@@ -847,6 +1022,68 @@ def _frame_view() -> None:
         pass  # headless, or no 3D view open
 
 
+def _ensure_material_shading() -> None:
+    """Make Solid shading actually show the colours this module just assigned.
+
+    Solid shading -- Blender's default -- has its own "Color" setting independent of
+    any material, and it is not guaranteed to be ``MATERIAL``: a fresh scene or a
+    different startup file can leave it on ``SINGLE``, which paints every object the
+    same flat grey regardless of what `set_material` gave it. Bone grey, implant blue,
+    shell red and the rest are only ever visible with this set correctly, so it is
+    forced here rather than documented as a manual step -- the alternative is a person
+    wondering why a colour scheme they were just given is not there.
+
+    Left alone if shading is already in Material Preview or Rendered, both of which
+    show real material colours regardless of this setting.
+    """
+    screen = getattr(bpy.context, "screen", None)
+    if screen is None:
+        return  # headless: no screen to touch
+
+    for area in screen.areas:
+        if area.type != "VIEW_3D":
+            continue
+        for space in area.spaces:
+            if space.type != "VIEW_3D":
+                continue
+            if space.shading.type == "SOLID":
+                space.shading.color_type = "MATERIAL"
+
+
+def set_clean_viewport(enabled: bool) -> None:
+    """Flip every open 3D viewport between its normal look and a plain white background
+    with the floor grid, axis lines and empty gizmos hidden -- for a screenshot or a
+    view in front of someone who does not need Blender's own scaffolding competing with
+    the anatomy.
+
+    A display preference, not scene state: there is no single "the" background in
+    Blender, each viewport draws its own, so this touches whatever 3D viewports happen
+    to be open rather than anything that would need rebuilding or re-planning.
+    Restoring hands back Blender's own theme background and default overlays, rather
+    than remembering whatever a user had before -- simpler, and what turning it back off
+    should reasonably mean.
+    """
+    screen = getattr(bpy.context, "screen", None)
+    if screen is None:
+        return  # headless: no screen to touch
+
+    for area in screen.areas:
+        if area.type != "VIEW_3D":
+            continue
+        for space in area.spaces:
+            if space.type != "VIEW_3D":
+                continue
+            if space.shading.type == "SOLID":
+                space.shading.color_type = "MATERIAL"
+            space.shading.background_type = "VIEWPORT" if enabled else "THEME"
+            space.shading.background_color = (1.0, 1.0, 1.0)
+            space.overlay.show_floor = not enabled
+            space.overlay.show_axis_x = not enabled
+            space.overlay.show_axis_y = not enabled
+            space.overlay.show_axis_z = not enabled
+            space.overlay.show_extras = not enabled
+
+
 def resolve_component_meshes(
     library: "str | Path",
     *,
@@ -990,3 +1227,129 @@ def set_cuts_visible(visible: bool) -> int:
                     modifier.show_viewport = visible
                     changed += 1
     return changed
+
+
+def bake_animation_bones(bones=("Femur", "Tibia")) -> tuple:
+    """Apply every live resection modifier on Femur and Tibia into two plain meshes.
+
+    ``bones`` restricts the bake to the bones actually asked for -- a settle where only
+    the tibial cut moved has no reason to also re-copy an unchanged 400k-vertex femur
+    into a fresh mesh datablock, which is not free even when its own boolean has
+    nothing new to solve. Skipped bones simply keep whatever ``Femur.Baked`` /
+    ``Tibia.Baked`` already held.
+
+    Forces the resection modifiers visible for the bake regardless of whether the
+    controls are mid-drag and the cuts are currently muted, so the baked shape is always
+    the true current cut, then restores whatever visibility the caller had. Reuses the
+    ``Femur.Baked`` / ``Tibia.Baked`` objects across calls rather than recreating them, so
+    repeated settling during a session does not accumulate orphan meshes.
+
+    Returns the two baked objects, or ``None`` for a bone that is not in the scene (or
+    not in ``bones`` and has never been baked before).
+    """
+    baked = {}
+    for source_name, baked_name in (("Femur", BAKED_FEMUR), ("Tibia", BAKED_TIBIA)):
+        if source_name not in bones:
+            existing = bpy.data.objects.get(baked_name)
+            if existing is not None:
+                baked[baked_name] = existing
+            continue
+        source = bpy.data.objects.get(source_name)
+        if source is None:
+            continue
+
+        resection_modifiers = [
+            modifier for modifier in source.modifiers
+            if modifier.type == "BOOLEAN" and modifier.name in RESECTION_MODIFIERS
+        ]
+        saved_visibility = [modifier.show_viewport for modifier in resection_modifiers]
+        for modifier in resection_modifiers:
+            modifier.show_viewport = True
+        bpy.context.view_layer.update()
+
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = source.evaluated_get(depsgraph)
+        mesh = bpy.data.meshes.new_from_object(evaluated)
+        mesh.name = baked_name
+
+        for modifier, visible in zip(resection_modifiers, saved_visibility):
+            modifier.show_viewport = visible
+
+        obj = bpy.data.objects.get(baked_name)
+        if obj is None:
+            obj = bpy.data.objects.new(baked_name, mesh)
+            bpy.context.scene.collection.objects.link(obj)
+        else:
+            old_mesh = obj.data
+            obj.data = mesh
+            if old_mesh.users == 0:
+                bpy.data.meshes.remove(old_mesh)
+        obj.matrix_world = source.matrix_world.copy()
+        # Parent is left alone rather than reset: on the object's first bake it is
+        # freshly created and unparented, and `add_flexion_animation` parents it to the
+        # pivot once, from `build_scene`. Every later rebake (a control settling) must
+        # not touch that parenting, or the tibia would drop out of the animation the
+        # moment it was next adjusted.
+        obj[BAKED_BONE] = True
+        set_material(
+            obj, "BoneCut" if resection_modifiers else "Bone",
+            RESECTED_COLOUR if resection_modifiers else BONE_COLOUR,
+        )
+        baked[baked_name] = obj
+
+    return baked.get(BAKED_FEMUR), baked.get(BAKED_TIBIA)
+
+
+def sync_animation_visibility(scene) -> None:
+    """Show the editing objects at rest, and the baked pair everywhere else.
+
+    "At rest" means frame 1 *and* no manual trial pose dialled in -- a surgeon posing
+    the implanted construct by hand, at frame 1, still needs to see the baked pair the
+    trial pivot actually carries, not the live editing objects sitting underneath it
+    unmoved. Registered as a ``frame_change_pre`` handler so scrubbing or playing the
+    scripted animation swaps automatically; also called directly after building,
+    re-baking, setting a trial pose or toggling isolate-landmarks, so the state is
+    correct before the handler next fires. Driven by the ``EDIT_ONLY`` and
+    ``BAKED_BONE`` custom properties set when each object was created, so this needs no
+    knowledge of which objects the current resection mode happened to make.
+
+    Landmarks sit outside that swap entirely -- relevant whether editing or animated,
+    so left showing through both -- except under "isolate landmarks", which inverts the
+    whole rule: landmarks are the only thing left visible, everything else hidden,
+    for watching how they move relative to each other through flexion without the
+    bones and implants in the way.
+    """
+    properties = getattr(scene, "tka_planner", None)
+    trial_active = properties is not None and (
+        abs(properties.trial_flexion_deg) > 1e-9
+        or abs(properties.trial_varus_valgus_deg) > 1e-9
+        or abs(properties.trial_drawer_ap_mm) > 1e-9
+    )
+    isolate_landmarks = bool(properties is not None and properties.isolate_landmarks)
+    at_rest = scene.frame_current == scene.frame_start and not trial_active
+    for obj in bpy.data.objects:
+        if obj.get(LANDMARK):
+            obj.hide_viewport = False
+        elif isolate_landmarks:
+            obj.hide_viewport = True
+        elif obj.get(EDIT_ONLY):
+            obj.hide_viewport = not at_rest
+        elif obj.get(BAKED_BONE):
+            obj.hide_viewport = at_rest
+
+
+def _register_animation_visibility_handler() -> None:
+    handlers = bpy.app.handlers.frame_change_pre
+    for handler in list(handlers):
+        if getattr(handler, "__name__", "") == sync_animation_visibility.__name__:
+            handlers.remove(handler)
+    handlers.append(sync_animation_visibility)
+
+
+def unregister_animation_visibility_handler() -> None:
+    """Drop the frame-change handler. Called when the add-on unregisters, so a Blender
+    session that disables and re-enables it does not accumulate duplicate handlers."""
+    handlers = bpy.app.handlers.frame_change_pre
+    for handler in list(handlers):
+        if getattr(handler, "__name__", "") == sync_animation_visibility.__name__:
+            handlers.remove(handler)
