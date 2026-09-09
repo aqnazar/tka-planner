@@ -32,3 +32,7 @@ cohort_out/
 out/
 tka_planner.zip
 tka_planner_v*.zip
+
+# Vendored wheels: binary, platform-specific, rebuilt with vendor/README.md
+vendor/*
+!vendor/README.md
