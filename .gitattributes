@@ -13,3 +13,7 @@ legacy/TKA_Script_v3.py -text
 # Binary fixtures must never be touched.
 *.stl binary
 *.blend binary
+
+# Batch files are read by cmd.exe, which wants CRLF. The repository-wide LF rule
+# above would hand a checkout a launcher its own shell mis-parses.
+*.cmd text eol=crlf

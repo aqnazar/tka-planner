@@ -114,6 +114,24 @@ request goes anywhere else. It works with the network cable out.
 
 Pick a case, or type the path to a patient folder, and press Open.
 
+On Windows, `Launch TKA Planner.cmd` does all of that with one double-click: it starts
+the server, waits for it to answer, opens the browser, loads the first case it finds
+under `data/cases`, and carves the plan. Closing its window stops the planner. The
+viewer takes the case from its own address, so `?case=P009&side=left&commit=1` opens
+that case whoever asks, and the launcher is only one caller of it.
+
+Patient folders go in `data/cases`, one folder per case, each holding `FD1Left.stl` and
+`TD1Left.stl` (or the same names for a right knee). The layout is described in
+[data/cases/README.md](data/cases/README.md). The meshes there are ignored by git, which
+is deliberate: the folder name is the anonymised case id, and no scan or identity
+belongs in the repository.
+
+The implant library is a set of component meshes, and it is not in this repository
+either: it is the output of the CAD side of the project rather than source. Give the
+launcher one by setting `TKA_IMPLANT_LIBRARY` to its folder, or by putting the meshes
+in `data/implants`. Without a library the planner still measures the knee, builds the
+frames, plans the cuts and carves them; only the components are missing from the scene.
+
 **Plan.** The panel carries every control: alignment philosophy, implant size, resection
 depths, slope, rotation, component position and insert thickness. The planned cut is
 previewed by clipping the bone against the planned half-space, so the cut follows the

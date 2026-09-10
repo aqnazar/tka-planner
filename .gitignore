@@ -22,6 +22,11 @@ private/
 data/cases/**/*.stl
 !tests/fixtures/**/*.stl
 
+# The implant library is a separate design output, not source. The launcher picks it
+# up from here when it exists, so a folder or a junction called data/implants makes
+# one double-click work without setting anything.
+data/implants/
+
 # Pipeline outputs
 Output/
 *.log

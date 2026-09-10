@@ -357,20 +357,27 @@ async function busy(work) {
   }
 }
 
+async function openCase({ folder, side, library }) {
+  const payload = await api("POST", "/api/sessions", {
+    folder,
+    side,
+    library: library || null,
+  });
+  state.sessionId = payload.session_id;
+  state.schema = await api("GET", "/api/schema");
+  buildPanel();
+  await applyEnvelope(payload);
+  setMode("plan");
+  return payload;
+}
+
 el("open-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  busy(async () => {
-    const payload = await api("POST", "/api/sessions", {
-      folder: el("folder").value.trim(),
-      side: el("side").value,
-      library: el("library").value.trim() || null,
-    });
-    state.sessionId = payload.session_id;
-    state.schema = await api("GET", "/api/schema");
-    buildPanel();
-    await applyEnvelope(payload);
-    setMode("plan");
-  });
+  busy(() => openCase({
+    folder: el("folder").value.trim(),
+    side: el("side").value,
+    library: el("library").value.trim(),
+  }));
 });
 
 el("case-picker").addEventListener("change", (event) => {
@@ -423,8 +430,9 @@ for (const button of document.querySelectorAll("#modes button")) {
 }
 
 (async function start() {
+  let cases = [];
   try {
-    const { cases } = await api("GET", "/api/cases");
+    ({ cases } = await api("GET", "/api/cases"));
     const picker = el("case-picker");
     for (const item of cases) {
       const option = document.createElement("option");
@@ -435,4 +443,37 @@ for (const button of document.querySelectorAll("#modes button")) {
   } catch (error) {
     note(`Could not list cases: ${error.message}`);
   }
+
+  // A launcher can name the case in the URL, so that starting the planner and opening
+  // a patient are one action rather than two. This is the only reason the viewer reads
+  // its own address: `?case=P009&side=left` opens that case, `?case=first` opens
+  // whichever the server lists first, and `&commit=1` carves the plan once it is built.
+  // The server still decides what a case is; the URL only picks from what it listed.
+  const asked = new URLSearchParams(location.search);
+  const wanted = asked.get("case");
+  if (!wanted) return;
+
+  const side = asked.get("side");
+  const matches = (item) =>
+    (wanted === "first" || item.case_id === wanted) && (!side || item.side === side);
+  const chosen = cases.find(matches);
+  if (!chosen) {
+    note(`No case ${wanted}${side ? ` (${side})` : ""} among the ${cases.length} listed.`);
+    return;
+  }
+
+  el("folder").value = chosen.folder;
+  el("side").value = chosen.side;
+  el("case-picker").value = JSON.stringify(chosen);
+  await busy(async () => {
+    await openCase({
+      folder: chosen.folder,
+      side: chosen.side,
+      library: el("library").value.trim(),
+    });
+    if (asked.get("commit") === "1") {
+      const payload = await api("POST", `/api/sessions/${state.sessionId}/commit`);
+      await applyEnvelope(payload);
+    }
+  });
 })();
