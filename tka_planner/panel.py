@@ -114,6 +114,10 @@ CONTROL_SCHEMA = (
             {"name": "show_planes", "label": "Cut planes", "kind": "bool"},
             {"name": "show_axes", "label": "Axes", "kind": "bool"},
             {"name": "show_landmarks", "label": "Landmarks", "kind": "bool"},
+            {"name": "show_cutting_blocks", "label": "Cutting blocks", "kind": "bool",
+             "help": "Show the instrument that would realise the cut. It is the size "
+                     "of the block rather than of the resection, so it stands in "
+                     "front of the bone."},
             {"name": "isolate_landmarks", "label": "Isolate landmarks", "kind": "bool",
              "help": "Hide everything but the landmarks, for watching how they move "
                      "relative to each other through a trial pose."},

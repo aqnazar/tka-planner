@@ -152,6 +152,7 @@ def test_every_adjustment_drives_the_api(api, session_id, field):
         {"show_axes": False},
         {"show_landmarks": True},
         {"isolate_landmarks": True},
+        {"show_cutting_blocks": True},
     ],
 )
 def test_every_remaining_plan_control_drives_the_api(api, session_id, changes):

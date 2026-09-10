@@ -63,6 +63,7 @@ def build_scene(
     show_planes: bool = True,
     show_axes: bool = True,
     show_landmarks: bool = False,
+    show_cutting_blocks: bool = True,
     insert_thickness_mm: float | None = None,
     insert_footprint_mm: tuple | None = None,
 ) -> Scene:
@@ -157,12 +158,14 @@ def build_scene(
                 set_id=FEMORAL if group == "femoral" else TIBIAL,
                 rest=seat(pose, spec.get("scale", 1.0)),
                 colour=_component_colour(name),
+                visible=show_cutting_blocks or "cutting_block" not in name,
                 tags={
                     "component": True,
                     "group": group,
                     "scale": float(spec.get("scale", 1.0)),
                     "source_ml": spec.get("source_ml"),
                     "shell": "shell" in name,
+                    "cutting_block": "cutting_block" in name,
                 },
             ),
             read_stl(spec["path"]),

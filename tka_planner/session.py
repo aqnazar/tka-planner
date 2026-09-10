@@ -68,7 +68,7 @@ BOTH_BONES = frozenset({
 # Controls that move nothing a boolean depends on, in any mode.
 NO_BONES = frozenset({
     "insert_thickness_mm", "use_insert", "show_planes", "show_axes",
-    "show_landmarks", "isolate_landmarks",
+    "show_landmarks", "isolate_landmarks", "show_cutting_blocks",
 })
 # Controls that move a component without moving a resection plane.
 COMPONENT_ONLY = ("_shift_", "_rotation_")
@@ -103,6 +103,10 @@ class Controls:
     show_axes: bool = True
     show_landmarks: bool = False
     isolate_landmarks: bool = False
+    # The blocks are the size of the instrument, not of the cut, so they stand in front
+    # of the bone they are cutting. Off by default: the first thing a plan should show
+    # is the anatomy and where the implant sits on it.
+    show_cutting_blocks: bool = False
 
 
 @dataclass
@@ -196,6 +200,7 @@ class PlanningSession:
             show_planes=self.controls.show_planes,
             show_axes=self.controls.show_axes,
             show_landmarks=self.controls.show_landmarks,
+            show_cutting_blocks=self.controls.show_cutting_blocks,
             insert_thickness_mm=self._insert_thickness(),
             insert_footprint_mm=self._insert_footprint(),
         )
@@ -237,6 +242,7 @@ class PlanningSession:
                 ("show_landmarks", "landmark"),
                 ("show_planes", "plane"),
                 ("show_axes", "axis"),
+                ("show_cutting_blocks", "cutting_block"),
             ):
                 if control not in changes:
                     continue

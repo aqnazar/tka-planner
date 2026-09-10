@@ -105,6 +105,40 @@ def test_axes_can_be_turned_off(build):
     assert scene.nodes["FemoralMechanicalAxis"].visible is False
 
 
+@pytest.fixture
+def with_components(build, tmp_path):
+    """A scene carrying one implant and one cutting block, as a library gives it."""
+    block = gm.write_stl(gm.box((90.0, 90.0, 40.0)), tmp_path / "block.stl")
+    implant = gm.write_stl(gm.box((60.0, 50.0, 30.0)), tmp_path / "implant.stl")
+
+    def make(**overrides):
+        return build(components={
+            "femoral_cutting_block": {"path": str(block), "group": "femoral"},
+            "femoral_component": {"path": str(implant), "group": "femoral"},
+        }, **overrides)
+
+    return make
+
+
+def test_a_cutting_block_is_tagged_as_one(with_components):
+    scene = with_components()
+
+    assert scene.nodes["femoral_cutting_block"].tags["cutting_block"] is True
+    assert scene.nodes["femoral_component"].tags["cutting_block"] is False
+
+
+def test_cutting_blocks_can_be_turned_off(with_components):
+    """Turned off means hidden, not absent, for the same reason the axes are.
+
+    The block is the size of the instrument rather than of the resection, so it stands
+    in front of the bone it cuts. Hiding it must leave the implant alone.
+    """
+    scene = with_components(show_cutting_blocks=False)
+
+    assert scene.nodes["femoral_cutting_block"].visible is False
+    assert scene.nodes["femoral_component"].visible is True
+
+
 def test_landmarks_become_nodes_tagged_as_landmarks(knee, scene):
     landmarks = knee[0]
     usable = [landmark for landmark in landmarks if landmark.is_usable]
