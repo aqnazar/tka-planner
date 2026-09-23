@@ -423,11 +423,27 @@ def plan_alignment(
         if target.tibial_slope_deg is not None
         else (native_slope_deg if native_slope_deg is not None else 3.0)
     ) + adjustments.tibial_slope_delta_deg
-    # Same reference and same hinge as the femur, tilted posteriorly. A posterior slope
-    # drops the back of the cut, which tilts the plane normal posteriorly; an earlier
-    # version tilted it the other way and produced cuts that sloped forwards.
+    # Slope is measured from the plane perpendicular to the **tibial** axis, as the
+    # native slope metric measures it and as slope is conventionally quoted. Measuring
+    # it from the scanner's axial plane instead made "match the native slope" miss by
+    # however far the tibia leaned in the scanner.
+    #
+    # The tibial axis is first brought into the sagittal plane of the shared reference,
+    # which makes it a rotation of the reference about the shared hinge. Tilting it about
+    # that hinge therefore keeps the mediolateral slope the two cuts share. A posterior
+    # slope drops the back of the cut, which tilts the plane normal posteriorly; an
+    # earlier version tilted it the other way and produced cuts that sloped forwards.
+    tibial_sagittal = unit(
+        tibial_frame.z_proximal - np.dot(tibial_frame.z_proximal, hinge) * hinge
+    )
+    if float(np.dot(tibial_sagittal, reference)) < 0:
+        tibial_sagittal = -tibial_sagittal
+    tibial_axis_lean_deg = float(np.degrees(np.arctan2(
+        np.dot(np.cross(reference, tibial_sagittal), hinge),
+        np.dot(reference, tibial_sagittal),
+    )))
     tibial_normal = _tilt_about(
-        reference, hinge, slope_deg, posterior=-LPS_ANTERIOR
+        tibial_sagittal, hinge, slope_deg, posterior=-LPS_ANTERIOR
     )
     if abs(adjustments.tibial_varus_delta_deg) > 1e-9:
         tibial_normal = _tilt_about(
@@ -573,6 +589,13 @@ def plan_alignment(
             "tibial_resection_datum_source": tibial_datum_source,
             "tibial_resection_datum_mm": [round(float(v), 3) for v in tibial_datum],
             "tibial_resection_from_datum_mm": round(tibial_seat_mm, 3),
+            "tibial_slope_reference": (
+                f"perpendicular to the tibial axis ({tibial_frame.method}) in the "
+                f"sagittal plane"
+            ),
+            "tibial_axis_sagittal_lean_deg": round(tibial_axis_lean_deg, 2),
+            "tibial_slope_from_scanner_axial_deg": round(float(np.degrees(
+                angle_between(tibial_normal, reference))), 2),
             "femoral_flexion_deg": femoral_flexion_deg,
             "coronal_axis_disagreement_deg": round(coronal_disagreement, 2),
             "cut_ml_slope_shared": ml_disagreement <= 0.01,

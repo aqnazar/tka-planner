@@ -25,6 +25,32 @@ def frames_for(landmarks):
     return build_femoral_frame(landmarks), build_tibial_frame(landmarks)
 
 
+def leaned_tibia(landmarks, lean_deg):
+    """Rotate every tibial and fibular landmark about the ML axis through the joint.
+
+    Positive flexes the tibia: its distal end swings posteriorly.
+    """
+    from tka_planner.core.landmarks import Landmark, LandmarkSet
+
+    pivot = np.mean([landmarks.position("tibia.spine_medial"),
+                     landmarks.position("tibia.spine_lateral")], axis=0)
+    theta = np.radians(lean_deg)
+    # About LPS +X; with +Y posterior and +Z superior, a positive angle carries the
+    # distal (-Z) end towards +Y.
+    rotation = np.array([[1.0, 0.0, 0.0],
+                         [0.0, np.cos(theta), -np.sin(theta)],
+                         [0.0, np.sin(theta), np.cos(theta)]])
+    rebuilt = []
+    for lm in landmarks:
+        if lm.position_mm is not None and lm.id.startswith(("tibia.", "fibula.")):
+            lm = Landmark(id=lm.id, position_mm=pivot + rotation @ (lm.position_mm - pivot),
+                          status=lm.status, origin=lm.origin, reason=lm.reason,
+                          metadata=dict(lm.metadata))
+        rebuilt.append(lm)
+    return LandmarkSet(case_id=landmarks.case_id, side=landmarks.side,
+                       coordinate_system=landmarks.coordinate_system, landmarks=rebuilt)
+
+
 def plan_for(landmarks, **kwargs):
     femoral, tibial = frames_for(landmarks)
     # Size L2 of the chart: 9 mm distal femur, 21 mm below the top of the tibia.
@@ -205,6 +231,39 @@ class TestPhilosophies:
             target=KINEMATIC, native_slope_deg=9.0,
         )
         assert plan.tibial_slope_deg == pytest.approx(9.0)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("lean_deg", [-6.0, 0.0, 6.0])
+    def test_the_cut_slope_is_measured_against_the_tibial_axis(self, side, lean_deg):
+        """A tibia lying flexed in the scanner must not change the slope of its cut.
+
+        The whole tibia is rotated rigidly about the mediolateral axis, as it is when
+        the knee is scanned slightly bent. The native slope metric, measured in the
+        tibial frame, does not change; the planned cut, which reproduces it, must not
+        either. Measured against the scanner instead, it would be off by the lean.
+        """
+        from tka_planner.core.metrics import posterior_slope_medial
+
+        landmarks = leaned_tibia(synthetic_knee(side, posterior_slope_deg=9.0),
+                                 lean_deg)
+        femoral, tibial_frame = frames_for(landmarks)
+        native = posterior_slope_medial(landmarks, tibial_frame).value
+        assert native == pytest.approx(9.0, abs=0.01)
+
+        plan = plan_alignment(landmarks, femoral, tibial_frame, target=KINEMATIC,
+                              femoral_thickness_mm=9.0, tibial_resection_mm=21.0,
+                              native_slope_deg=native)
+        normal = plan.resections["tibial_proximal"].normal
+        in_sagittal = normal - np.dot(normal, tibial_frame.sagittal_normal) \
+            * tibial_frame.sagittal_normal
+        slope = np.degrees(np.arccos(np.clip(
+            np.dot(in_sagittal, tibial_frame.z_proximal)
+            / np.linalg.norm(in_sagittal), -1.0, 1.0)))
+
+        assert slope == pytest.approx(9.0, abs=0.05)
+        assert abs(plan.diagnostics["tibial_axis_sagittal_lean_deg"]) == pytest.approx(
+            abs(lean_deg), abs=0.05)
+        assert plan.diagnostics["cut_ml_slope_shared"]
 
     def test_mechanical_uses_its_own_slope_target(self):
         plan = plan_for(

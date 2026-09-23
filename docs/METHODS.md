@@ -150,6 +150,14 @@ nothing — it is perpendicular to that frame's own axis by construction.)
 A positive slope drops the posterior edge of the cut, tilting the plane normal
 posteriorly. Inverting this produced cuts sloping forwards.
 
+Slope is measured from the plane **perpendicular to the tibial axis**, the same
+reference the native slope metric uses, and the usual clinical convention. It used to be
+applied from the scanner's axial plane, so "reproduce the native slope" missed by however
+far the tibia leaned in the scanner: 1.8° on case P009. The tibial axis is first brought
+into the sagittal plane of the shared reference, which makes it a rotation of that
+reference about the shared hinge, so the two cuts still share their mediolateral slope
+exactly. The plan records the lean and the slope as it would read against the scanner.
+
 Cut planes are centred on the **actual cross-section the plane makes through the bone**.
 The midpoint of two compartment landmarks is about a centimetre off on the tibia, because
 the deepest point of each plateau is neither centred nor symmetric.
