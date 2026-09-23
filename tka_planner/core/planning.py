@@ -41,7 +41,7 @@ import numpy as np
 
 from .frames import AnatomicalFrame
 from .geometry import angle_between, unit
-from .landmarks import LandmarkSet
+from .landmarks import LandmarkSet, LandmarkStatus
 from .sides import LPS_ANTERIOR
 from .provenance import Quality
 
@@ -885,13 +885,26 @@ def _valgus_cut_angle(
     which is the same 6 degrees the legacy pipeline applied, now attributed.
     """
     canal = ("femur.canal_centre_distal", "femur.canal_centre_proximal")
-    if landmarks.available(*canal) and frame.quality is Quality.MEASURED:
+    if landmarks.available(*canal) and frame.method == "frames.femur.mechanical.v1":
         distal, proximal = landmarks.require(*canal)
         anatomical = unit(proximal - distal)
+        # Still this patient's angle when a centre was machine-estimated, but no
+        # longer a measurement: the frame carries its head centre's provenance, and the
+        # canal centres are checked here because the frame never read them.
+        canal_estimated = any(
+            landmarks.get(landmark_id).status is LandmarkStatus.ESTIMATED
+            for landmark_id in canal
+        )
+        quality = frame.quality.combine(
+            Quality.ESTIMATED if canal_estimated else Quality.MEASURED
+        )
         return (
             float(np.degrees(angle_between(anatomical, frame.z_proximal))),
-            "measured from this patient's mechanical and anatomical axes",
-            Quality.MEASURED,
+            "measured from this patient's mechanical and anatomical axes"
+            if quality is Quality.MEASURED else
+            "from this patient's mechanical and anatomical axes, located "
+            "automatically",
+            quality,
         )
 
     assumed = next(

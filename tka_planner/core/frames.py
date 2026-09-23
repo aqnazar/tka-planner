@@ -41,6 +41,12 @@ first one whose landmarks are available is used:
 
 Whichever method runs is recorded on the frame, so a plan always shows which axis
 definition produced its numbers.
+
+The quality listed against each method is the best it can reach. A frame is also
+demoted when any landmark it actually read -- knee centre, axis end points, rotational
+reference -- was machine-estimated, because a mechanical axis through an estimated head
+centre is not a measured axis however direct the method. The method still records how
+the axis was built; the quality records how far that can be trusted.
 """
 
 from __future__ import annotations
@@ -56,9 +62,10 @@ from .geometry import (
     project_out,
     unit,
 )
-from .landmarks import LandmarkSet
+from .landmarks import LandmarkSet, LandmarkStatus
 from .provenance import (
     ATEA_SUBSTITUTED_FOR_STEA,
+    AUTOMATIC_LANDMARK_ESTIMATE,
     POPULATION_FEMORAL_AMA,
     TIBIAL_AMA_NEGLIGIBLE,
     Assumption,
@@ -253,12 +260,20 @@ def build_femoral_frame(
 
     if medial_sulcus is not None:
         medial_reference = medial_sulcus
+        medial_id = "femur.epicondyle_medial_sulcus"
         diagnostics["rotational_reference"] = "stea"
     else:
         medial_reference = medial_prominence
+        medial_id = "femur.epicondyle_medial_prominence"
         diagnostics["rotational_reference"] = "atea"
         quality = quality.combine(Quality.ESTIMATED)
         assumptions = assumptions + (ATEA_SUBSTITUTED_FOR_STEA,)
+
+    quality, assumptions = _demote_for_estimated_inputs(
+        landmarks, quality, assumptions,
+        ("femur.notch_centre", *diagnostics.pop("axis_inputs"),
+         "femur.epicondyle_lateral", medial_id),
+    )
 
     stea_raw = lateral_epicondyle - medial_reference
     # Point it patient-left, so the frame's y axis always means the same direction
@@ -299,6 +314,7 @@ def _femoral_proximal_axis(landmarks, knee_centre, side, ama_assumption, attempt
         diagnostics["mechanical_axis_length_mm"] = round(
             float(np.linalg.norm(head_centre - knee_centre)), 2
         )
+        diagnostics["axis_inputs"] = ("femur.head_centre",)
         return (z_proximal, "frames.femur.mechanical.v1", Quality.MEASURED, (),
                 diagnostics)
 
@@ -329,6 +345,8 @@ def _femoral_proximal_axis(landmarks, knee_centre, side, ama_assumption, attempt
                                np.radians(ama_assumption.value), towards=medial)
 
     diagnostics["ama_applied_deg"] = ama_assumption.value
+    diagnostics["axis_inputs"] = ("femur.canal_centre_distal",
+                                  "femur.canal_centre_proximal")
     return (z_proximal, "frames.femur.ama_assumed.v1", Quality.ESTIMATED,
             (ama_assumption,), diagnostics)
 
@@ -392,6 +410,13 @@ def build_tibial_frame(
             ],
         )
 
+    quality, assumptions = _demote_for_estimated_inputs(
+        landmarks, quality, assumptions,
+        ("tibia.spine_medial", "tibia.spine_lateral",
+         *diagnostics.pop("axis_inputs"),
+         "tibia.pcl_insertion_midpoint", anterior_landmark),
+    )
+
     ap_raw = anterior_point - posterior_point
     x_anterior = project_out(ap_raw, z_proximal)
     diagnostics["rotational_reference"] = rotational_reference
@@ -436,6 +461,7 @@ def _tibial_proximal_axis(landmarks, knee_centre, ama_assumption, attempts):
         diagnostics["mechanical_axis_length_mm"] = round(
             float(np.linalg.norm(knee_centre - ankle_centre)), 2
         )
+        diagnostics["axis_inputs"] = ("tibia.ankle_centre",)
         return (z_proximal, "frames.tibia.mechanical.v1", Quality.MEASURED, (),
                 diagnostics)
 
@@ -457,6 +483,8 @@ def _tibial_proximal_axis(landmarks, knee_centre, ama_assumption, attempts):
     # Used directly: the tibial mechanical and anatomical axes are near-collinear, so
     # unlike the femur no angular correction is applied. The assumption is still
     # recorded, because "we assumed the correction is zero" is a modelling decision.
+    diagnostics["axis_inputs"] = ("tibia.canal_centre_proximal",
+                                  "tibia.canal_centre_distal")
     return (axis, "frames.tibia.anatomical_proxy.v1", Quality.ESTIMATED,
             (ama_assumption,), diagnostics)
 
@@ -464,6 +492,21 @@ def _tibial_proximal_axis(landmarks, knee_centre, ama_assumption, attempts):
 # ----------------------------------------------------------------------
 # Shared helpers
 # ----------------------------------------------------------------------
+
+
+def _demote_for_estimated_inputs(landmarks, quality, assumptions, landmark_ids):
+    """Degrade a frame whose inputs include a machine-estimated landmark.
+
+    Only the landmarks the frame actually read are passed in, so an estimate the frame
+    never touched -- canal centres when the head was used -- leaves it alone.
+    """
+    if any(
+        landmarks.get(landmark_id).status is LandmarkStatus.ESTIMATED
+        for landmark_id in landmark_ids
+    ):
+        return (quality.combine(Quality.ESTIMATED),
+                assumptions + (AUTOMATIC_LANDMARK_ESTIMATE,))
+    return quality, assumptions
 
 
 def _diaphyseal_axis(

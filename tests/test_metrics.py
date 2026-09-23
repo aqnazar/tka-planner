@@ -31,7 +31,7 @@ from tka_planner.core.metrics import (
 )
 from tka_planner.core.provenance import Quality
 from tests.synthetic import mirror_landmarks, synthetic_knee
-from tests.test_frames import drop
+from tests.test_frames import as_estimated, drop
 
 
 def frames_for(landmarks):
@@ -399,6 +399,70 @@ class TestComputeAll:
 
         for name in ("mldfa_deg", "mpta_deg", "hka_deviation_deg", "femoral_ama_deg"):
             assert metrics[name].quality is Quality.MEASURED
+
+
+class TestMixedLandmarkProvenance:
+    """Picked and estimated landmarks in one set, as a partly reviewed case will have.
+
+    Each metric's tier must follow exactly the landmarks behind it, including the ones
+    it reaches only through its frame. Positions are identical throughout, so any change
+    of tier here is provenance alone.
+    """
+
+    @staticmethod
+    def full_limb():
+        return synthetic_knee("left", include_head=True, include_ankle=True)
+
+    @pytest.mark.parametrize("landmark_id, demoted", [
+        ("femur.head_centre", ("mldfa_deg", "hka_deviation_deg", "femoral_ama_deg")),
+        ("tibia.ankle_centre", ("mpta_deg", "hka_deviation_deg")),
+        ("femur.notch_centre", ("mldfa_deg", "hka_deviation_deg")),
+    ])
+    def test_an_axis_landmark_reaches_every_metric_on_that_axis(
+        self, landmark_id, demoted
+    ):
+        landmarks = as_estimated(self.full_limb(), landmark_id)
+        metrics = compute_all(landmarks, *frames_for(landmarks))
+
+        for name in demoted:
+            assert metrics[name].quality is Quality.ESTIMATED, name
+            assert "automatic_landmark_estimate" in [
+                a.id for a in metrics[name].assumptions
+            ], name
+
+    def test_an_estimated_head_still_yields_an_hka_value(self):
+        """The axis exists; it is the tier that changes, not the availability."""
+        landmarks = as_estimated(self.full_limb(), "femur.head_centre")
+        metric = hka(landmarks, *frames_for(landmarks))
+
+        assert metric.value is not None
+        assert metric.value == pytest.approx(
+            hka(self.full_limb(), *frames_for(self.full_limb())).value
+        )
+
+    def test_local_metrics_ignore_estimates_on_the_axes(self):
+        """Condylar twist, aLDFA and JLCA never touch the hip or the ankle."""
+        landmarks = as_estimated(self.full_limb(), "femur.head_centre",
+                                 "tibia.ankle_centre", "femur.notch_centre")
+        metrics = compute_all(landmarks, *frames_for(landmarks))
+
+        for name in ("condylar_twist_deg", "aldfa_deg", "jlca_deg"):
+            assert metrics[name].quality is Quality.MEASURED, name
+
+    def test_an_estimate_on_the_other_bone_does_not_leak(self):
+        landmarks = as_estimated(self.full_limb(), "tibia.ankle_centre",
+                                 "tibia.plateau_medial_anterior")
+        metrics = compute_all(landmarks, *frames_for(landmarks))
+
+        assert metrics["mldfa_deg"].quality is Quality.MEASURED
+
+    def test_the_assumption_is_listed_once(self):
+        landmarks = as_estimated(self.full_limb(), "femur.head_centre",
+                                 "femur.condyle_distal_medial")
+        metric = mldfa(landmarks, build_femoral_frame(landmarks))
+
+        ids = [a.id for a in metric.assumptions]
+        assert ids.count("automatic_landmark_estimate") == 1
 
 
 class TestSerialisation:

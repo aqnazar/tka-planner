@@ -81,8 +81,20 @@ def _combined_quality(
     quality, assumptions = _landmark_quality(landmarks, landmark_ids)
     return (
         quality.combine(frame.quality),
-        tuple(frame.assumptions) + assumptions,
+        _unique(tuple(frame.assumptions) + assumptions),
     )
+
+
+def _unique(assumptions: tuple[Assumption, ...]) -> tuple[Assumption, ...]:
+    """Drop repeats, keeping first-seen order: a frame and a metric can both name the
+    automatic-estimate assumption, and the report should say it once."""
+    seen: set[str] = set()
+    kept = []
+    for assumption in assumptions:
+        if assumption.id not in seen:
+            seen.add(assumption.id)
+            kept.append(assumption)
+    return tuple(kept)
 
 
 def _joint_line_direction(
@@ -289,11 +301,16 @@ def hka(
     missing landmarks and what imaging would supply them. Both angle conventions are
     stored, each labelled, because the literature uses both.
     """
+    # Availability turns on how each axis was *built*: through the real hip and ankle
+    # centres or through an assumed angle. How well those centres were located is a
+    # separate matter, carried by the frames' quality into the tier below.
     missing = [
         landmark_id
         for landmark_id, available in (
-            ("femur.head_centre", femoral_frame.quality is Quality.MEASURED),
-            ("tibia.ankle_centre", tibial_frame.quality is Quality.MEASURED),
+            ("femur.head_centre",
+             femoral_frame.method == "frames.femur.mechanical.v1"),
+            ("tibia.ankle_centre",
+             tibial_frame.method == "frames.tibia.mechanical.v1"),
         )
         if not available
     ]
@@ -328,12 +345,17 @@ def hka(
         signed_angle_in_plane(femoral_proximal, femoral_frame.lateral, coronal_normal)
     )
     deviation = signed * (1.0 if lateral_reference > 0 else -1.0)
+    quality = femoral_frame.quality.combine(tibial_frame.quality)
+    assumptions = _unique(
+        tuple(femoral_frame.assumptions) + tuple(tibial_frame.assumptions)
+    )
 
     return Metric(
         name="hka_deviation_deg",
         value=round(float(deviation), 3),
         unit="deg",
-        quality=Quality.MEASURED,
+        quality=quality,
+        assumptions=assumptions,
         definition=HKA_DEFINITION,
         sign_convention=(
             "Deviation from neutral: 0 is a straight limb, positive is valgus, "
@@ -479,13 +501,9 @@ def condylar_twist_angle(
         signed_angle_in_plane(frame.lateral, frame.x_anterior, frame.z_proximal)
     )
     value = signed * float(external_sense)
-    quality, assumptions = _combined_quality(landmarks, frame, required)
-    if not any(a.id == "automatic_landmark_estimate" for a in assumptions):
-        quality, assumptions = Quality.MEASURED, ()
-    else:
-        quality = Quality.ESTIMATED
-        assumptions = tuple(a for a in assumptions
-                            if a.id == "automatic_landmark_estimate")
+    # Local joint geometry: the frame's axis assumptions do not enter the arithmetic,
+    # so only the four landmarks' own provenance decides the tier.
+    quality, assumptions = _landmark_quality(landmarks, required)
 
     return Metric(
         name="condylar_twist_deg",

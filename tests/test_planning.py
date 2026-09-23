@@ -18,6 +18,7 @@ from tka_planner.core.planning import (
 )
 from tka_planner.core.provenance import Quality
 from tests.synthetic import mirror_landmarks, synthetic_knee
+from tests.test_frames import as_estimated
 
 
 def frames_for(landmarks):
@@ -103,6 +104,24 @@ class TestValgusCutAngle:
         assert plan.distal_femoral_valgus_cut_deg == pytest.approx(6.0)
         assert plan.valgus_quality is Quality.ESTIMATED
         assert "assumed" in plan.valgus_source
+
+    @pytest.mark.parametrize("estimated", [
+        ("femur.head_centre",),
+        ("femur.canal_centre_distal", "femur.canal_centre_proximal"),
+    ])
+    def test_estimated_inputs_keep_the_patient_angle_but_not_the_tier(self, estimated):
+        """Still this patient's angle -- not the population 6 degrees -- but estimated.
+
+        Falling back to the assumption here would discard a real head centre merely
+        because it was located by machine; keeping the measured tier would overstate it.
+        """
+        landmarks = as_estimated(
+            synthetic_knee("left", ama_deg=8.0, include_head=True), *estimated
+        )
+        plan = plan_for(landmarks)
+
+        assert plan.distal_femoral_valgus_cut_deg == pytest.approx(8.0, abs=0.01)
+        assert plan.valgus_quality is Quality.ESTIMATED
 
 
 class TestPhilosophies:

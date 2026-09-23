@@ -39,6 +39,24 @@ def drop(landmarks: LandmarkSet, *ids: str) -> LandmarkSet:
     )
 
 
+def as_estimated(landmarks: LandmarkSet, *ids: str) -> LandmarkSet:
+    """Rebuild a set with the named landmarks marked as machine estimates.
+
+    The positions are untouched, so any change in a result is provenance alone -- which
+    is what a mixed set of picked and estimated points has to exercise.
+    """
+    rebuilt = [
+        Landmark(id=lm.id, position_mm=lm.position_mm,
+                 status=LandmarkStatus.ESTIMATED if lm.id in ids else lm.status,
+                 origin=lm.origin, reason=lm.reason, metadata=dict(lm.metadata))
+        for lm in landmarks
+    ]
+    return LandmarkSet(
+        case_id=landmarks.case_id, side=landmarks.side,
+        coordinate_system=landmarks.coordinate_system, landmarks=rebuilt,
+    )
+
+
 # ----------------------------------------------------------------------
 # Frame validity
 # ----------------------------------------------------------------------
@@ -340,6 +358,50 @@ class TestDegradation:
 
         with pytest.raises(FrameConstructionError, match="swapped|backwards"):
             build_tibial_frame(swapped)
+
+
+class TestLandmarkProvenance:
+    """A frame is only as good as the points it was built from.
+
+    The axis ladder decides whether an axis was *derived* from anatomy or assumed; how
+    the anatomy itself was located is a separate question. A mechanical axis through an
+    estimated head centre is not a measured axis, however direct the method.
+    """
+
+    @pytest.mark.parametrize("builder, landmark_id", [
+        (build_femoral_frame, "femur.head_centre"),
+        (build_femoral_frame, "femur.notch_centre"),
+        (build_femoral_frame, "femur.epicondyle_lateral"),
+        (build_femoral_frame, "femur.epicondyle_medial_sulcus"),
+        (build_tibial_frame, "tibia.ankle_centre"),
+        (build_tibial_frame, "tibia.spine_medial"),
+        (build_tibial_frame, "tibia.pcl_insertion_midpoint"),
+        (build_tibial_frame, "tibia.tubercle_patellar_tendon_medial_border"),
+    ])
+    def test_an_estimated_input_demotes_the_frame(self, builder, landmark_id):
+        full = synthetic_knee("left", include_head=True, include_ankle=True)
+        frame = builder(as_estimated(full, landmark_id))
+
+        assert frame.quality is Quality.ESTIMATED
+        assert "automatic_landmark_estimate" in [a.id for a in frame.assumptions]
+
+    def test_the_axis_method_still_says_how_the_axis_was_built(self):
+        """Demotion is about the inputs, so the method must not change with it."""
+        full = synthetic_knee("left", include_head=True)
+        frame = build_femoral_frame(as_estimated(full, "femur.head_centre"))
+
+        assert frame.method == "frames.femur.mechanical.v1"
+
+    def test_an_estimate_the_frame_never_reads_leaves_it_measured(self):
+        """Canal centres are not read when the head is present."""
+        full = synthetic_knee("left", include_head=True)
+        frame = build_femoral_frame(
+            as_estimated(full, "femur.canal_centre_distal", "femur.canal_centre_proximal",
+                         "femur.epicondyle_medial_prominence")
+        )
+
+        assert frame.quality is Quality.MEASURED
+        assert frame.assumptions == ()
 
 
 class TestSerialisation:
