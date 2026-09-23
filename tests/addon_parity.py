@@ -74,18 +74,14 @@ def build_case(folder: Path):
     gm.write_stl(bone("tibia"), folder / "TD1Left.stl")
 
     def fake_measure(self):
+        from tka_planner.pipeline import measure_from_landmarks
+
         self.case_id = "CASE_PARITY"
-        self._femur = read_stl(self.femur_path)
-        self._tibia = read_stl(self.tibia_path)
-        self._landmarks = landmarks
-        self._femoral_frame = build_femoral_frame(landmarks)
-        self._tibial_frame = build_tibial_frame(landmarks)
-        self._metrics = compute_all(
-            landmarks, self._femoral_frame, self._tibial_frame
+        self.measurement = measure_from_landmarks(
+            landmarks, read_stl(self.femur_path), read_stl(self.tibia_path),
+            femur_path=self.femur_path, tibia_path=self.tibia_path,
+            case_id=self.case_id, side=self.side,
         )
-        self._femoral_measure = measure_femoral_ml(self._femur, self._femoral_frame)
-        self._tibial_measure = measure_tibial_plateau(self._tibia, self._tibial_frame)
-        self._native_slope_deg = self._metrics["posterior_slope_medial_deg"].value
 
     PlanningSession._measure = fake_measure
     session = PlanningSession.open(folder, side="left")

@@ -120,10 +120,10 @@ class SessionManager:
             entry["known"] = True
         return sorted(found.values(), key=lambda case: (case["case_id"], case["side"]))
 
-    def open(self, folder, *, side: str, library=None) -> SessionEntry:
+    def open(self, folder, *, side: str, library=None, landmarks=None) -> SessionEntry:
         """Open a patient folder, measure it, and build the first plan."""
         session = PlanningSession.open(
-            folder, side=side, library=library or self.library
+            folder, side=side, library=library or self.library, landmarks=landmarks
         )
         session.build()
 

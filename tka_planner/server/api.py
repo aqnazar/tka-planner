@@ -124,7 +124,8 @@ class Api:
         if not folder:
             raise ApiError(400, "A folder is required to open a session.")
         entry = self.manager.open(
-            folder, side=body.get("side", "left"), library=body.get("library")
+            folder, side=body.get("side", "left"), library=body.get("library"),
+            landmarks=body.get("landmarks"),
         )
         return self.snapshot(entry)
 

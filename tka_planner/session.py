@@ -19,13 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
-from tka_planner.core.frames import build_femoral_frame, build_tibial_frame
-from tka_planner.core.landmarks_auto import estimate_landmarks
-from tka_planner.core.measure import measure_femoral_ml, measure_tibial_plateau
-from tka_planner.core.meshio import read_stl
-from tka_planner.core.metrics import compute_all
-from tka_planner.core.planning import KINEMATIC, MECHANICAL, Adjustments, plan_alignment
-from tka_planner.core.sizing import load_size_chart, solve_parametric_size
+from tka_planner.core.planning import Adjustments
+from tka_planner.pipeline import find_size_chart, measure_case, plan_case
 from tka_planner.scene import build as scene_build
 from tka_planner.scene import motion
 from tka_planner.scene import resect as scene_resect
@@ -136,11 +131,13 @@ class PlanningSession:
     controls: Controls = field(default_factory=Controls)
     trial: TrialControls = field(default_factory=TrialControls)
     case_id: str = ""
+    landmarks_path: Path | None = None
+
+    measurement = None
 
     scene = None
     plan = None
     sizing = None
-    chart = None
     stale: bool = False
 
     # ------------------------------------------------------------------
@@ -148,38 +145,72 @@ class PlanningSession:
     # ------------------------------------------------------------------
 
     @classmethod
-    def open(cls, folder, *, side: str, library=None) -> "PlanningSession":
-        """Find the two bone meshes in a patient folder and measure them."""
+    def open(cls, folder, *, side: str, library=None,
+             landmarks=None) -> "PlanningSession":
+        """Find the two bone meshes in a patient folder and measure them.
+
+        ``landmarks`` is a landmark file laid over the automatic estimate, exactly as
+        the command line's ``--landmarks`` is.
+        """
         femur_path, tibia_path = find_bone_files(Path(folder), side)
         session = cls(
             femur_path=femur_path, tibia_path=tibia_path, side=side,
             library=Path(library) if library else None,
             case_id=Path(folder).name,
+            landmarks_path=Path(landmarks) if landmarks else None,
         )
         session._measure()
         return session
 
     def _measure(self) -> None:
-        """Read the meshes, estimate the landmarks, build the frames and the metrics.
+        """Read, check and measure the case, through the same pipeline as the command
+        line: quality control, landmarks, frames, metrics and the sizing measurement.
 
         Cached for the life of the session: this is the expensive part, and no control
         changes it. Re-planning reuses it and costs a few dozen numpy operations.
-
-        This is the call sequence the add-on's Plan operator used, lifted out unchanged.
         """
-        self._femur = read_stl(self.femur_path)
-        self._tibia = read_stl(self.tibia_path)
-        self._landmarks = estimate_landmarks(
-            self._femur, self._tibia, self.side, case_id=self.case_id
+        self.measurement = measure_case(
+            self.femur_path, self.tibia_path, self.side,
+            case_id=self.case_id or None, landmarks_path=self.landmarks_path,
         )
-        self._femoral_frame = build_femoral_frame(self._landmarks)
-        self._tibial_frame = build_tibial_frame(self._landmarks)
-        self._metrics = compute_all(
-            self._landmarks, self._femoral_frame, self._tibial_frame
-        )
-        self._femoral_measure = measure_femoral_ml(self._femur, self._femoral_frame)
-        self._tibial_measure = measure_tibial_plateau(self._tibia, self._tibial_frame)
-        self._native_slope_deg = self._metrics["posterior_slope_medial_deg"].value
+
+    # The measurement's parts, under the names the scene, the report and the export
+    # have always read. They are views of the one measurement, never copies of it.
+    @property
+    def chart(self):
+        return self.measurement.chart
+
+    @property
+    def _femur(self):
+        return self.measurement.femur
+
+    @property
+    def _tibia(self):
+        return self.measurement.tibia
+
+    @property
+    def _landmarks(self):
+        return self.measurement.landmarks
+
+    @property
+    def _femoral_frame(self):
+        return self.measurement.femoral_frame
+
+    @property
+    def _tibial_frame(self):
+        return self.measurement.tibial_frame
+
+    @property
+    def _metrics(self):
+        return self.measurement.metrics
+
+    @property
+    def _femoral_measure(self):
+        return self.measurement.femoral_measure
+
+    @property
+    def _tibial_measure(self):
+        return self.measurement.tibial_measure
 
     # ------------------------------------------------------------------
     # Plan mode
@@ -407,19 +438,12 @@ class PlanningSession:
     def _plan(self):
         """Re-plan from the cached measurement. Pure numpy, so it is cheap enough to
         run on every change of a control rather than on a button press."""
-        sizing = self._sizing()
-        plan = plan_alignment(
-            self._landmarks, self._femoral_frame, self._tibial_frame,
-            target=(
-                MECHANICAL if self.controls.philosophy == "mechanical" else KINEMATIC
-            ),
-            femoral_thickness_mm=sizing.femoral_thickness_mm,
-            tibial_resection_mm=sizing.tibial_resection_mm,
-            native_slope_deg=self._native_slope_deg,
+        return plan_case(
+            self.measurement,
+            philosophy=self.controls.philosophy,
+            size_label=self.controls.size_override,
             adjustments=self._adjustments(),
-            femur_mesh=self._femur, tibia_mesh=self._tibia,
         )
-        return plan, sizing
 
     def _adjustments(self) -> Adjustments:
         return Adjustments(
@@ -427,27 +451,8 @@ class PlanningSession:
             insert_thickness_mm=self._insert_thickness(),
         )
 
-    def _sizing(self):
-        """The implant size, solved from the anatomy or set by hand.
-
-        An empty or unrecognised ``size_override`` means solve it from the measurement,
-        which is also the right answer if a saved case names a size the chart no longer
-        publishes.
-        """
-        chart = self._size_chart()
-        label = self.controls.size_override
-        override = chart.label_parameter(label) if label in chart.labels else None
-        return solve_parametric_size(
-            chart,
-            measured_ml_mm=self._femoral_measure.ml_mm,
-            measured_ap_mm=self._femoral_measure.ap_mm,
-            parameter_override=override,
-        )
-
     def _size_chart(self):
-        if self.chart is None:
-            self.chart = load_size_chart(find_size_chart())
-        return self.chart
+        return self.measurement.chart
 
     def _components(self) -> dict:
         if self.library is None:
@@ -479,26 +484,6 @@ class PlanningSession:
             "adjusted": not self.plan.adjustments.is_identity,
             "stale": self.stale,
         }
-
-
-def find_size_chart() -> Path:
-    """Locate SizeChart.csv, whether running from the repository or from an install.
-
-    Ported from the add-on. Running from a checkout the repository copy wins, so edits
-    take effect without rebuilding; installed, the bundled copy is used.
-    """
-    package = Path(__file__).resolve().parent
-    candidates = [
-        package.parent / "data" / "SizeChart.csv",
-        package / "data" / "SizeChart.csv",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(
-        "SizeChart.csv not found. Looked in: "
-        + ", ".join(str(c) for c in candidates)
-    )
 
 
 def find_bone_files(folder: Path, side: str) -> tuple:

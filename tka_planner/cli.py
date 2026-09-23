@@ -11,118 +11,43 @@ is to render a plan into geometry, not to make any of them.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 from . import __version__
-from .core.frames import (
-    FrameConstructionError,
-    build_femoral_frame,
-    build_tibial_frame,
-)
-from .core.landmarks import (
-    load_landmarks,
-    overlay_landmarks,
-    write_landmark_set,
-    write_slicer_template,
-)
-from .core.landmarks_auto import estimate_landmarks
+from .core.frames import FrameConstructionError
+from .core.landmarks import load_landmarks, write_landmark_set, write_slicer_template
 from .core.meshio import read_stl
-from .core.measure import measure_femoral_ml, measure_tibial_plateau
-from .core.metrics import compute_all
-from .core.planning import KINEMATIC, MECHANICAL, Adjustments, plan_alignment
-from .core.qc import (
-    QCReport,
-    assess_femur_coverage,
-    assess_mesh_quality,
-    assess_tibia_coverage,
-    check_landmarks_on_mesh,
-    check_laterality,
-    check_plausible_bone_scale,
-)
+from .core.planning import Adjustments
+from .core.qc import QCReport, QualityControlError, check_landmarks_on_mesh
 from .core.sides import Side
-from .core.sizing import load_size_chart, select_discrete_size, solve_parametric_size
-from .session import find_size_chart
-from .report.html import render_report, write_report
-
-
-def _jsonable(value):
-    """Convert numpy scalars and arrays to plain Python for serialisation.
-
-    Numpy's ``bool_``, ``float64`` and friends are not JSON serialisable, and in a
-    numpy-heavy codebase they leak into result dictionaries from comparisons and
-    reductions almost anywhere. Handling them centrally is more reliable than casting at
-    every site and remembering to keep doing so.
-    """
-    import numpy as np
-
-    if isinstance(value, (np.bool_,)):
-        return bool(value)
-    if isinstance(value, np.integer):
-        return int(value)
-    if isinstance(value, np.floating):
-        return float(value)
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+from .pipeline import (
+    discrete_sizing,
+    measure_case,
+    plan_case,
+    plan_document,
+    render_case_report,
+    write_plan,
+)
+from .report.html import write_report
 
 
 def _measure(args: argparse.Namespace) -> int:
-    side = Side.parse(args.side)
     output = Path(args.out)
     output.mkdir(parents=True, exist_ok=True)
 
-    femur = read_stl(args.femur)
-    tibia = read_stl(args.tibia)
-    case_id = args.case_id or Path(args.femur).parent.name
-
-    print(f"Case {case_id} ({side})")
-    print(f"  femur  {femur.n_triangles:>8,} triangles")
-    print(f"  tibia  {tibia.n_triangles:>8,} triangles")
-
-    # -- Quality control ----------------------------------------------
-    qc = QCReport()
-    for mesh, bone in ((femur, "femur"), (tibia, "tibia")):
-        qc.extend(check_plausible_bone_scale(mesh, bone))
-        qc.extend(check_laterality(mesh, side))
-        _, mesh_report = assess_mesh_quality(mesh)
-        qc.extend(mesh_report)
-    qc.raise_if_errors()
-
-    femur_coverage, femur_report = assess_femur_coverage(femur)
-    tibia_coverage, tibia_report = assess_tibia_coverage(tibia)
-    qc.extend(femur_report)
-    qc.extend(tibia_report)
-
-    # -- Landmarks ----------------------------------------------------
-    #
-    # The automatic estimate always runs. A landmark file is laid over it, so a rater's
-    # picks replace the estimates they cover and everything else -- canal centres, any
-    # point skipped -- stays estimated and says so. A file of picks alone could not
-    # build a frame, since no rater is asked for the canal centres.
-    landmarks = estimate_landmarks(femur, tibia, side, case_id=case_id)
-    if args.landmarks:
-        picks = load_landmarks(args.landmarks, case_id=case_id, side=side,
-                               rater=args.rater, session=args.session)
-        landmarks = overlay_landmarks(landmarks, picks)
-        print(f"  landmarks from {Path(args.landmarks).name}: "
-              f"{len(landmarks.source['picked'])} picked, "
-              f"{len(landmarks.source['skipped'])} skipped; "
-              f"the rest estimated automatically")
-    else:
-        print("  landmarks estimated automatically")
-        print("    (machine estimates awaiting review, not picked landmarks)")
-    written = write_landmark_set(landmarks, output / "landmarks.json")
-    print(f"    -> {written.name}")
-
-    qc.extend(check_landmarks_on_mesh(landmarks, {"femur": femur, "tibia": tibia}))
-    qc.raise_if_errors()
-
-    # -- Frames and metrics -------------------------------------------
+    # The same pipeline the application runs: quality control, landmarks (the
+    # automatic estimate, with any landmark file laid over it), frames, metrics and the
+    # sizing measurement.
     try:
-        femoral_frame = build_femoral_frame(landmarks)
-        tibial_frame = build_tibial_frame(landmarks)
+        measurement = measure_case(
+            args.femur, args.tibia, args.side,
+            case_id=args.case_id, landmarks_path=args.landmarks,
+            rater=args.rater, session=args.session, size_chart=args.size_chart,
+        )
+    except QualityControlError as error:
+        print(f"\n[REFUSED] {error}", file=sys.stderr)
+        return 2
     except FrameConstructionError as error:
         print(f"\n[REFUSED] {error}", file=sys.stderr)
         print(
@@ -132,116 +57,67 @@ def _measure(args: argparse.Namespace) -> int:
         )
         return 2
 
-    metrics = compute_all(landmarks, femoral_frame, tibial_frame)
+    m = measurement
+    print(f"Case {m.case_id} ({m.side})")
+    print(f"  femur  {m.femur.n_triangles:>8,} triangles")
+    print(f"  tibia  {m.tibia.n_triangles:>8,} triangles")
+    source = m.landmarks.source
+    if args.landmarks:
+        print(f"  landmarks from {Path(args.landmarks).name}: "
+              f"{len(source['picked'])} picked, {len(source['skipped'])} skipped; "
+              f"the rest estimated automatically")
+    else:
+        print("  landmarks estimated automatically")
+        print("    (machine estimates awaiting review, not picked landmarks)")
+    written = write_landmark_set(m.landmarks, output / "landmarks.json")
+    print(f"    -> {written.name}")
+    for finding in m.qc.findings:
+        print(f"  {finding}")
 
-    # -- Sizing -------------------------------------------------------
-    # The same lookup the application uses, so a checkout and an installed package
-    # both find the chart without a path being passed.
-    size_chart = Path(args.size_chart) if args.size_chart else find_size_chart()
-    chart = load_size_chart(size_chart)
-    femoral_measure = measure_femoral_ml(femur, femoral_frame)
-    tibial_measure = measure_tibial_plateau(tibia, tibial_frame)
-    measured_ml, measured_ap = femoral_measure.ml_mm, femoral_measure.ap_mm
-
-    sizing = solve_parametric_size(
-        chart, measured_ml_mm=measured_ml, measured_ap_mm=measured_ap
-    )
-    discrete = select_discrete_size(
-        chart, measured_ml_mm=measured_ml, measured_ap_mm=measured_ap
-    )
-
-    # -- Alignment ----------------------------------------------------
-    target = MECHANICAL if args.philosophy == "mechanical" else KINEMATIC
-    surgical = plan_alignment(
-        landmarks, femoral_frame, tibial_frame,
-        target=target,
-        femoral_thickness_mm=sizing.femoral_thickness_mm,
-        tibial_resection_mm=sizing.tibial_resection_mm,
+    surgical, sizing = plan_case(
+        m,
+        philosophy=args.philosophy,
+        size_label=args.size,
         adjustments=Adjustments(
             femoral_resection_delta_mm=args.femoral_resection_delta,
             tibial_resection_delta_mm=args.tibial_resection_delta,
         ),
-        native_slope_deg=metrics["posterior_slope_medial_deg"].value,
-        femur_mesh=femur, tibia_mesh=tibia,
     )
-
-    # -- Report -------------------------------------------------------
-    counts: dict[str, int] = {}
-    for landmark in landmarks:
-        counts[landmark.status.value] = counts.get(landmark.status.value, 0) + 1
-
-    document = render_report(
-        case_id=case_id,
-        side=str(side),
-        metrics=metrics,
-        femoral_frame=femoral_frame,
-        tibial_frame=tibial_frame,
-        sizing=sizing,
-        comparison_sizing=discrete,
-        surgical=surgical,
-        measurements={"femur": femoral_measure.to_dict(),
-                      "tibia": tibial_measure.to_dict()},
-        coverage={"femur": femur_coverage, "tibia": tibia_coverage},
-        qc_findings=qc.to_dict(),
-        inputs=[
-            {"role": "femur mesh", "name": Path(args.femur).name,
-             "sha256": femur.sha256},
-            {"role": "tibia mesh", "name": Path(args.tibia).name,
-             "sha256": tibia.sha256},
-            {"role": "size chart", "name": size_chart.name,
-             "sha256": chart.sha256},
-        ],
-        landmark_summary=counts,
-        tool_version=__version__,
-    )
-    report_path = write_report(document, output / "report.html")
-
-    summary = {
-        "case_id": case_id,
-        "side": str(side),
-        "tool_version": __version__,
-        "inputs": {
-            "femur_sha256": femur.sha256,
-            "tibia_sha256": tibia.sha256,
-            "size_chart_sha256": chart.sha256,
-        },
-        "scan_coverage": {"femur": femur_coverage, "tibia": tibia_coverage},
-        "frames": {"femoral": femoral_frame.to_dict(),
-                   "tibial": tibial_frame.to_dict()},
-        "metrics": {name: metric.to_dict() for name, metric in metrics.items()},
-        "surgical_plan": surgical.to_dict(),
-        "sizing": {
-            "parametric": sizing.to_dict(),
-            "discrete": discrete.to_dict(),
-            "femoral_measurement": femoral_measure.to_dict(),
-            "tibial_measurement": tibial_measure.to_dict(),
-        },
-        "quality_control": qc.to_dict(),
-        "intended_use": "research_and_demonstration_only__not_a_medical_device",
+    discrete = discrete_sizing(m)
+    controls = {
+        "philosophy": args.philosophy,
+        "size_override": args.size or "",
+        "femoral_resection_delta_mm": args.femoral_resection_delta,
+        "tibial_resection_delta_mm": args.tibial_resection_delta,
     }
-    plan_path = output / "plan.json"
-    plan_path.write_text(
-        json.dumps(summary, indent=2, default=_jsonable) + "\n", encoding="utf-8"
-    )
+
+    report_path = write_report(render_case_report(m, surgical, sizing),
+                               output / "report.html")
+    plan_path = write_plan(plan_document(m, surgical, sizing, controls=controls),
+                           output / "plan.json")
 
     # -- Console summary ----------------------------------------------
     print()
-    for name, metric in metrics.items():
+    for name, metric in m.metrics.items():
         value = f"{metric.value:8.2f}" if metric.value is not None else "       -"
         print(f"  {name:28s} {value} {metric.unit:4s} {metric.quality.value}")
     femoral_cut = surgical.resections["femoral_distal"]
     tibial_cut = surgical.resections["tibial_proximal"]
+    diagnostics = surgical.diagnostics
     print()
     print(f"  valgus cut       {surgical.distal_femoral_valgus_cut_deg:5.1f} deg  "
           f"({surgical.valgus_quality.value})")
     print(f"  posterior slope  {surgical.tibial_slope_deg:5.1f} deg")
-    print(f"  femoral resect   medial {femoral_cut.medial_depth_mm:5.1f} / "
+    print(f"  femoral resect   {diagnostics['femoral_resection_from_datum_mm']:5.1f} mm "
+          f"from the distal condyle; medial {femoral_cut.medial_depth_mm:5.1f} / "
           f"lateral {femoral_cut.lateral_depth_mm:5.1f} mm")
-    print(f"  tibial resect    medial {tibial_cut.medial_depth_mm:5.1f} / "
-          f"lateral {tibial_cut.lateral_depth_mm:5.1f} mm")
-    print(f"  plateau AP       {tibial_measure.ap_mm:5.1f} mm  "
+    print(f"  tibial resect    {diagnostics['tibial_resection_from_datum_mm']:5.1f} mm "
+          f"from the top of the tibia; below the plateaus medial "
+          f"{tibial_cut.medial_depth_mm:5.1f} / lateral "
+          f"{tibial_cut.lateral_depth_mm:5.1f} mm")
+    print(f"  plateau AP       {m.tibial_measure.ap_mm:5.1f} mm  "
           f"(naive bbox would say "
-          f"{tibial_measure.diagnostics['naive_proximal_bbox_ap_mm']:.1f})")
+          f"{m.tibial_measure.diagnostics['naive_proximal_bbox_ap_mm']:.1f})")
     print()
     print(f"  sizing: parameter {sizing.size_parameter:.3f}, "
           f"implant ML {sizing.implant_ml_mm:.1f} mm "
@@ -352,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
     measure.add_argument(
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
         help="alignment philosophy",
+    )
+    measure.add_argument(
+        "--size", default=None,
+        help="a chart size, e.g. M2, instead of the size solved from the anatomy",
     )
     # The depths themselves come from the size chart for the solved size; these move
     # the cut from there, as the application's resection controls do.

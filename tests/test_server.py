@@ -31,7 +31,7 @@ def manager(raw_session, tmp_path, monkeypatch):
     """
     from tka_planner.server import sessions as sessions_module
 
-    def fake_open(cls, folder, *, side, library=None):
+    def fake_open(cls, folder, *, side, library=None, landmarks=None):
         raw_session.build()
         return raw_session
 

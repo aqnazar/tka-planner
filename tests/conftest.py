@@ -84,26 +84,18 @@ def raw_session(folder, library, monkeypatch):
     path reads must be set here, so this stub is also a statement of what ``_measure``
     is responsible for producing.
     """
-    from tka_planner.core.frames import build_femoral_frame, build_tibial_frame
-    from tka_planner.core.measure import measure_femoral_ml, measure_tibial_plateau
-    from tka_planner.core.metrics import compute_all
     from tka_planner.core.meshio import read_stl
+    from tka_planner.pipeline import measure_from_landmarks
 
     landmarks = synthetic_knee()
 
     def fake_measure(self):
         self.case_id = "CASE_TEST"
-        self._femur = read_stl(self.femur_path)
-        self._tibia = read_stl(self.tibia_path)
-        self._landmarks = landmarks
-        self._femoral_frame = build_femoral_frame(landmarks)
-        self._tibial_frame = build_tibial_frame(landmarks)
-        self._metrics = compute_all(
-            landmarks, self._femoral_frame, self._tibial_frame
+        self.measurement = measure_from_landmarks(
+            landmarks, read_stl(self.femur_path), read_stl(self.tibia_path),
+            femur_path=self.femur_path, tibia_path=self.tibia_path,
+            case_id=self.case_id, side=self.side,
         )
-        self._femoral_measure = measure_femoral_ml(self._femur, self._femoral_frame)
-        self._tibial_measure = measure_tibial_plateau(self._tibia, self._tibial_frame)
-        self._native_slope_deg = self._metrics["posterior_slope_medial_deg"].value
 
     monkeypatch.setattr(PlanningSession, "_measure", fake_measure)
     return PlanningSession.open(folder, side="left", library=library)
