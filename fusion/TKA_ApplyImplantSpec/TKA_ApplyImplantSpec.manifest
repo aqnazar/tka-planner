@@ -1,0 +1,8 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "script",
+  "author": "tka-planner",
+  "description": {"": "Set the implant model's parameters from a patient's implant_spec.json"},
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

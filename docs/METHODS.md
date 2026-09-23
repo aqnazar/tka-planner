@@ -233,6 +233,40 @@ coronal construction and differs by the condylar twist angle. The direction of t
 rotation is "toward the epicondylar axis", which is what the clinical rule means;
 deriving it geometrically sent it the wrong way and left the component 6° short.
 
+## The patient-specific implant
+
+The implant is parametric in every dimension, so the planner does not choose an implant:
+it measures the one this patient needs, on the planned cuts, and writes it to
+`implant_spec.json` for the CAD model (see `fusion/README.md`). All values are in each
+component's own CAD axes, with the origin where the plan seats the component.
+
+- **Femoral component**, at the distal cut: overall ML; distal AP; the width and AP of
+  each condyle, and the intercondylar notch between them, found as the two lobes across
+  the posterior third of the section; the AP depth from the posterior condyles to the
+  anterior cortex over the height of the anterior flange; the distal thickness; and the
+  outline of the cut.
+- **Tibial tray**, at the tibial cut: ML; AP overall and through the middle of each
+  compartment (the tibia is asymmetric); the PCL notch, found as the deepest dip in the
+  back edge with bone either side of it, wherever it lies; the tray thickness; and the
+  outline.
+- **Insert**: the solved thickness.
+
+Outlines are traced along the section's boundary and resampled to 96 evenly spaced
+points. Casting rays from the centroid fails on the distal femur, whose centroid falls in
+the notch, off the bone.
+
+On P009: femoral ML 76.5 mm, AP 74.5 mm, condyles 29.0 and 29.3 mm wide with an 18.3 mm
+notch; tray ML 81.3 mm, AP 65.0 mm, medial 50.5 mm and lateral 61.0 mm.
+
+**Display and fit until the CAD model builds it.** In the default *patient-specific*
+mode, the library parts are scaled per axis to the patient's width and depth (keeping the
+size's scale along the component axis) and slid in their own plane onto the centre of the
+cut. The surgeon's slide is applied on top of that. *Catalogue* mode keeps the library
+part at the size's single scale, as the legacy pipeline did. On P009 tibial coverage rises
+from 73% to 93% and femoral from 68% to 73%. What remains is shape rather than size: a
+scaled symmetric tray cannot follow an asymmetric tibia, and the outline in the
+specification is what lets the CAD model do so.
+
 ## Component fit
 
 Fit is judged on the cut surface, where the component meets the bone. At each cut the

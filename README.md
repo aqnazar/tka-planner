@@ -254,8 +254,15 @@ It writes `plan.json` (hash-anchored to the input files), `report.html`
 over the automatic estimate: each pick replaces its estimate, and anything not picked
 stays estimated and is reported as such.
 
+Every run also writes `implant_spec.json`: the patient-specific implant measured on the
+planned cuts, as dimensions and outlines in each component's CAD frame. `fusion/README.md`
+describes how the Fusion scripts put it into the parametric model, and
+`tka cad-params --spec ... --map ...` previews the parameters without Fusion.
+
 Pass `--library` with the implant library folder to add the fit check: coverage of
 each cut, and overhang and underhang by quadrant, for the tray and the femoral component.
+`--implant-mode catalogue` fits the library part at one scale instead of the
+patient-specific shape.
 
 The tibial depth is measured as commercial systems measure it: by default 9 mm below
 the lowest point of the less affected plateau. `--tibial-reference` also offers 2 mm below

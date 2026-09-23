@@ -58,7 +58,7 @@ TIBIAL_ONLY = frozenset(
 )
 TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference"}
 BOTH_BONES = frozenset({
-    "coronal_correction_deg", "philosophy", "size_override",
+    "coronal_correction_deg", "philosophy", "size_override", "implant_mode",
     "resection_mode", "build_bone_shells",
 })
 # Controls that move nothing a boolean depends on, in any mode.
@@ -91,6 +91,9 @@ class Controls:
     philosophy: str = "mechanical"
     size_override: str = ""
     tibial_reference: str = "less_affected_plateau"
+    # Patient-specific: the implant takes the patient's own dimensions from the cuts.
+    # Catalogue: the library part at the size's single scale, as the legacy pipeline.
+    implant_mode: str = "patient_specific"
     # The insert is solved to close the joint; this is the surgeon's thicker or thinner.
     insert_thickness_delta_mm: float = 0.0
     resection_mode: str = "block"
@@ -242,6 +245,7 @@ class PlanningSession:
             insert_thickness_mm=self._insert_thickness(),
             insert_footprint_mm=self._insert_footprint(),
             insert_stretch=self._insert_stretch(),
+            component_scales=self.component_scales,
         )
         # The scene holds uncut bones until Commit runs, so it does not yet match the
         # plan's resections.
@@ -267,6 +271,7 @@ class PlanningSession:
             insert_thickness_mm=self._insert_thickness(),
             implant_ml_mm=self.sizing.implant_ml_mm,
             insert_stretch=self._insert_stretch(),
+            component_scales=self.component_scales,
         )
         if "isolate_landmarks" in changes:
             delta = delta.merge(
@@ -497,6 +502,24 @@ class PlanningSession:
         ):
             return None
         return self.plan.diagnostics.get("insert_thickness_mm")
+
+    @property
+    def component_scales(self) -> dict | None:
+        """Per-axis scales of each bone's library parts, for a patient-specific
+        implant; ``None`` for the catalogue implant or with no library."""
+        from tka_planner.pipeline import component_scales
+
+        if self.library is None or self.plan is None:
+            return None
+        # Measuring the cuts takes a few tenths of a second, and this is read several
+        # times per re-plan, so it is kept for as long as the plan it measured.
+        key = (id(self.plan), self.controls.implant_mode)
+        cached = getattr(self, "_transforms_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, component_scales(self.measurement, self.plan, self.sizing,
+                                            self.library, self.controls.implant_mode))
+            self._transforms_cache = cached
+        return cached[1]
 
     def _insert_stretch(self) -> dict | None:
         """The library insert stretched to the solved thickness, so no gap shows."""

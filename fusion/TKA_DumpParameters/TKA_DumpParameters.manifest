@@ -1,0 +1,8 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "script",
+  "author": "tka-planner",
+  "description": {"": "Write the open design's parameters to JSON"},
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

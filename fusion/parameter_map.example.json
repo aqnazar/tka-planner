@@ -1,0 +1,25 @@
+{
+  "units": "mm",
+  "comment": "Example only. Replace each 'fusion' name with the design's own parameter name from TKA_DumpParameters, and delete entries the design does not drive.",
+  "parameters": [
+    {"fusion": "Femoral_ML", "from": "femoral_component.dimensions_mm.ml"},
+    {"fusion": "Femoral_AP", "from": "femoral_component.dimensions_mm.ap_overall"},
+    {"fusion": "Femoral_Distal_AP", "from": "femoral_component.dimensions_mm.ap_distal"},
+    {"fusion": "Femoral_Medial_Condyle_Width", "from": "femoral_component.dimensions_mm.medial_condyle_width"},
+    {"fusion": "Femoral_Lateral_Condyle_Width", "from": "femoral_component.dimensions_mm.lateral_condyle_width"},
+    {"fusion": "Femoral_Medial_Condyle_AP", "from": "femoral_component.dimensions_mm.medial_condyle_ap"},
+    {"fusion": "Femoral_Lateral_Condyle_AP", "from": "femoral_component.dimensions_mm.lateral_condyle_ap"},
+    {"fusion": "Femoral_Notch_Width", "from": "femoral_component.dimensions_mm.notch_width"},
+    {"fusion": "Femoral_Distal_Thickness", "from": "femoral_component.dimensions_mm.distal_thickness"},
+    {"fusion": "Femoral_Flange_Height", "from": "femoral_component.dimensions_mm.flange_height"},
+    {"fusion": "Tray_ML", "from": "tibial_component.dimensions_mm.ml", "offset_mm": -1.0},
+    {"fusion": "Tray_AP", "from": "tibial_component.dimensions_mm.ap", "offset_mm": -1.0},
+    {"fusion": "Tray_Medial_AP", "from": "tibial_component.dimensions_mm.medial_ap", "offset_mm": -1.0},
+    {"fusion": "Tray_Lateral_AP", "from": "tibial_component.dimensions_mm.lateral_ap", "offset_mm": -1.0},
+    {"fusion": "Tray_PCL_Notch_Width", "from": "tibial_component.dimensions_mm.pcl_notch_width"},
+    {"fusion": "Tray_PCL_Notch_Depth", "from": "tibial_component.dimensions_mm.pcl_notch_depth"},
+    {"fusion": "Tray_Thickness", "from": "tibial_component.dimensions_mm.tray_thickness"},
+    {"fusion": "Insert_Thickness", "from": "insert.thickness_mm"}
+  ],
+  "export_stl_to": "implant_stl"
+}

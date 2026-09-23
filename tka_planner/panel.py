@@ -25,6 +25,12 @@ CONTROL_SCHEMA = (
              "choices": [["", "Solve from anatomy"]],
              "help": "Auto solves a continuous size from the measurement. The listed "
                      "sizes are the twelve the chart publishes."},
+            {"name": "implant_mode", "label": "Implant", "kind": "choice",
+             "choices": [["patient_specific", "Patient-specific"],
+                         ["catalogue", "Catalogue size"]],
+             "help": "Patient-specific takes the implant's width and depth from this "
+                     "patient's cuts; catalogue uses the library part at one scale, "
+                     "as the legacy pipeline did."},
             {"name": "coronal_correction_deg", "label": "Varus / valgus",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Coronal correction applied to both cuts together, so the "

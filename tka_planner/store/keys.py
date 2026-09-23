@@ -71,6 +71,14 @@ def plan_key(session, bones=BONES) -> str:
     # is part of what the boolean reads even though it moves no plane.
     if session.sizing is not None:
         payload["implant_ml_mm"] = round(float(session.sizing.implant_ml_mm), PLACES)
+    # A patient-specific implant is scaled per axis, and its cutting blocks with it. Each
+    # bone reads only its own set's scale, so a tibial change leaves the femur's key.
+    transforms = getattr(session, "component_scales", None) or {}
+    for bone in sorted(bones):
+        group = "femoral" if bone == "Femur" else "tibial"
+        if group in transforms.get("scales", {}):
+            payload["bones"][bone]["scale_xyz"] = _round(transforms["scales"][group])
+            payload["bones"][bone]["shift"] = _round(transforms["shifts"][group])
 
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]

@@ -20,6 +20,7 @@ from tka_planner.pipeline import (
     fit_case,
     plan_document,
     render_case_report,
+    write_implant_spec,
     write_plan,
 )
 
@@ -43,7 +44,7 @@ def export_session(session, out_dir, *, commit=None, write_meshes: bool = True) 
     document = plan_document(
         session.measurement, session.plan, session.sizing,
         fit=fit_case(session.measurement, session.plan, session.sizing,
-                     session.library),
+                     session.library, session.controls.implant_mode),
         controls=_controls(session),
         trial={
             "flexion_deg": session.trial.flexion_deg,
@@ -55,6 +56,8 @@ def export_session(session, out_dir, *, commit=None, write_meshes: bool = True) 
         geometry_matches_plan=not session.stale,
     )
     written["plan"] = str(write_plan(document, out_dir / "plan.json"))
+    written["implant_spec"] = str(write_implant_spec(
+        document["implant_spec"], out_dir / "implant_spec.json"))
 
     report = render_case_report(session.measurement, session.plan, session.sizing)
     written["report"] = str(write_report(report, out_dir / "report.html"))

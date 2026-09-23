@@ -67,6 +67,7 @@ def build_scene(
     insert_thickness_mm: float | None = None,
     insert_footprint_mm: tuple | None = None,
     insert_stretch: dict | None = None,
+    component_scales: dict | None = None,
 ) -> Scene:
     """Build the full scene from an already-computed plan.
 
@@ -153,7 +154,9 @@ def build_scene(
         if pose is None or not Path(spec["path"]).is_file():
             scene.notes.append(f"{name}: mesh not found, skipped")
             continue
-        rest = seat(pose, spec.get("scale", 1.0))
+        transforms = component_scales or {}
+        scale = transforms.get("scales", {}).get(group, spec.get("scale", 1.0))
+        rest = place(pose, scale, transforms.get("shifts", {}).get(group))
         if name == "tibial_insert":
             rest = rest @ insert_stretch_matrix(insert_stretch)
         scene.add(
@@ -201,6 +204,10 @@ def seat(pose, scale_factor: float = 1.0) -> np.ndarray:
     single master geometry under a uniform scale, so any size between or beyond the
     twelve published ones is that master at the appropriate factor.
 
+    ``scale_factor`` may also be three factors, one per CAD axis: the patient-specific
+    implant is the library part stretched to the patient's own width and depth, which a
+    single factor cannot express.
+
     Scaling is about the CAD origin, so the parametric factor never shifts the seating.
     Placement uses the component's native CAD origin, untouched. An earlier version
     re-originned each mesh to its bounding box instead, which put the femoral component
@@ -209,9 +216,25 @@ def seat(pose, scale_factor: float = 1.0) -> np.ndarray:
     sits between them.
     """
     pose = np.asarray(pose, dtype=float)
+    factors = np.broadcast_to(np.asarray(scale_factor, dtype=float), (3,))
     matrix = np.eye(4)
-    matrix[:3, :3] = pose[:3, :3] * float(scale_factor)
+    matrix[:3, :3] = pose[:3, :3] * factors[None, :]
     matrix[:3, 3] = pose[:3, 3]
+    return matrix
+
+
+def place(pose, scale_factor=1.0, shift=None) -> np.ndarray:
+    """:func:`seat`, then slide the part by ``shift`` along its own CAD axes, in mm.
+
+    The patient-specific implant is the library part stretched to the patient and slid
+    onto the centre of the cut, and the slide is along the component's own axes so it
+    stays in the plane of the cut.
+    """
+    matrix = seat(pose, scale_factor)
+    if shift is not None:
+        rotation = np.asarray(pose, dtype=float)[:3, :3]
+        rotation = rotation / np.linalg.norm(rotation, axis=0)[None, :]
+        matrix[:3, 3] = matrix[:3, 3] + rotation @ np.asarray(shift, dtype=float)
     return matrix
 
 

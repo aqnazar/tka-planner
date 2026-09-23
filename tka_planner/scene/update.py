@@ -19,7 +19,7 @@ import numpy as np
 
 from tka_planner.geom import mesh as gm
 
-from .build import INSERT_SPACER, insert_stretch_matrix, seat
+from .build import INSERT_SPACER, insert_stretch_matrix, place, seat
 from .model import Scene, SceneDelta
 
 __all__ = ["update_scene", "set_visibility", "isolate_landmarks"]
@@ -37,6 +37,7 @@ def update_scene(
     insert_thickness_mm: float | None = None,
     implant_ml_mm: float | None = None,
     insert_stretch: dict | None = None,
+    component_scales: dict | None = None,
 ) -> SceneDelta:
     """Apply a plan to a scene and report what moved."""
     delta = SceneDelta()
@@ -67,7 +68,12 @@ def update_scene(
             if implant_ml_mm and source_ml
             else node.tags.get("scale", 1.0)
         )
-        matrix = seat(pose, scale)
+        # A patient-specific implant carries one factor per axis, which overrides the
+        # catalogue's single factor for every part of that bone's set.
+        transforms = component_scales or {}
+        per_axis = transforms.get("scales", {}).get(node.tags["group"])
+        matrix = place(pose, scale if per_axis is None else per_axis,
+                       transforms.get("shifts", {}).get(node.tags["group"]))
         if node.name == "tibial_insert":
             matrix = matrix @ insert_stretch_matrix(insert_stretch)
         if not np.allclose(matrix, node.rest, atol=POSE_TOLERANCE):

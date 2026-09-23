@@ -24,10 +24,12 @@ from .core.sides import Side
 from .pipeline import (
     discrete_sizing,
     fit_case,
+    implant_spec_case,
     measure_case,
     plan_case,
     plan_document,
     render_case_report,
+    write_implant_spec,
     write_plan,
 )
 from .report.html import write_report
@@ -88,7 +90,8 @@ def _measure(args: argparse.Namespace) -> int:
         library=args.library,
     )
     discrete = discrete_sizing(m)
-    fit = fit_case(m, surgical, sizing, args.library)
+    spec = implant_spec_case(m, surgical, sizing, args.library)
+    fit = fit_case(m, surgical, sizing, args.library, args.implant_mode)
     controls = {
         "philosophy": args.philosophy,
         "size_override": args.size or "",
@@ -96,14 +99,17 @@ def _measure(args: argparse.Namespace) -> int:
         "tibial_resection_delta_mm": args.tibial_resection_delta,
         "tibial_reference": args.tibial_reference,
         "insert_thickness_delta_mm": args.insert_delta,
+        "implant_mode": args.implant_mode,
     }
 
     report_path = write_report(render_case_report(m, surgical, sizing),
                                output / "report.html")
     plan_path = write_plan(
-        plan_document(m, surgical, sizing, fit=fit, controls=controls),
+        plan_document(m, surgical, sizing, fit=fit, implant_spec=spec,
+                      controls=controls),
         output / "plan.json",
     )
+    spec_path = write_implant_spec(spec, output / "implant_spec.json")
 
     # -- Console summary ----------------------------------------------
     print()
@@ -153,7 +159,16 @@ def _measure(args: argparse.Namespace) -> int:
         if fit["missing"]:
             print(f"  not in the library: {', '.join(fit['missing'])}")
     print()
+    f_dims = spec["femoral_component"]["dimensions_mm"]
+    t_dims = spec["tibial_component"]["dimensions_mm"]
+    print()
+    print(f"  patient-specific femoral  ML {f_dims['ml']:.1f}, AP {f_dims['ap_overall']:.1f}, "
+          f"notch {f_dims.get('notch_width', float('nan')):.1f} mm")
+    print(f"  patient-specific tray     ML {t_dims['ml']:.1f}, AP {t_dims['ap']:.1f} "
+          f"(medial {t_dims['medial_ap']:.1f} / lateral {t_dims['lateral_ap']:.1f}) mm")
+    print()
     print(f"  -> {plan_path}")
+    print(f"  -> {spec_path}")
     print(f"  -> {report_path}")
     return 0
 
@@ -198,6 +213,23 @@ def _landmark_convert(args: argparse.Namespace) -> int:
         print("  (no meshes given: the coordinate-system check did not run)")
     print(f"  -> {written}")
     return 0
+
+
+def _cad_params(args: argparse.Namespace) -> int:
+    """Preview the CAD parameters a specification and a mapping set, as Fusion will."""
+    import json
+
+    from .cad_bridge import load_mapping, resolve_parameters
+
+    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    resolved = resolve_parameters(spec, load_mapping(args.map))
+    width = max(len(item.fusion) for item in resolved)
+    for item in resolved:
+        shown = item.expression or f"-- {item.problem}"
+        print(f"  {item.fusion:{width}s}  {shown:>14s}   <- {item.source}")
+    missing = [item for item in resolved if item.expression is None]
+    print(f"\n{len(resolved) - len(missing)} set, {len(missing)} not set")
+    return 1 if missing else 0
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -262,6 +294,12 @@ def main(argv: list[str] | None = None) -> int:
         help="implant library folder; with it the plan includes the fit check",
     )
     measure.add_argument(
+        "--implant-mode", default="patient_specific",
+        choices=["patient_specific", "catalogue"],
+        help="fit a patient-specific implant (dimensions from the cuts) or the "
+             "catalogue part at one scale",
+    )
+    measure.add_argument(
         "--size", default=None,
         help="a chart size, e.g. M2, instead of the size solved from the anatomy",
     )
@@ -324,6 +362,14 @@ def main(argv: list[str] | None = None) -> int:
     # `serve` runs the planner as an application: a local server and a browser viewer.
     # Its arguments are defined by the server package rather than repeated here, so
     # there is one description of them.
+    cad = subparsers.add_parser(
+        "cad-params",
+        help="preview the CAD parameters an implant specification sets",
+    )
+    cad.add_argument("--spec", required=True, help="implant_spec.json of a case")
+    cad.add_argument("--map", required=True, help="parameter mapping of the design")
+    cad.set_defaults(func=_cad_params)
+
     serve = subparsers.add_parser(
         "serve", help="run the planner as a local application in a browser"
     )
