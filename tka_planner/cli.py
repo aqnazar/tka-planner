@@ -251,7 +251,8 @@ def _measure(args: argparse.Namespace) -> int:
 
 
 def _landmark_template(args: argparse.Namespace) -> int:
-    path = write_slicer_template(args.out, bones=tuple(args.bones))
+    path = write_slicer_template(args.out, bones=tuple(args.bones),
+                                 include_out_of_scan=args.full_length)
     print(f"Slicer picking template -> {path}")
     print("  Load it in 3D Slicer beside the case's STL files and place each point in")
     print("  order; use Skip for a point that cannot be identified.")
@@ -367,6 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     template.add_argument("--out", default="landmark_template.mrk.json")
     template.add_argument("--bones", nargs="+", default=["femur", "tibia", "fibula"],
                           choices=["femur", "tibia", "fibula"])
+    template.add_argument("--full-length", action="store_true",
+                          help="also offer the hip and ankle centres, for scans that "
+                               "include them")
     template.set_defaults(func=_landmark_template)
 
     convert = landmark_actions.add_parser(

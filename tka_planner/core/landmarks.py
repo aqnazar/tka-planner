@@ -931,6 +931,7 @@ def write_slicer_template(
     path: "str | Path",
     *,
     bones: tuple[str, ...] = ("femur", "tibia", "fibula"),
+    include_out_of_scan: bool = False,
 ) -> Path:
     """Write a Slicer markups file of named, unplaced points -- one per landmark.
 
@@ -941,11 +942,16 @@ def write_slicer_template(
     point starts ``undefined`` so an unfinished sheet reads back as nothing picked rather
     than as points at the origin.
 
+    The hip and ankle centres are left out unless ``include_out_of_scan`` is set: on a
+    knee-only scan they cannot be placed, and a point skipped on every case is noise in
+    the rating record rather than a finding.
+
     Written in LPS, the frame the meshes arrive in.
     """
     definitions = [
         definition for bone in bones
         for definition in definitions_for_bone(bone, picked_only=True)
+        if include_out_of_scan or not definition.typically_out_of_scan
     ]
     document = {
         "@schema": SLICER_MARKUPS_SCHEMA,

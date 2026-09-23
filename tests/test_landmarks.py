@@ -636,8 +636,21 @@ class TestSlicerTemplate:
         document = json.loads(path.read_text())
         points = document["markups"][0]["controlPoints"]
 
-        expected = [d.id for d in REGISTRY.values() if d.picked_in_increment_1]
+        expected = [d.id for d in REGISTRY.values()
+                    if d.picked_in_increment_1 and not d.typically_out_of_scan]
         assert [p["label"] for p in points] == expected
+
+    def test_hip_and_ankle_are_offered_only_for_full_length_scans(self, tmp_path):
+        """On a knee-only scan they would be skipped on every case, as noise."""
+        def labels(**kwargs):
+            document = json.loads(write_slicer_template(
+                tmp_path / "t.mrk.json", **kwargs).read_text())
+            return [p["label"] for p in document["markups"][0]["controlPoints"]]
+
+        assert "femur.head_centre" not in labels()
+        assert {"femur.head_centre", "tibia.ankle_centre"} <= set(
+            labels(include_out_of_scan=True)
+        )
 
     def test_points_start_unplaced_in_lps_millimetres(self, tmp_path):
         document = json.loads(
