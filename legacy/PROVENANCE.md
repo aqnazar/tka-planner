@@ -16,10 +16,14 @@ refactors and improvements belong in `tka_planner/`, never here. If you find a d
 in this script, record it below rather than fixing it — a defect that was present when
 the results were produced is part of the provenance.
 
-The new package reproduces this script's behaviour through
-`tka_planner.core.legacy_estimator`, which re-implements the PCA and TEA heuristics in
-a `bpy`-free form. Parity is asserted by tests against the archived run logs, so the
-published numbers remain reproducible without depending on this file at runtime.
+The new package does **not** reproduce this script's behaviour. An earlier version of
+this record said a `tka_planner.core.legacy_estimator` module re-implemented it with
+parity tests against archived run logs; no such module or tests exist in the
+repository or its history (checked 2026-09-23). Reproducing the published results
+therefore means running this script, unmodified, in Blender with the configuration
+below. The only shared behaviour is the discrete sizing rule, which
+`tka_planner.core.sizing.select_discrete_size` implements with the same round-down
+default as `SIZE_ROUND = "D"`.
 
 ## Configuration used for the published results
 
