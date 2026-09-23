@@ -40,6 +40,11 @@ __all__ = [
 
 ANTERIOR = -LPS_POSTERIOR
 CONTACT_AVERAGE_N = 10  # matches the legacy CONTACT_AVG_N
+PLATEAU_SLAB_MM = 22.0
+ENVELOPE_CELL_MM = 2.0
+# A face this close to horizontal can be joint surface; anything steeper is the side of
+# the bone. cos 55 degrees.
+ENVELOPE_MIN_COS = 0.57
 
 
 def _estimated(landmark_id: str, position, method: str, confidence: str) -> Landmark:
@@ -64,6 +69,76 @@ def _compartments(points: np.ndarray, side: Side, midline_x: float):
         points, origin, LPS_PATIENT_LEFT
     )
     return points[medial_mask], points[lateral_mask]
+
+
+def _compartment_masks(points: np.ndarray, side: Side, midline_x: float):
+    """As :func:`_compartments`, returning the (medial, lateral) masks."""
+    origin = np.array([midline_x, 0.0, 0.0])
+    return side.split_compartments(points, origin, LPS_PATIENT_LEFT)
+
+
+def _articular_envelope(mesh: Mesh, z_max: float) -> tuple[np.ndarray, np.ndarray]:
+    """The proximal surface of the tibia as seen from above, and which of it is interior.
+
+    Faces near the top that are close to horizontal are gathered, and in each
+    ``ENVELOPE_CELL_MM`` square of the transverse plane the highest one is kept. That is
+    the surface a probe lowered from above would touch: the plateaus, the eminence and the
+    rims, but not the cortex of the metaphysis, whose faces are steep, nor anything
+    beneath the joint surface, which is always lower in its cell. Face orientation is
+    not trusted, so the test is on the absolute normal.
+
+    ``interior`` marks the cells at least two cells in from the edge of the envelope,
+    where the rim turns down and the surface stops being a dish.
+    """
+    triangles = mesh.vertices[mesh.faces]
+    centroids = triangles.mean(axis=1)
+    normals = np.cross(triangles[:, 1] - triangles[:, 0],
+                       triangles[:, 2] - triangles[:, 0])
+    lengths = np.linalg.norm(normals, axis=1)
+    valid = lengths > 0
+    cosines = np.zeros(len(normals))
+    cosines[valid] = np.abs(normals[valid] @ LPS_SUPERIOR) / lengths[valid]
+
+    keep = (
+        (centroids @ LPS_SUPERIOR >= z_max - PLATEAU_SLAB_MM)
+        & (cosines >= ENVELOPE_MIN_COS)
+    )
+    points = centroids[keep]
+    if not len(points):
+        return np.empty((0, 3)), np.empty(0, dtype=bool)
+
+    cells = np.floor(points[:, :2] / ENVELOPE_CELL_MM).astype(np.int64)
+    heights = points @ LPS_SUPERIOR
+    # Highest face per cell: sort by cell then height, and take the last of each run.
+    order = np.lexsort((heights, cells[:, 1], cells[:, 0]))
+    cells, points = cells[order], points[order]
+    last = np.ones(len(cells), dtype=bool)
+    last[:-1] = np.any(cells[1:] != cells[:-1], axis=1)
+    cells, points = cells[last], points[last]
+
+    occupied = {tuple(cell) for cell in cells}
+    reach = range(-2, 3)
+    interior = np.array([
+        all((cx + dx, cy + dy) in occupied for dx in reach for dy in reach)
+        for cx, cy in cells
+    ], dtype=bool)
+    return points, interior
+
+
+def _central(points: np.ndarray, *, fraction: float) -> np.ndarray:
+    """The points in the middle ``fraction`` of their own ML and AP extent.
+
+    The deepest point of a plateau is looked for near its middle. The lateral plateau is
+    convex from front to back, so its lowest points are otherwise at the rim.
+    """
+    if len(points) == 0:
+        return points
+    keep = np.ones(len(points), dtype=bool)
+    for axis in (0, 1):
+        low, high = points[:, axis].min(), points[:, axis].max()
+        margin = (1.0 - fraction) / 2.0 * (high - low)
+        keep &= (points[:, axis] >= low + margin) & (points[:, axis] <= high - margin)
+    return points[keep]
 
 
 def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
@@ -240,9 +315,9 @@ def estimate_tibial_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
 
     Reliability by landmark:
 
-    * plateau low points -- **good**; the deepest part of each articular dish, found
-      within a thin slab at the top of the bone so the search cannot run away down the
-      shaft.
+    * plateau low points -- **good**; the deepest part of the middle of each articular
+      dish, found on the upward-facing surface only, so the search cannot fall onto the
+      sides of the bone.
     * intercondylar tubercles -- **fair**; the most proximal point either side of the
       midline.
     * tibial tubercle -- **fair**; the most anterior prominence below the plateau, which
@@ -257,9 +332,12 @@ def estimate_tibial_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
 
     landmarks: list[Landmark] = []
 
-    # A thin slab at the very top holds the articular surface. Searching the whole
-    # proximal quarter would let "most distal" wander onto the metaphysis.
-    plateau = vertices[z >= z_max - 22.0]
+    # A slab at the top holds the articular surface, but the slab also holds the sides
+    # of the metaphysis. Its lowest point is therefore always the slab floor on the
+    # cortex, whatever the anatomy -- which is what version 1 of the dish estimator
+    # returned, 15 mm below the real plateau on case P009. So the plateaus are searched
+    # on the articular surface alone: the upward-facing envelope, seen from above.
+    plateau = vertices[z >= z_max - PLATEAU_SLAB_MM]
     if len(plateau) < 3 * CONTACT_AVERAGE_N:
         plateau = vertices[
             regional_mask(vertices, LPS_SUPERIOR, fraction=0.15, end="high")
@@ -268,13 +346,22 @@ def estimate_tibial_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
     midline_x = float((plateau[:, 0].min() + plateau[:, 0].max()) / 2.0)
     medial, lateral = _compartments(plateau, side, midline_x)
 
-    for compartment, points in (("medial", medial), ("lateral", lateral)):
-        if len(points) < CONTACT_AVERAGE_N:
+    envelope, interior = _articular_envelope(mesh, z_max)
+    half_width = float(plateau[:, 0].max() - plateau[:, 0].min()) / 2.0
+    off_midline = np.abs(envelope[:, 0] - midline_x) >= 0.2 * half_width
+    surface = {}
+    for compartment, keep in zip(
+        ("medial", "lateral"), _compartment_masks(envelope, side, midline_x)
+    ):
+        surface[compartment] = envelope[keep & off_midline]
+        dish = envelope[keep & off_midline & interior]
+        dish = _central(dish, fraction=0.6)
+        if len(dish) < CONTACT_AVERAGE_N:
             continue
         landmarks.append(_estimated(
             f"tibia.plateau_{compartment}_lowest",
-            extremal_point(points, -LPS_SUPERIOR, n_average=CONTACT_AVERAGE_N),
-            "plateau_dish.v1", "good",
+            extremal_point(dish, -LPS_SUPERIOR, n_average=CONTACT_AVERAGE_N),
+            "plateau_dish.v2", "good",
         ))
 
     # Intercondylar tubercles: the most proximal point on each side of the midline.
@@ -320,17 +407,27 @@ def estimate_tibial_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
             "anterior_tubercle.v1", "poor",
         ))
 
-    # Medial plateau rim, for the native posterior slope.
-    if len(medial) >= 2 * CONTACT_AVERAGE_N:
+    # Medial plateau rim, for the native posterior slope. Taken from the articular
+    # surface too: the most anterior point of the whole slab is on the metaphyseal
+    # flare below the rim, and a slope drawn to it measures the flare.
+    # Only the middle of the plateau from side to side counts, since the slope is a
+    # property of the dish and not of the intercondylar area beside it, which falls
+    # away steeply behind the eminence.
+    rim = surface.get("medial", np.empty((0, 3)))
+    if len(rim):
+        low, high = rim[:, 0].min(), rim[:, 0].max()
+        margin = 0.25 * (high - low)
+        rim = rim[(rim[:, 0] >= low + margin) & (rim[:, 0] <= high - margin)]
+    if len(rim) >= 2 * CONTACT_AVERAGE_N:
         landmarks.append(_estimated(
             "tibia.plateau_medial_anterior",
-            extremal_point(medial, ANTERIOR, n_average=CONTACT_AVERAGE_N),
-            "plateau_rim.v1", "fair",
+            extremal_point(rim, ANTERIOR, n_average=CONTACT_AVERAGE_N),
+            "plateau_rim.v2", "fair",
         ))
         landmarks.append(_estimated(
             "tibia.plateau_medial_posterior",
-            extremal_point(medial, LPS_POSTERIOR, n_average=CONTACT_AVERAGE_N),
-            "plateau_rim.v1", "fair",
+            extremal_point(rim, LPS_POSTERIOR, n_average=CONTACT_AVERAGE_N),
+            "plateau_rim.v2", "fair",
         ))
 
     landmarks.extend(_canal_centres(mesh, "tibia", float(z.min()), z_max))
