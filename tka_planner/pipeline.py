@@ -33,6 +33,7 @@ from .core.planning import (
     KINEMATIC,
     MECHANICAL,
     NO_ADJUSTMENT,
+    TIBIAL_REFERENCE_DEFAULT_MM,
     Adjustments,
     SurgicalPlan,
     plan_alignment,
@@ -248,12 +249,23 @@ def plan_case(
     philosophy: str = "mechanical",
     size_label: str | None = None,
     adjustments: Adjustments = NO_ADJUSTMENT,
-    tibial_tray_thickness_mm: float = 0.0,
+    tibial_reference: str = "less_affected_plateau",
+    library=None,
 ) -> tuple[SurgicalPlan, SizingDecision]:
     """Size the implant and plan the cuts for one set of controls.
 
     ``size_label`` picks a chart size by hand; empty, or a size the chart does not
-    publish, means solve it from the anatomy. Both resection depths follow the size.
+    publish, means solve it from the anatomy.
+
+    The tibial depth is the commercial default for ``tibial_reference`` -- 9 mm below
+    the less affected plateau, or 2 mm below the more affected one -- and the chart's
+    depth for the size when the reference is the top of the tibia, the legacy datum.
+    The femoral depth is the component's distal thickness for the size. The surgeon's
+    resection deltas move both from there.
+
+    With ``library`` the tray thickness is measured from the implant library, so the
+    solved insert is the polyethylene alone; without it the solved insert stands for tray
+    and insert together.
     """
     if philosophy not in ("mechanical", "kinematic"):
         raise ValueError("philosophy must be 'mechanical' or 'kinematic'.")
@@ -265,18 +277,81 @@ def plan_case(
         measured_ap_mm=measurement.femoral_measure.ap_mm,
         parameter_override=override,
     )
+    default_depth = TIBIAL_REFERENCE_DEFAULT_MM.get(tibial_reference, 0.0)
     plan = plan_alignment(
         measurement.landmarks, measurement.femoral_frame, measurement.tibial_frame,
         target=MECHANICAL if philosophy == "mechanical" else KINEMATIC,
         femoral_thickness_mm=sizing.femoral_thickness_mm,
-        tibial_resection_mm=sizing.tibial_resection_mm,
-        tibial_tray_thickness_mm=tibial_tray_thickness_mm,
+        tibial_resection_mm=(
+            sizing.tibial_resection_mm if default_depth is None else default_depth
+        ),
+        tibial_reference=tibial_reference,
+        tibial_tray_thickness_mm=tray_thickness(measurement, sizing, library),
         native_slope_deg=measurement.native_slope_deg,
         adjustments=adjustments,
         femur_mesh=measurement.femur,
         tibia_mesh=measurement.tibia,
     )
     return plan, sizing
+
+
+def tray_thickness(measurement: CaseMeasurement, sizing: SizingDecision,
+                   library) -> float:
+    """The tray's thickness under the insert, from the implant library at this size.
+
+    The tray and the insert share a CAD origin on the tibial cut, so the insert's lowest
+    point is the top of the tray. Zero without a library.
+    """
+    from .scene.build import resolve_component_meshes
+
+    if library is None:
+        return 0.0
+    specs = resolve_component_meshes(
+        library, chart=measurement.chart, sizing=sizing, side=str(measurement.side)
+    )
+    insert = specs.get("tibial_insert")
+    if insert is None:
+        return 0.0
+    return float(_cached_stl(insert["path"]).vertices[:, 2].min()) * insert["scale"]
+
+
+def _cached_stl(path) -> Mesh:
+    """Library parts are read once per process: re-planning happens on every slider
+    movement, and the parts never change underneath it."""
+    key = str(path)
+    if key not in _STL_CACHE:
+        _STL_CACHE[key] = read_stl(key)
+    return _STL_CACHE[key]
+
+
+_STL_CACHE: dict = {}
+
+
+def insert_display(plan: SurgicalPlan, specs: dict) -> dict | None:
+    """How to stretch the library insert so its dish is the solved thickness.
+
+    The library holds one insert height per size; the parametric insert is made to the
+    solved thickness. Until Fusion builds it, the library part is stretched along its own
+    axis about its floor, so the viewer shows the planned construct with no gap.
+    """
+    from .core.insert import dish_geometry
+
+    spec = specs.get("tibial_insert")
+    solved = plan.diagnostics.get("insert_thickness_mm")
+    if spec is None or solved is None:
+        return None
+    key = ("dish", spec["path"])
+    if key not in _STL_CACHE:
+        _STL_CACHE[key] = dish_geometry(_cached_stl(spec["path"]))
+    floor, dish = _STL_CACHE[key]
+    library_mm = (dish - floor) * spec["scale"]
+    factor = max(float(solved), 0.5) / library_mm
+    return {
+        "floor_cad_mm": floor,
+        "stretch": factor,
+        "library_thickness_mm": round(library_mm, 3),
+        "insert_thickness_mm": round(float(solved), 3),
+    }
 
 
 def fit_case(
@@ -312,7 +387,7 @@ def fit_case(
             result["missing"].append(name)
             continue
         posed = gm.transformed(
-            read_stl(spec["path"]), seat(plan.components[name], spec["scale"])
+            _cached_stl(spec["path"]), seat(plan.components[name], spec["scale"])
         )
         resection = plan.resections[cut]
         fit = section_fit(
@@ -325,7 +400,60 @@ def fit_case(
         result["library_sizes"][name] = {
             "source_size": spec["source_size"], "scale": round(spec["scale"], 6),
         }
+    result["insert"] = _insert_check(plan, specs, m)
     return result
+
+
+def _insert_check(plan: SurgicalPlan, specs: dict, m: CaseMeasurement) -> dict | None:
+    """The solved insert as the viewer shows it, and whether the parts collide.
+
+    After the stretch the insert's dish is the solved thickness. Anywhere the femoral
+    component still reaches below the insert's surface, the parts run into each other;
+    that is reported with where it happens, rather than hidden by a thinner insert.
+    """
+    from .core.insert import solve_insert
+    from .geom import mesh as gm
+    from .scene.build import insert_stretch_matrix, seat
+
+    display = insert_display(plan, specs)
+    if display is None or "femoral_component" not in specs:
+        return None
+    femoral_spec, insert_spec = specs["femoral_component"], specs["tibial_insert"]
+    femoral = gm.transformed(
+        _cached_stl(femoral_spec["path"]),
+        seat(plan.components["femoral_component"], femoral_spec["scale"]),
+    )
+    insert_pose = (seat(plan.components["tibial_component"], insert_spec["scale"])
+                   @ insert_stretch_matrix(display))
+    insert = gm.transformed(_cached_stl(insert_spec["path"]), insert_pose)
+    try:
+        clearance = solve_insert(
+            femoral, insert, normal=plan.resections["tibial_proximal"].normal,
+            lateral=m.tibial_frame.lateral,
+        )
+    except ValueError as error:
+        return {**display, "clearance": None, "note": str(error)}
+
+    contact_local = np.linalg.inv(insert_pose) @ np.append(clearance.contact_point, 1.0)
+    flags = []
+    if clearance.change_mm < -0.5:
+        where = "anterior" if contact_local[1] < 0 else "posterior"
+        flags.append("COMPONENT_COLLISION")
+        note = (f"The femoral component runs {-clearance.change_mm:.1f} mm into the "
+                f"insert, towards its {where} edge. The components are "
+                f"{abs(plan.diagnostics.get('component_rotation_mismatch_deg', 0.0)):.1f}"
+                f" degrees and "
+                f"{abs(plan.diagnostics.get('component_offset_anterior_mm', 0.0)):.1f} mm "
+                f"(AP) out of register.")
+    else:
+        note = "No collision: the insert meets the femoral component."
+    return {
+        **display,
+        "clearance": clearance.to_dict(),
+        "contact_in_insert_mm": [round(float(v), 2) for v in contact_local[:3]],
+        "flags": flags,
+        "note": note,
+    }
 
 
 def discrete_sizing(measurement: CaseMeasurement) -> SizingDecision:

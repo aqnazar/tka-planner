@@ -110,8 +110,10 @@ def trial_pose(
     flexion_deg: float = 0.0,
     varus_valgus_deg: float = 0.0,
     drawer_ap_mm: float = 0.0,
+    distraction_mm: float = 0.0,
+    distal=None,
 ) -> np.ndarray:
-    """The tibial set pose under the three trial controls.
+    """The tibial set pose under the trial controls.
 
     Flexion turns about the pivot's local X. A varus or valgus stress then turns about
     the tibia's *already flexed* local Y, which is what a real stress exam is relative
@@ -122,12 +124,25 @@ def trial_pose(
     test means the joint's own anterior rather than wherever flexion left the tibia
     pointing. That is why the translation is applied outside the rotation rather than
     within the pivot's local frame.
+
+    The distraction pulls the tibia away from the femur along its own long axis, which
+    is how a gap is opened to be seen: the plan closes the joint with no gap, and this
+    opens it without touching the plan. It is applied first, in the tibia's rest frame,
+    so in flexion it still runs along the tibia. ``distal`` is the tibia's distal
+    direction at rest; it is required whenever the distraction is not zero.
     """
     rotation = (
         rotation_about(np.array([1.0, 0.0, 0.0]), flexion_deg)
         @ rotation_about(np.array([0.0, 1.0, 0.0]), varus_valgus_deg)
     )
     turned = pose_about(pivot, rotation)
+    if distraction_mm:
+        if distal is None:
+            raise ValueError("A distraction needs the tibia's distal direction.")
+        pull = np.eye(4)
+        direction = np.asarray(distal, dtype=float)
+        pull[:3, 3] = direction / np.linalg.norm(direction) * float(distraction_mm)
+        turned = turned @ pull
 
     slide = np.eye(4)
     slide[:3, 3] = pivot[:3, 1] * float(drawer_ap_mm)

@@ -66,6 +66,7 @@ def build_scene(
     show_cutting_blocks: bool = True,
     insert_thickness_mm: float | None = None,
     insert_footprint_mm: tuple | None = None,
+    insert_stretch: dict | None = None,
 ) -> Scene:
     """Build the full scene from an already-computed plan.
 
@@ -152,11 +153,14 @@ def build_scene(
         if pose is None or not Path(spec["path"]).is_file():
             scene.notes.append(f"{name}: mesh not found, skipped")
             continue
+        rest = seat(pose, spec.get("scale", 1.0))
+        if name == "tibial_insert":
+            rest = rest @ insert_stretch_matrix(insert_stretch)
         scene.add(
             Node(
                 name=name,
                 set_id=FEMORAL if group == "femoral" else TIBIAL,
-                rest=seat(pose, spec.get("scale", 1.0)),
+                rest=rest,
                 colour=_component_colour(name),
                 visible=show_cutting_blocks or "cutting_block" not in name,
                 tags={
@@ -209,6 +213,15 @@ def seat(pose, scale_factor: float = 1.0) -> np.ndarray:
     matrix[:3, :3] = pose[:3, :3] * float(scale_factor)
     matrix[:3, 3] = pose[:3, 3]
     return matrix
+
+
+def insert_stretch_matrix(stretch: dict | None) -> np.ndarray:
+    """The insert's height change as a matrix in its own CAD frame; identity if none."""
+    if not stretch:
+        return np.eye(4)
+    from tka_planner.core.insert import stretch_matrix
+
+    return stretch_matrix(stretch["floor_cad_mm"], stretch["stretch"])
 
 
 def _set_for(name: str) -> str:

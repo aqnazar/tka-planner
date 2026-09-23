@@ -105,9 +105,6 @@ def test_the_command_line_and_the_application_plan_a_real_case_identically(tmp_p
     from_cli = read_plan(tmp_path / "cli" / "plan.json")
 
     session = PlanningSession.open(REAL_CASE, side="left")
-    # The command line plans no insert; the application shows one by default, which
-    # adds an extension-gap report. Everything else must agree exactly.
-    session.controls.use_insert = False
     session.build()
     written = export_session(session, tmp_path / "app", write_meshes=False)
     from_app = read_plan(written["plan"])

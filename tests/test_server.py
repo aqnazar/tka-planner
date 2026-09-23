@@ -143,8 +143,8 @@ def test_every_adjustment_drives_the_api(api, session_id, field):
     [
         {"philosophy": "kinematic"},
         {"size_override": "M2"},
-        {"insert_thickness_mm": 12.0},
-        {"use_insert": False},
+        {"insert_thickness_delta_mm": 1.0},
+        {"tibial_reference": "more_affected_plateau"},
         {"resection_mode": "plane"},
         {"build_bone_shells": False},
         {"show_planes": False},
@@ -386,7 +386,8 @@ def test_resetting_the_trial_returns_to_extension(api, session_id):
     payload = post(api, f"/api/sessions/{session_id}/trial/reset")
 
     assert payload["trial"] == {
-        "flexion_deg": 0.0, "varus_valgus_deg": 0.0, "drawer_ap_mm": 0.0
+        "flexion_deg": 0.0, "varus_valgus_deg": 0.0, "drawer_ap_mm": 0.0,
+        "distraction_mm": 0.0,
     }
     assert np.allclose(payload["delta"]["poses"]["TibialSet"], np.eye(4))
 

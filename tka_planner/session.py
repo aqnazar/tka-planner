@@ -56,13 +56,14 @@ FEMORAL_ONLY = frozenset(
 TIBIAL_ONLY = frozenset(
     name for name in ADJUSTMENT_FIELDS if name.startswith("tibial_")
 )
+TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference"}
 BOTH_BONES = frozenset({
     "coronal_correction_deg", "philosophy", "size_override",
     "resection_mode", "build_bone_shells",
 })
 # Controls that move nothing a boolean depends on, in any mode.
 NO_BONES = frozenset({
-    "insert_thickness_mm", "use_insert", "show_planes", "show_axes",
+    "insert_thickness_delta_mm", "show_planes", "show_axes",
     "show_landmarks", "isolate_landmarks", "show_cutting_blocks",
 })
 # Controls that move a component without moving a resection plane.
@@ -89,8 +90,9 @@ class Controls:
 
     philosophy: str = "mechanical"
     size_override: str = ""
-    insert_thickness_mm: float = 9.0
-    use_insert: bool = True
+    tibial_reference: str = "less_affected_plateau"
+    # The insert is solved to close the joint; this is the surgeon's thicker or thinner.
+    insert_thickness_delta_mm: float = 0.0
     resection_mode: str = "block"
     build_bone_shells: bool = True
     show_planes: bool = True
@@ -105,11 +107,16 @@ class Controls:
 
 @dataclass
 class TrialControls:
-    """The three Reduce-mode controls. They never touch the plan."""
+    """The Reduce-mode controls. They never touch the plan.
+
+    The plan closes the joint with no gap; ``distraction_mm`` opens it, rigidly, to show
+    the gap a given pull would leave.
+    """
 
     flexion_deg: float = 0.0
     varus_valgus_deg: float = 0.0
     drawer_ap_mm: float = 0.0
+    distraction_mm: float = 0.0
 
     @property
     def is_identity(self) -> bool:
@@ -117,6 +124,7 @@ class TrialControls:
             self.flexion_deg == 0.0
             and self.varus_valgus_deg == 0.0
             and self.drawer_ap_mm == 0.0
+            and self.distraction_mm == 0.0
         )
 
 
@@ -233,6 +241,7 @@ class PlanningSession:
             show_cutting_blocks=self.controls.show_cutting_blocks,
             insert_thickness_mm=self._insert_thickness(),
             insert_footprint_mm=self._insert_footprint(),
+            insert_stretch=self._insert_stretch(),
         )
         # The scene holds uncut bones until Commit runs, so it does not yet match the
         # plan's resections.
@@ -257,6 +266,7 @@ class PlanningSession:
             self.plan,
             insert_thickness_mm=self._insert_thickness(),
             implant_ml_mm=self.sizing.implant_ml_mm,
+            insert_stretch=self._insert_stretch(),
         )
         if "isolate_landmarks" in changes:
             delta = delta.merge(
@@ -352,13 +362,17 @@ class PlanningSession:
             flexion_deg=self.trial.flexion_deg,
             varus_valgus_deg=self.trial.varus_valgus_deg,
             drawer_ap_mm=self.trial.drawer_ap_mm,
+            distraction_mm=self.trial.distraction_mm,
+            distal=-self._tibial_frame.z_proximal,
         )
         self.scene.set_pose(TIBIAL, pose)
-        return SceneDelta(poses={"TibialSet": pose})
+        return SceneDelta(poses={"TibialSet": pose},
+                          scalars={"distraction_mm": self.trial.distraction_mm})
 
     def reset_trial(self) -> SceneDelta:
-        """Return all three trial controls to zero, and the tibia to extension."""
-        return self.set_trial(flexion_deg=0.0, varus_valgus_deg=0.0, drawer_ap_mm=0.0)
+        """Return every trial control to zero, and the tibia to extension."""
+        return self.set_trial(flexion_deg=0.0, varus_valgus_deg=0.0, drawer_ap_mm=0.0,
+                              distraction_mm=0.0)
 
     # ------------------------------------------------------------------
     # Reporting
@@ -391,15 +405,26 @@ class PlanningSession:
             f"Femoral lateral|{femoral.lateral_depth_mm:.1f} mm",
             f"Tibial medial|{tibial.medial_depth_mm:.1f} mm",
             f"Tibial lateral|{tibial.lateral_depth_mm:.1f} mm",
+            f"Tibia measured from|{diagnostics['tibial_resection_datum']}",
         ]
 
-        if diagnostics.get("extension_gap_medial_mm") is not None:
+        if diagnostics.get("insert_thickness_mm") is not None:
             lines += [
                 "",
-                "HEAD|Extension gap",
-                f"Medial|{diagnostics['extension_gap_medial_mm']:.1f} mm",
-                f"Lateral|{diagnostics['extension_gap_lateral_mm']:.1f} mm",
-                f"Construct|{diagnostics['extension_gap_construct_mm']:.1f} mm",
+                "HEAD|Insert and extension gap",
+                f"Insert|{diagnostics['insert_thickness_mm']:.1f} mm"
+                + (" (solved)" if diagnostics.get("insert_solved") else ""),
+                f"Tray|{diagnostics['tray_thickness_mm']:.1f} mm",
+                f"Gap medial|{diagnostics['extension_gap_medial_mm']:.1f} mm",
+                f"Gap lateral|{diagnostics['extension_gap_lateral_mm']:.1f} mm",
+            ]
+        if diagnostics.get("component_rotation_mismatch_deg") is not None:
+            lines += [
+                "",
+                "HEAD|Femoral over tibial component",
+                f"Rotation|{diagnostics['component_rotation_mismatch_deg']:+.1f} deg",
+                f"Anterior offset|{diagnostics['component_offset_anterior_mm']:+.1f} mm",
+                f"Lateral offset|{diagnostics['component_offset_lateral_mm']:+.1f} mm",
             ]
 
         lines += [
@@ -443,12 +468,14 @@ class PlanningSession:
             philosophy=self.controls.philosophy,
             size_label=self.controls.size_override,
             adjustments=self._adjustments(),
+            tibial_reference=self.controls.tibial_reference,
+            library=self.library,
         )
 
     def _adjustments(self) -> Adjustments:
         return Adjustments(
             **{name: getattr(self.controls, name) for name in ADJUSTMENT_FIELDS},
-            insert_thickness_mm=self._insert_thickness(),
+            insert_thickness_delta_mm=self.controls.insert_thickness_delta_mm,
         )
 
     def _size_chart(self):
@@ -462,7 +489,28 @@ class PlanningSession:
         )
 
     def _insert_thickness(self) -> float | None:
-        return self.controls.insert_thickness_mm if self.controls.use_insert else None
+        """The solved insert, for the placeholder slab shown when no library insert is.
+
+        With a library the real insert is in the scene and the slab is not needed."""
+        if self.plan is None or any(
+            name == "tibial_insert" for name in self._component_names()
+        ):
+            return None
+        return self.plan.diagnostics.get("insert_thickness_mm")
+
+    def _insert_stretch(self) -> dict | None:
+        """The library insert stretched to the solved thickness, so no gap shows."""
+        from tka_planner.pipeline import insert_display
+
+        if self.library is None or self.plan is None:
+            return None
+        return insert_display(self.plan, self._components())
+
+    def _component_names(self) -> list:
+        if self.scene is None:
+            return list(self._components())
+        return [node.name for node in self.scene.nodes.values()
+                if node.tags.get("component")]
 
     def _insert_footprint(self) -> tuple:
         """The tray's footprint, from the sizing decision rather than from a mesh.

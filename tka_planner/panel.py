@@ -61,11 +61,17 @@ CONTROL_SCHEMA = (
     {
         "group": "Tibial cut",
         "controls": (
+            {"name": "tibial_reference", "label": "Measured from", "kind": "choice",
+             "choices": [["less_affected_plateau", "Less affected plateau (9 mm)"],
+                         ["more_affected_plateau", "More affected plateau (2 mm)"],
+                         ["top_of_tibia", "Top of tibia (size chart)"]],
+             "help": "Where the tibial depth is measured from, as a stylus sets it. "
+                     "The default removes the thinnest construct below the less worn "
+                     "plateau; the last is the legacy datum."},
             {"name": "tibial_resection_delta_mm", "label": "Resection",
              "kind": "float", "min": -6.0, "max": 10.0, "step": 0.1, "unit": "mm",
-             "help": "Bone off the proximal tibia beyond the size chart's depth "
-                     "for this size, measured from the most proximal point of the "
-                     "tibia."},
+             "help": "Bone off the proximal tibia beyond the default depth for the "
+                     "reference chosen above."},
             {"name": "tibial_slope_delta_deg", "label": "Posterior slope",
              "kind": "float", "min": -10.0, "max": 10.0, "step": 0.5, "unit": "deg",
              "help": "Change to the planned posterior slope. Positive is more slope."},
@@ -87,11 +93,10 @@ CONTROL_SCHEMA = (
     {
         "group": "Insert",
         "controls": (
-            {"name": "use_insert", "label": "Insert", "kind": "bool",
-             "help": "Show the plastic insert at a set thickness and report the "
-                     "extension gap it leaves."},
-            {"name": "insert_thickness_mm", "label": "Thickness", "kind": "float",
-             "min": 4.0, "max": 20.0, "step": 0.5, "unit": "mm"},
+            {"name": "insert_thickness_delta_mm", "label": "Thicker / thinner",
+             "kind": "float", "min": -4.0, "max": 6.0, "step": 0.5, "unit": "mm",
+             "help": "The insert is made to close the joint in extension with no gap. "
+                     "Positive makes it thicker, tightening the knee."},
         ),
     },
     {
@@ -136,6 +141,10 @@ TRIAL_SCHEMA = (
     {"name": "drawer_ap_mm", "label": "AP drawer", "kind": "float",
      "min": -15.0, "max": 15.0, "step": 0.1, "unit": "mm",
      "help": "Slide the tibia anteriorly or posteriorly to check a drawer test."},
+    {"name": "distraction_mm", "label": "Distraction", "kind": "float",
+     "min": 0.0, "max": 20.0, "step": 0.5, "unit": "mm",
+     "help": "Pull the tibia away from the femur along its axis. The plan closes the "
+             "joint with no gap; this opens one to be seen, without changing the plan."},
 )
 
 

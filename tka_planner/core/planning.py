@@ -53,7 +53,23 @@ __all__ = [
     "plan_alignment",
     "MECHANICAL",
     "KINEMATIC",
+    "TIBIAL_REFERENCES",
+    "TIBIAL_REFERENCE_DEFAULT_MM",
 ]
+
+# Where the tibial resection depth is measured from, as the commercial techniques set
+# their stylus. The first is the default in every system checked (Triathlon, ATTUNE,
+# Persona): the stylus rests on the lowest point of the least affected plateau and the
+# cut removes the thinnest tibial construct, 9 mm in Triathlon and ATTUNE (4 mm base +
+# 5 mm insert) and 10 mm in Persona. The second is the alternative stylus setting, 2 mm
+# below the most affected plateau. The third is the datum of the size chart and the
+# legacy pipeline, kept so the two can be compared like for like.
+TIBIAL_REFERENCES = ("less_affected_plateau", "more_affected_plateau", "top_of_tibia")
+TIBIAL_REFERENCE_DEFAULT_MM = {
+    "less_affected_plateau": 9.0,
+    "more_affected_plateau": 2.0,
+    "top_of_tibia": None,  # the chart's tibia_proximal_cut for the size
+}
 
 
 @dataclass(frozen=True)
@@ -72,9 +88,12 @@ class Adjustments:
     about a world axis would mean the opposite thing on a right knee, which is the class
     of bug the mirror-invariance tests exist to catch.
 
-    ``insert_thickness_mm`` alters no cut. It sets the construct height the gap report
-    is measured against, and ``None`` means no gap is reported at all rather than one
-    computed from an assumed insert.
+    The insert alters no cut. With ``insert_thickness_mm`` left at ``None`` it is
+    **solved**: made exactly as thick as closes the tighter compartment in extension, so
+    the planned construct has no gap. The implant is parametric, so the insert can be
+    made to that thickness. ``insert_thickness_delta_mm`` is the surgeon's choice of a
+    thicker (tighter) or thinner insert than that. A number in ``insert_thickness_mm``
+    fixes the insert instead, as a catalogue implant would.
     """
 
     coronal_correction_deg: float = 0.0       # + valgus, applied to BOTH cuts together
@@ -94,6 +113,7 @@ class Adjustments:
     tibial_shift_ml_mm: float = 0.0
 
     insert_thickness_mm: float | None = None
+    insert_thickness_delta_mm: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -111,6 +131,7 @@ class Adjustments:
             "tibial_shift_ap_mm": self.tibial_shift_ap_mm,
             "tibial_shift_ml_mm": self.tibial_shift_ml_mm,
             "insert_thickness_mm": self.insert_thickness_mm,
+            "insert_thickness_delta_mm": self.insert_thickness_delta_mm,
         }
 
     @property
@@ -249,6 +270,7 @@ def plan_alignment(
     target: AlignmentTarget = MECHANICAL,
     femoral_thickness_mm: float,
     tibial_resection_mm: float,
+    tibial_reference: str = "less_affected_plateau",
     tibial_tray_thickness_mm: float = 0.0,
     native_slope_deg: float | None = None,
     adjustments: Adjustments = NO_ADJUSTMENT,
@@ -275,28 +297,24 @@ def plan_alignment(
     properties of a diaphyseal fit that happens to lean forward because the leg lay at an
     angle in the scanner.
 
-    Both depths are **parametric**: they come from the size chart at the plan's size
-    parameter, so a chart size gets its own published value and a continuous size gets
-    the value interpolated between its neighbours. There is no default, because the
-    right depth depends on the implant that is being fitted.
+    ``femoral_thickness_mm`` is the femoral component's distal thickness, measured from
+    the more distal of the two distal condyles: measured resection, as every commercial
+    technique does it.
 
-    ``femoral_thickness_mm`` is the chart's ``femur_distal_cut``, measured from the more
-    distal of the two distal condyles. ``tibial_resection_mm`` is the chart's
-    ``tibia_proximal_cut``, measured from the **most proximal point of the tibia** along
-    the cut normal -- usually the intercondylar eminence, so the figure is larger than a
-    depth below the plateau. That is the datum the chart was defined against and the one
-    the legacy pipeline used, so a like-for-like comparison with it depends on it. The
-    depth below each plateau, the figure a surgeon usually reads, is still reported per
-    compartment on the resection plane.
+    ``tibial_resection_mm`` is measured from the datum ``tibial_reference`` names (see
+    :data:`TIBIAL_REFERENCES`): by default the lowest point of the **less affected
+    plateau**, the higher of the two, which is where a commercial stylus rests. The
+    alternatives are the more affected plateau, and the top of the tibia along the cut
+    normal, which is the size chart's and the legacy pipeline's datum. The depth below
+    each plateau is reported per compartment on the resection plane whichever is used.
 
     ``adjustments`` carries whatever a surgeon has changed by hand. It enters here rather
     than being applied to the returned plan so that the plan remains reproducible from
     its inputs; see :class:`Adjustments`.
 
-    ``tibial_tray_thickness_mm`` defaults to zero because the tray's height is not a
-    column in the size chart and has not been confirmed against the CAD. Until it is,
-    the gap report understates the construct by exactly that height rather than assuming
-    a figure -- see ``docs/CLINICAL_QUESTIONS.md`` 3.1.
+    ``tibial_tray_thickness_mm`` is the tray under the insert. With the implant library
+    loaded it is measured from the library; without it, it is zero and the solved insert
+    stands for tray and insert together.
     """
     warnings: list[str] = []
 
@@ -455,14 +473,31 @@ def plan_alignment(
     plateau_points = np.array(landmarks.require(
         "tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"
     ))
-    tibial_datum, tibial_datum_source = _tibial_proximal_point(
-        landmarks, tibial_normal, tibia_mesh
-    )
-    if tibial_datum_source == "plateau landmarks":
-        warnings.append(
-            "Neither a tibia mesh nor the tibial spines were available, so the tibial "
-            "datum (the most proximal point of the tibia) was approximated by the "
-            "higher plateau. The tibial cut sits higher than the chart intends."
+    if tibial_reference not in TIBIAL_REFERENCES:
+        raise ValueError(
+            f"tibial_reference must be one of {', '.join(TIBIAL_REFERENCES)}."
+        )
+    if tibial_reference == "top_of_tibia":
+        tibial_datum, tibial_datum_source = _tibial_proximal_point(
+            landmarks, tibial_normal, tibia_mesh
+        )
+        tibial_datum_name = "the most proximal point of the tibia"
+        if tibial_datum_source == "plateau landmarks":
+            warnings.append(
+                "Neither a tibia mesh nor the tibial spines were available, so the "
+                "tibial datum (the most proximal point of the tibia) was approximated "
+                "by the higher plateau. The tibial cut sits higher than intended."
+            )
+    else:
+        heights = plateau_points @ tibial_normal
+        pick = (int(np.argmax(heights)) if tibial_reference == "less_affected_plateau"
+                else int(np.argmin(heights)))
+        tibial_datum = plateau_points[pick]
+        compartment = ("medial", "lateral")[pick]
+        tibial_datum_source = f"tibia.plateau_{compartment}_lowest"
+        tibial_datum_name = (
+            f"the lowest point of the {'less' if tibial_reference.startswith('less') else 'more'}"
+            f" affected ({compartment}) plateau"
         )
     tibial_point = _plane_origin(
         plateau_points, tibial_normal,
@@ -549,6 +584,12 @@ def plan_alignment(
             f"the construct has to absorb the difference across the articulation."
         )
 
+    register = _component_register(
+        components, femoral_anterior=femoral_anterior,
+        tibial_anterior=tibial_anterior, tibial_normal=tibial_normal,
+        lateral=tibial_frame.lateral,
+    )
+
     gaps = _extension_gaps(
         landmarks,
         femoral_point=femoral_point, femoral_normal=femoral_normal,
@@ -556,6 +597,7 @@ def plan_alignment(
         femoral_thickness_mm=femoral_thickness_mm,
         tray_thickness_mm=tibial_tray_thickness_mm,
         insert_thickness_mm=adjustments.insert_thickness_mm,
+        insert_delta_mm=adjustments.insert_thickness_delta_mm,
     )
 
     return SurgicalPlan(
@@ -572,7 +614,7 @@ def plan_alignment(
             "tibial_proximal": ResectionPlane(
                 "tibial_proximal", tibial_point, tibial_normal,
                 tibial_medial, tibial_lateral,
-                f"{tibial_seat_mm:.1f} mm below the most proximal point of the tibia, "
+                f"{tibial_seat_mm:.1f} mm below {tibial_datum_name}, "
                 f"{slope_deg:.1f} degrees posterior slope, sharing the femoral "
                 f"coronal reference",
             ),
@@ -585,7 +627,8 @@ def plan_alignment(
             "femoral_component_thickness_mm": femoral_thickness_mm,
             "femoral_resection_datum": "most distal of the two distal condyles",
             "femoral_resection_from_datum_mm": round(femoral_seat_mm, 3),
-            "tibial_resection_datum": "most proximal point of the tibia",
+            "tibial_reference": tibial_reference,
+            "tibial_resection_datum": tibial_datum_name,
             "tibial_resection_datum_source": tibial_datum_source,
             "tibial_resection_datum_mm": [round(float(v), 3) for v in tibial_datum],
             "tibial_resection_from_datum_mm": round(tibial_seat_mm, 3),
@@ -601,6 +644,7 @@ def plan_alignment(
             "cut_ml_slope_shared": ml_disagreement <= 0.01,
             "cut_ml_disagreement_deg": round(ml_disagreement, 3),
             **gaps,
+            **register,
             "reference_sagittal_tilt_removed": True,
             "cut_angle_between_deg": round(float(np.degrees(
                 angle_between(femoral_normal, tibial_normal)
@@ -684,59 +728,100 @@ def _extension_gaps(
     femoral_thickness_mm: float,
     tray_thickness_mm: float,
     insert_thickness_mm: float | None,
+    insert_delta_mm: float = 0.0,
 ) -> dict:
-    """What is left between the two cuts once the construct is in, per compartment.
+    """The insert that fills the joint in extension, and what it leaves per compartment.
 
-    The space between the resected surfaces is measured at each compartment, and the
-    components that fill it are subtracted: the femoral component's distal thickness
-    hangs below the femoral cut, the tray and the insert stack above the tibial one. A
-    negative result means the construct overstuffs that compartment.
+    The space between the resected surfaces is measured at each compartment, normal to
+    the tibial cut, at that compartment's plateau landmark projected onto the cut. The
+    femoral component's distal thickness hangs below the femoral cut; the tray and the
+    insert stack above the tibial one.
 
-    Each compartment is measured at its own plateau landmark, projected onto the tibial
-    cut, because the whole reason to report a gap is the difference between the two
-    sides. A single mid-joint figure would hide it.
+    Unless an insert thickness is fixed, the insert is **solved**: exactly as thick as
+    closes the tighter compartment, plus the surgeon's delta. The planned construct then
+    has no gap there, and the other compartment's gap is the imbalance between the two --
+    the number a balancing decision is made on. A negative gap means that compartment is
+    overstuffed.
 
-    The measurement runs **normal to the tibial cut**. With posterior slope the two cuts
-    are not parallel, so there is no single separation between them, and this is the
-    direction that matches how the space is filled and judged: the insert seats on the
-    tibial cut and its thickness is a dimension perpendicular to that surface, and a
-    trial spacer enters the same way. The femoral component's thickness is subtracted as
-    though perpendicular to the same direction, which is exact only when the cuts are
-    parallel; at a typical 3 degrees of slope the discrepancy is
-    ``thickness x (1 - cos 3 deg)``, about 0.01 mm, which is far below anything the
-    landmarks themselves support.
+    The measurement runs normal to the tibial cut because that is how the space is
+    filled: the insert seats on the tibial cut and its thickness is perpendicular to it.
+    The femoral thickness is subtracted along the same direction, which is exact only
+    for parallel cuts; at 3 degrees of slope the discrepancy is
+    ``thickness x (1 - cos 3 deg)``, about 0.01 mm.
 
-    Returns an empty mapping when no insert thickness has been set. That is the
-    pipeline's standing rule and it matters more here than usual: a gap computed against
-    an assumed insert would look like a measurement of this knee.
-
-    Only the **extension** gap is reported. The flexion gap needs the posterior condylar
-    resection, which this pipeline does not plan, so there is no honest way to state it.
+    Only the **extension** space is solved here. Flexion needs the posterior condylar
+    resection, which is not yet planned.
     """
-    if insert_thickness_mm is None:
-        return {}
-
     required = ("tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest")
     if not landmarks.available(*required):
         return {}
 
-    femoral_normal = unit(femoral_normal)
     tibial_normal = unit(tibial_normal)
-    occupied = float(femoral_thickness_mm) + float(tray_thickness_mm) \
-        + float(insert_thickness_mm)
-
-    gaps = {}
+    spaces = {}
     for compartment, landmark_id in (("medial", required[0]),
                                      ("lateral", required[1])):
         landmark = np.asarray(landmarks.position(landmark_id), dtype=float)
         on_tibial_cut = landmark - np.dot(
             landmark - tibial_point, tibial_normal
         ) * tibial_normal
-        space = float(np.dot(femoral_point - on_tibial_cut, tibial_normal))
-        gaps[f"extension_gap_{compartment}_mm"] = round(space - occupied, 3)
+        spaces[compartment] = float(np.dot(femoral_point - on_tibial_cut, tibial_normal))
 
-    gaps["extension_gap_construct_mm"] = round(occupied, 3)
-    return gaps
+    to_close = min(spaces.values()) - float(femoral_thickness_mm) \
+        - float(tray_thickness_mm)
+    solved = insert_thickness_mm is None
+    insert = to_close + float(insert_delta_mm) if solved else float(insert_thickness_mm)
+    occupied = float(femoral_thickness_mm) + float(tray_thickness_mm) + insert
+
+    return {
+        "extension_gap_medial_mm": round(spaces["medial"] - occupied, 3),
+        "extension_gap_lateral_mm": round(spaces["lateral"] - occupied, 3),
+        "extension_gap_construct_mm": round(occupied, 3),
+        "extension_imbalance_mm": round(abs(spaces["medial"] - spaces["lateral"]), 3),
+        "insert_thickness_mm": round(insert, 3),
+        "insert_thickness_to_close_mm": round(to_close, 3),
+        "insert_solved": solved,
+        "tray_thickness_mm": round(float(tray_thickness_mm), 3),
+    }
+
+
+def _component_register(
+    components: dict,
+    *,
+    femoral_anterior: np.ndarray,
+    tibial_anterior: np.ndarray,
+    tibial_normal: np.ndarray,
+    lateral: np.ndarray,
+) -> dict:
+    """How far the femoral and tibial components are out of line in extension.
+
+    Each is placed from its own bone -- the femoral component off the posterior condylar
+    axis at its cut's centre, the tray off the tibial frame at its cut's centre -- so they
+    need not sit square on each other. The rotation between them, seen along the tibial
+    cut normal, and the offset of the femoral origin over the tray, are what a planning
+    screen shows so the surgeon can bring them into register. Positive rotation means the
+    femoral component is turned towards lateral relative to the tray; positive offsets are
+    anterior and lateral.
+    """
+    normal = unit(tibial_normal)
+    femoral = unit(_in_plane_of(femoral_anterior, normal))
+    tibial = unit(_in_plane_of(tibial_anterior, normal))
+    lateral_in_plane = unit(_in_plane_of(lateral, normal))
+    # The tray's own lateral: a quarter turn from its anterior, towards the knee's lateral
+    # side. Measuring against the frame's lateral instead reads zero once the tray turns.
+    tray_lateral = unit(np.cross(normal, tibial))
+    if float(np.dot(tray_lateral, lateral_in_plane)) < 0:
+        tray_lateral = -tray_lateral
+    rotation = float(np.degrees(np.arctan2(
+        np.dot(femoral, tray_lateral), np.dot(femoral, tibial))))
+
+    offset = (np.asarray(components["femoral_component"][:3, 3])
+              - np.asarray(components["tibial_component"][:3, 3]))
+    offset = offset - np.dot(offset, normal) * normal
+    return {
+        "component_rotation_mismatch_deg": round(rotation, 2),
+        "component_offset_anterior_mm": round(float(np.dot(offset, tibial)), 2),
+        "component_offset_lateral_mm": round(float(np.dot(offset, lateral_in_plane)), 2),
+    }
 
 
 def _plane_origin(

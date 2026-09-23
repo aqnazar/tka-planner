@@ -269,6 +269,8 @@ class SessionManager:
                     flexion_deg=flexion,
                     varus_valgus_deg=session.trial.varus_valgus_deg,
                     drawer_ap_mm=session.trial.drawer_ap_mm,
+                    distraction_mm=session.trial.distraction_mm,
+                    distal=-session.measurement.tibial_frame.z_proximal,
                 ).tolist(),
             })
         return frames

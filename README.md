@@ -257,10 +257,13 @@ stays estimated and is reported as such.
 Pass `--library` with the implant library folder to add the fit check: coverage of
 each cut, and overhang and underhang by quadrant, for the tray and the femoral component.
 
-The resection depths come from the size chart for the solved size, interpolated
-between chart sizes, so there is no fixed default. `--femoral-resection-delta` and
-`--tibial-resection-delta` take more or less bone from there, as the application's
-resection controls do.
+The tibial depth is measured as commercial systems measure it: by default 9 mm below
+the lowest point of the less affected plateau. `--tibial-reference` also offers 2 mm below
+the more affected plateau, or the size chart's depth from the top of the tibia (the
+legacy datum). The femoral depth is the component's distal thickness for the size.
+`--femoral-resection-delta` and `--tibial-resection-delta` take more or less bone from
+there, as the application's resection controls do. The insert is solved to close the
+joint with no gap; `--insert-delta` makes it thicker or thinner.
 
 For picking landmarks by hand in 3D Slicer, as a rating study does:
 

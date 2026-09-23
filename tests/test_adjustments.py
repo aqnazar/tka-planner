@@ -29,9 +29,9 @@ from tests.synthetic import mirror_landmarks, synthetic_knee
 def plan_for(landmarks, **kwargs):
     femoral = build_femoral_frame(landmarks)
     tibial = build_tibial_frame(landmarks)
-    # Size L2 of the chart: 9 mm distal femur, 21 mm below the top of the tibia.
+    # The commercial default: 9 mm distal femur, 9 mm below the less affected plateau.
     kwargs.setdefault("femoral_thickness_mm", 9.0)
-    kwargs.setdefault("tibial_resection_mm", 21.0)
+    kwargs.setdefault("tibial_resection_mm", 9.0)
     return plan_alignment(landmarks, femoral, tibial, **kwargs)
 
 
@@ -431,10 +431,28 @@ class TestGaps:
         assert deep["extension_gap_medial_mm"] == pytest.approx(
             shallow["extension_gap_medial_mm"] + 2.0, abs=1e-6)
 
-    def test_no_insert_thickness_means_no_gap_rather_than_a_guess(self):
-        """The pipeline's standing rule: absent an input, report nothing."""
-        plan = plan_for(synthetic_knee("left"))
-        assert plan.diagnostics.get("extension_gap_medial_mm") is None
+    @pytest.mark.parametrize("mpta_deg", [85.0, 90.0])
+    def test_an_unset_insert_is_solved_to_close_the_tighter_compartment(self, mpta_deg):
+        """The implant is parametric, so the insert is made to fit: no gap where the
+        joint is tightest, and the other compartment's gap is the imbalance."""
+        diagnostics = plan_for(synthetic_knee("left", mpta_deg=mpta_deg)).diagnostics
+
+        gaps = (diagnostics["extension_gap_medial_mm"],
+                diagnostics["extension_gap_lateral_mm"])
+        assert diagnostics["insert_solved"]
+        assert min(gaps) == pytest.approx(0.0, abs=1e-6)
+        assert max(gaps) == pytest.approx(diagnostics["extension_imbalance_mm"],
+                                          abs=1e-3)
+
+    def test_the_insert_delta_tightens_the_construct(self):
+        loose = plan_for(synthetic_knee("left")).diagnostics
+        tight = plan_for(synthetic_knee("left"), adjustments=Adjustments(
+            insert_thickness_delta_mm=1.5)).diagnostics
+
+        assert tight["insert_thickness_mm"] == pytest.approx(
+            loose["insert_thickness_mm"] + 1.5)
+        assert min(tight["extension_gap_medial_mm"],
+                   tight["extension_gap_lateral_mm"]) == pytest.approx(-1.5)
 
 
 class TestMirrorInvariance:
@@ -482,3 +500,29 @@ class TestSerialisation:
     def test_an_unadjusted_plan_records_them_as_zero_rather_than_absent(self):
         plan = plan_for(synthetic_knee("left"))
         assert plan.to_dict()["adjustments"]["coronal_correction_deg"] == 0.0
+
+
+class TestComponentRegister:
+    """How far the two components are out of line, and that the controls move it."""
+
+    def test_rotating_the_tray_changes_the_mismatch_by_as_much(self):
+        base = plan_for(synthetic_knee("left")).diagnostics
+        turned = plan_for(synthetic_knee("left"), adjustments=Adjustments(
+            tibial_rotation_delta_deg=4.0)).diagnostics
+
+        assert abs(turned["component_rotation_mismatch_deg"]
+                   - base["component_rotation_mismatch_deg"]) == pytest.approx(
+            4.0, abs=0.05)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_sliding_the_tray_moves_the_offsets(self, side):
+        base = plan_for(synthetic_knee(side)).diagnostics
+        slid = plan_for(synthetic_knee(side), adjustments=Adjustments(
+            tibial_shift_ap_mm=2.0, tibial_shift_ml_mm=3.0)).diagnostics
+
+        # The femoral origin is fixed, so moving the tray forwards and laterally
+        # moves the femoral component backwards and medially relative to it.
+        assert slid["component_offset_anterior_mm"] == pytest.approx(
+            base["component_offset_anterior_mm"] - 2.0, abs=0.05)
+        assert slid["component_offset_lateral_mm"] == pytest.approx(
+            base["component_offset_lateral_mm"] - 3.0, abs=0.05)

@@ -87,9 +87,19 @@ def test_the_alignment_philosophy_can_be_switched(session):
     assert session.plan.philosophy == "kinematic"
 
 
-def test_the_tibial_resection_depth_follows_the_size(session):
-    """No fixed depth: each size carries its own, from the chart."""
-    session.replan(size_override="S1")
+def test_the_tibial_reference_moves_the_cut(session):
+    before = session.scene.world("tibial_proximal").copy()
+    session.replan(tibial_reference="more_affected_plateau")
+
+    assert session.scene.world("tibial_proximal")[:3, 3] != pytest.approx(
+        before[:3, 3]
+    )
+    assert session.bones_affected_by(("tibial_reference",)) == ("Tibia",)
+
+
+def test_on_the_legacy_datum_the_tibial_depth_follows_the_size(session):
+    """From the top of the tibia the depth is the size chart's, per size."""
+    session.replan(tibial_reference="top_of_tibia", size_override="S1")
     before = session.scene.world("tibial_proximal").copy()
     session.replan(size_override="L4")
 
@@ -118,7 +128,7 @@ def test_a_coronal_correction_affects_both_bones(session):
 
 
 def test_an_insert_change_affects_no_bone(session):
-    assert session.bones_affected_by(("insert_thickness_mm",)) == ()
+    assert session.bones_affected_by(("insert_thickness_delta_mm",)) == ()
 
 
 def test_a_shift_is_free_in_plane_mode(session):
@@ -197,7 +207,7 @@ def test_changing_the_plan_after_a_commit_makes_it_stale(session):
 
 def test_an_insert_change_after_a_commit_does_not_make_it_stale(session):
     session.commit()
-    session.replan(insert_thickness_mm=11.0)
+    session.replan(insert_thickness_delta_mm=1.0)
 
     assert session.stale is False
 

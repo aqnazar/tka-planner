@@ -119,16 +119,49 @@ its own depth, and a continuous size takes the interpolated depth, so there is n
 default. The depth sets how far below its datum a cut sits; the alignment philosophy
 sets the cut's angle; the surgeon's resection controls add to the depth.
 
-The two depths have different datums, as the implant defines them:
+**The tibial depth follows the commercial convention.** Every technique checked
+(Triathlon, ATTUNE, Persona) sets the stylus on the lowest point of the **less affected
+plateau** and removes the thinnest tibial construct: 9 mm in Triathlon and ATTUNE (4 mm
+base + 5 mm insert), 10 mm in Persona. That is the default here, 9 mm. The alternative
+stylus setting, 2 mm below the **more affected** plateau, is also offered. The third
+option measures the size chart's `tibia_proximal_cut` from the **top of the tibia**
+(usually the eminence), the legacy pipeline's datum, kept for the like-for-like
+comparison. Measured that way the cut is 13–17 mm below the plateaus on case P009,
+deeper than any commercial default. The surgeon's resection delta moves any of them.
 
-- **Femur:** from the more distal of the two distal condyles. At L2 this is 9.0 mm.
-- **Tibia:** from the **most proximal point of the tibia** along the cut normal, which is
-  usually the intercondylar eminence. That is why the column reads 16.3–22.1 mm where a
-  depth below the plateau reads 8–10. The legacy pipeline used the same datum (the top
-  of the tibia's bounding box), so a comparison with it is like for like.
+The femoral depth is the component's distal thickness, measured from the more distal
+condyle (measured resection): 9.0 mm at L2.
 
-The plan records both datums, the depth from each, and the depth below each plateau.
-Without a tibia mesh, the tibial spines stand in for the top of the bone.
+The plan records the reference, the datum point, the depth from it, and the depth
+below each plateau.
+
+## The insert and the gap
+
+The plan keeps the bones where they were scanned and closes the construct with **no
+gap**. The implant is parametric, so the insert is solved rather than chosen from a
+catalogue: in extension, the space between the cut planes is measured normal to the
+tibial cut at each compartment. The insert is made exactly as thick as closes the
+tighter compartment, after the femoral component's distal thickness and the tray (from
+the implant library). The other compartment's gap is the imbalance. With the coronally
+parallel cuts of measured resection the bony space is rectangular, so the imbalance is
+zero from bone alone; soft tissue is not modelled. The surgeon can choose a thicker or
+thinner insert, which tightens or loosens both compartments equally.
+
+Until Fusion builds the insert, the viewer stretches the library insert along its own
+axis about its floor, so that its dish (the polyethylene under the condyle) is the solved
+thickness. The library's dish is 4.6 mm at S1 and 7.0 mm at L4, on a 3.0–5.0 mm tray.
+
+The gap is seen in **Reduce** mode. A distraction pulls the tibia away from the femur
+along its own axis, a rigid pose that does not touch the plan, and it composes with
+flexion, varus/valgus stress and the drawer.
+
+**Component register and collision.** Each component is placed from its own bone, so
+they need not sit square on each other. The plan reports the femoral component's
+rotation over the tray and its anterior and lateral offset. With the library loaded, the
+posed femoral component and the stretched insert are compared surface to surface. Where
+the femoral component still reaches into the insert, a collision is flagged with its
+location. On P009 the components are 9.8° and 8.9 mm out of register, and the femoral
+component meets the insert's anterior lip 5 mm deep.
 
 ## Alignment planning
 

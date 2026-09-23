@@ -82,7 +82,10 @@ def _measure(args: argparse.Namespace) -> int:
         adjustments=Adjustments(
             femoral_resection_delta_mm=args.femoral_resection_delta,
             tibial_resection_delta_mm=args.tibial_resection_delta,
+            insert_thickness_delta_mm=args.insert_delta,
         ),
+        tibial_reference=args.tibial_reference,
+        library=args.library,
     )
     discrete = discrete_sizing(m)
     fit = fit_case(m, surgical, sizing, args.library)
@@ -91,6 +94,8 @@ def _measure(args: argparse.Namespace) -> int:
         "size_override": args.size or "",
         "femoral_resection_delta_mm": args.femoral_resection_delta,
         "tibial_resection_delta_mm": args.tibial_resection_delta,
+        "tibial_reference": args.tibial_reference,
+        "insert_thickness_delta_mm": args.insert_delta,
     }
 
     report_path = write_report(render_case_report(m, surgical, sizing),
@@ -116,9 +121,15 @@ def _measure(args: argparse.Namespace) -> int:
           f"from the distal condyle; medial {femoral_cut.medial_depth_mm:5.1f} / "
           f"lateral {femoral_cut.lateral_depth_mm:5.1f} mm")
     print(f"  tibial resect    {diagnostics['tibial_resection_from_datum_mm']:5.1f} mm "
-          f"from the top of the tibia; below the plateaus medial "
+          f"below {diagnostics['tibial_resection_datum']}; medial "
           f"{tibial_cut.medial_depth_mm:5.1f} / lateral "
           f"{tibial_cut.lateral_depth_mm:5.1f} mm")
+    if "insert_thickness_mm" in diagnostics:
+        print(f"  insert           {diagnostics['insert_thickness_mm']:5.1f} mm "
+              f"(solved to close the joint; tray "
+              f"{diagnostics['tray_thickness_mm']:.1f} mm); extension gap medial "
+              f"{diagnostics['extension_gap_medial_mm']:4.1f} / lateral "
+              f"{diagnostics['extension_gap_lateral_mm']:4.1f} mm")
     print(f"  plateau AP       {m.tibial_measure.ap_mm:5.1f} mm  "
           f"(naive bbox would say "
           f"{m.tibial_measure.diagnostics['naive_proximal_bbox_ap_mm']:.1f})")
@@ -254,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         "--size", default=None,
         help="a chart size, e.g. M2, instead of the size solved from the anatomy",
     )
-    # The depths themselves come from the size chart for the solved size; these move
+    # The depths are the defaults for the size and the tibial reference; these move
     # the cut from there, as the application's resection controls do.
     measure.add_argument(
         "--femoral-resection-delta", type=float, default=0.0,
@@ -262,7 +273,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     measure.add_argument(
         "--tibial-resection-delta", type=float, default=0.0,
-        help="bone off the proximal tibia beyond the chart depth for the size, in mm",
+        help="bone off the proximal tibia beyond the default depth, in mm",
+    )
+    measure.add_argument(
+        "--tibial-reference", default="less_affected_plateau",
+        choices=["less_affected_plateau", "more_affected_plateau", "top_of_tibia"],
+        help="where the tibial depth is measured from: 9 mm below the less affected "
+             "plateau (default), 2 mm below the more affected one, or the size "
+             "chart's depth from the top of the tibia (legacy)",
+    )
+    measure.add_argument(
+        "--insert-delta", type=float, default=0.0,
+        help="insert thicker (+) or thinner (-) than the one that closes the joint, mm",
     )
     measure.set_defaults(func=_measure)
 

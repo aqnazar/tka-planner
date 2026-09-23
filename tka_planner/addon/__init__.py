@@ -103,6 +103,7 @@ TRIAL_PROPERTIES = (
     "trial_flexion_deg",
     "trial_varus_valgus_deg",
     "trial_drawer_ap_mm",
+    "trial_distraction_mm",
 )
 
 # Panel properties that are plan inputs rather than adjustments. Sent to the session
@@ -110,8 +111,8 @@ TRIAL_PROPERTIES = (
 PLAN_PROPERTIES = (
     "philosophy",
     "size_override",
-    "insert_thickness_mm",
-    "use_insert",
+    "tibial_reference",
+    "insert_thickness_delta_mm",
     "resection_mode",
     "build_bone_shells",
     "show_landmarks",
@@ -211,6 +212,7 @@ def _apply_trial_pose(properties, context) -> None:
             flexion_deg=properties.trial_flexion_deg,
             varus_valgus_deg=properties.trial_varus_valgus_deg,
             drawer_ap_mm=properties.trial_drawer_ap_mm,
+            distraction_mm=properties.trial_distraction_mm,
         )
         render.apply_scene(session.scene)
     except Exception as error:
@@ -387,19 +389,27 @@ class TKAPlannerProperties(PropertyGroup):
     )
 
     # ---- Insert -----------------------------------------------------
-    use_insert: BoolProperty(
-        name="Insert",
+    insert_thickness_delta_mm: FloatProperty(
+        name="Thicker / thinner",
         description=(
-            "Show the plastic insert at a set thickness and report the extension gap "
-            "it leaves. A placeholder slab until the parametric insert is imported"
+            "The insert is made to close the joint in extension with no gap; "
+            "positive makes it thicker"
         ),
-        default=True,
+        default=0.0, min=-4.0, max=6.0, step=50, precision=1,
         update=_replan,
     )
-    insert_thickness_mm: FloatProperty(
-        name="Thickness",
-        description="Insert thickness, in millimetres",
-        default=9.0, min=4.0, max=20.0, step=25, precision=1,
+    tibial_reference: EnumProperty(
+        name="Measured from",
+        description="Where the tibial resection depth is measured from",
+        items=[
+            ("less_affected_plateau", "Less affected plateau",
+             "9 mm below the less worn plateau, the commercial default"),
+            ("more_affected_plateau", "More affected plateau",
+             "2 mm below the more worn plateau"),
+            ("top_of_tibia", "Top of tibia",
+             "The size chart's depth from the top of the tibia (legacy)"),
+        ],
+        default="less_affected_plateau",
         update=_replan,
     )
 
@@ -466,6 +476,11 @@ class TKAPlannerProperties(PropertyGroup):
     trial_drawer_ap_mm: FloatProperty(
         name="AP drawer", default=0.0, min=-15.0, max=15.0, step=10, precision=1,
         description="Slide the tibia anterior/posterior to check an AP drawer test",
+        update=_apply_trial_pose,
+    )
+    trial_distraction_mm: FloatProperty(
+        name="Distraction", default=0.0, min=0.0, max=20.0, step=50, precision=1,
+        description="Pull the tibia away from the femur along its axis to show a gap",
         update=_apply_trial_pose,
     )
 
@@ -730,6 +745,7 @@ class TKA_PT_panel(Panel):
         box = self._header(layout, properties, "show_tibial", "Tibial", "BONE_DATA")
         if not properties.show_tibial:
             return
+        box.prop(properties, "tibial_reference")
         column = box.column(align=True)
         for name in ("tibial_resection_delta_mm", "tibial_slope_delta_deg",
                      "tibial_varus_delta_deg", "tibial_rotation_delta_deg"):
@@ -741,11 +757,8 @@ class TKA_PT_panel(Panel):
 
     def _draw_insert(self, layout, properties):
         box = layout.box()
-        row = box.row()
-        row.prop(properties, "use_insert")
-        if properties.use_insert:
-            box.prop(properties, "insert_thickness_mm", slider=True)
-            box.label(text="Placeholder slab", icon="INFO")
+        box.label(text="Insert: solved to close the joint")
+        box.prop(properties, "insert_thickness_delta_mm", slider=True)
 
     def _draw_trial(self, layout, properties):
         box = self._header(
@@ -760,6 +773,7 @@ class TKA_PT_panel(Panel):
         column.prop(properties, "trial_flexion_deg", slider=True)
         column.prop(properties, "trial_varus_valgus_deg", slider=True)
         column.prop(properties, "trial_drawer_ap_mm", slider=True)
+        column.prop(properties, "trial_distraction_mm", slider=True)
         box.operator("tka.reset_trial", icon="LOOP_BACK")
 
     def _draw_display(self, layout, properties):
