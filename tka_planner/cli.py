@@ -21,7 +21,12 @@ from .core.frames import (
     build_femoral_frame,
     build_tibial_frame,
 )
-from .core.landmarks import load_landmarks, write_landmark_set
+from .core.landmarks import (
+    load_landmarks,
+    overlay_landmarks,
+    write_landmark_set,
+    write_slicer_template,
+)
 from .core.landmarks_auto import estimate_landmarks
 from .core.meshio import read_stl
 from .core.measure import measure_femoral_ml, measure_tibial_plateau
@@ -92,14 +97,25 @@ def _measure(args: argparse.Namespace) -> int:
     qc.extend(tibia_report)
 
     # -- Landmarks ----------------------------------------------------
+    #
+    # The automatic estimate always runs. A landmark file is laid over it, so a rater's
+    # picks replace the estimates they cover and everything else -- canal centres, any
+    # point skipped -- stays estimated and says so. A file of picks alone could not
+    # build a frame, since no rater is asked for the canal centres.
+    landmarks = estimate_landmarks(femur, tibia, side, case_id=case_id)
     if args.landmarks:
-        landmarks = load_landmarks(args.landmarks, case_id=case_id, side=side)
-        print(f"  landmarks loaded from {Path(args.landmarks).name}")
+        picks = load_landmarks(args.landmarks, case_id=case_id, side=side,
+                               rater=args.rater, session=args.session)
+        landmarks = overlay_landmarks(landmarks, picks)
+        print(f"  landmarks from {Path(args.landmarks).name}: "
+              f"{len(landmarks.source['picked'])} picked, "
+              f"{len(landmarks.source['skipped'])} skipped; "
+              f"the rest estimated automatically")
     else:
-        landmarks = estimate_landmarks(femur, tibia, side, case_id=case_id)
-        written = write_landmark_set(landmarks, output / "landmarks.json")
-        print(f"  landmarks estimated automatically -> {written.name}")
+        print("  landmarks estimated automatically")
         print("    (machine estimates awaiting review, not picked landmarks)")
+    written = write_landmark_set(landmarks, output / "landmarks.json")
+    print(f"    -> {written.name}")
 
     qc.extend(check_landmarks_on_mesh(landmarks, {"femur": femur, "tibia": tibia}))
     qc.raise_if_errors()
@@ -232,6 +248,47 @@ def _measure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _landmark_template(args: argparse.Namespace) -> int:
+    path = write_slicer_template(args.out, bones=tuple(args.bones))
+    print(f"Slicer picking template -> {path}")
+    print("  Load it in 3D Slicer beside the case's STL files and place each point in")
+    print("  order; use Skip for a point that cannot be identified.")
+    return 0
+
+
+def _landmark_convert(args: argparse.Namespace) -> int:
+    """Turn one rater's Slicer file into the native landmark file, checked and in LPS.
+
+    The meshes are optional but should be given: they are what catches a file declared
+    in the wrong coordinate system, which otherwise converts cleanly into a mirror image.
+    """
+    side = Side.parse(args.side)
+    landmarks = load_landmarks(args.input, case_id=args.case_id, side=side,
+                               rater=args.rater, session=args.session)
+    landmarks = landmarks.to_coordinate_system("LPS")
+
+    qc = QCReport()
+    meshes = {bone: read_stl(path)
+              for bone, path in (("femur", args.femur), ("tibia", args.tibia)) if path}
+    if meshes:
+        qc.extend(check_landmarks_on_mesh(landmarks, meshes))
+    for finding in qc.findings:
+        print(f"  {finding}")
+    if not qc.ok:
+        return 2
+
+    written = write_landmark_set(landmarks, args.out)
+    source = landmarks.source
+    print(f"{len([lm for lm in landmarks if lm.is_usable])} picked, "
+          f"{len(source.get('unplaced_labels', []))} unplaced, "
+          f"{len([lm for lm in landmarks if not lm.is_usable])} skipped, "
+          f"{len(source.get('unmatched_labels', []))} unrecognised labels")
+    if not meshes:
+        print("  (no meshes given: the coordinate-system check did not run)")
+    print(f"  -> {written}")
+    return 0
+
+
 def _serve(args: argparse.Namespace) -> int:
     """Start the local application.
 
@@ -276,8 +333,13 @@ def main(argv: list[str] | None = None) -> int:
     measure.add_argument("--case-id", default=None, help="anonymised case identifier")
     measure.add_argument(
         "--landmarks", default=None,
-        help="landmark file; omit to estimate them automatically",
+        help="landmark file laid over the automatic estimate; omit to use the "
+             "estimate alone",
     )
+    measure.add_argument("--rater", default=None,
+                         help="who picked the landmark file, if it is a Slicer file")
+    measure.add_argument("--session", default=None,
+                         help="rating session of the landmark file")
     measure.add_argument("--size-chart", default=str(DEFAULT_SIZE_CHART))
     measure.add_argument(
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
@@ -288,6 +350,36 @@ def main(argv: list[str] | None = None) -> int:
         help="tibial resection depth below the higher plateau, in mm",
     )
     measure.set_defaults(func=_measure)
+
+    # `landmarks` supports the manual-landmark rating study: a picking template for 3D
+    # Slicer, and the conversion of each rater's file into the native format.
+    landmarks = subparsers.add_parser(
+        "landmarks", help="Slicer picking template and landmark file conversion"
+    )
+    landmark_actions = landmarks.add_subparsers(dest="action", required=True)
+
+    template = landmark_actions.add_parser(
+        "template", help="write a Slicer markups file of named, unplaced points"
+    )
+    template.add_argument("--out", default="landmark_template.mrk.json")
+    template.add_argument("--bones", nargs="+", default=["femur", "tibia", "fibula"],
+                          choices=["femur", "tibia", "fibula"])
+    template.set_defaults(func=_landmark_template)
+
+    convert = landmark_actions.add_parser(
+        "convert", help="convert a rater's Slicer file to the native landmark file"
+    )
+    convert.add_argument("input", help=".mrk.json or .fcsv file from 3D Slicer")
+    convert.add_argument("--case-id", required=True)
+    convert.add_argument("--side", required=True, help="left or right")
+    convert.add_argument("--rater", required=True, help="rater identifier, e.g. R1")
+    convert.add_argument("--session", required=True, help="session number")
+    convert.add_argument("--femur", default=None,
+                         help="femur STL, for the coordinate-system check")
+    convert.add_argument("--tibia", default=None,
+                         help="tibia STL, for the coordinate-system check")
+    convert.add_argument("--out", required=True, help="native landmark file to write")
+    convert.set_defaults(func=_landmark_convert)
 
     # `serve` runs the planner as an application: a local server and a browser viewer.
     # Its arguments are defined by the server package rather than repeated here, so

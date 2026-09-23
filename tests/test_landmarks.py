@@ -20,11 +20,13 @@ from tka_planner.core.landmarks import (
     MissingLandmarks,
     definitions_for_bone,
     load_landmarks,
+    overlay_landmarks,
     read_landmark_set,
     read_slicer_fcsv,
     read_slicer_markups,
     resolve_landmark_id,
     write_landmark_set,
+    write_slicer_template,
 )
 from tka_planner.core.sides import Side
 
@@ -542,6 +544,220 @@ class TestNativeFormat:
         }))
         with pytest.raises(ValueError, match="exclusively in millimetres"):
             read_landmark_set(path)
+
+
+def with_status(path, statuses):
+    """Set ``positionStatus`` on the control points of a markups file, by label."""
+    document = json.loads(path.read_text())
+    for point in document["markups"][0]["controlPoints"]:
+        if point["label"] in statuses:
+            point["positionStatus"] = statuses[point["label"]]
+    path.write_text(json.dumps(document))
+    return path
+
+
+class TestRatingProtocol:
+    """What the manual-landmark study needs from the Slicer pathway.
+
+    A rater works from a template of named, unplaced points and may skip a point they
+    cannot identify. Neither an unplaced nor a skipped point is a landmark, and reading
+    either as one would put a pick at the origin -- or wherever the file left it.
+    """
+
+    def test_rater_and_session_are_recorded_on_the_set_and_each_point(self, tmp_path):
+        path = write_markups_json(tmp_path / "r1.mrk.json", SAMPLE_POINTS)
+        landmark_set = read_slicer_markups(
+            path, case_id="C", side="left", rater="R1", session=2
+        )
+
+        assert landmark_set.source["rater"] == "R1"
+        assert landmark_set.source["session"] == 2
+        for landmark in landmark_set:
+            assert landmark.metadata["rater"] == "R1"
+            assert landmark.metadata["session"] == 2
+
+    def test_rater_survives_the_native_round_trip(self, tmp_path):
+        path = write_markups_json(tmp_path / "r1.mrk.json", SAMPLE_POINTS)
+        landmark_set = read_slicer_markups(path, case_id="C", side="left", rater="R1")
+        back = read_landmark_set(write_landmark_set(landmark_set, tmp_path / "n.json"))
+
+        assert back.source["rater"] == "R1"
+        assert back.get("femur.epicondyle_lateral").metadata["rater"] == "R1"
+
+    def test_fcsv_records_the_rater_too(self, tmp_path):
+        path = write_fcsv(tmp_path / "r1.fcsv", SAMPLE_POINTS)
+        landmark_set = read_slicer_fcsv(path, case_id="C", side="left", rater="R2")
+        assert landmark_set.source["rater"] == "R2"
+
+    def test_load_passes_the_rater_through(self, tmp_path):
+        path = write_markups_json(tmp_path / "r1.mrk.json", SAMPLE_POINTS)
+        landmark_set = load_landmarks(path, case_id="C", side="left", rater="R3",
+                                      session=1)
+        assert landmark_set.source["rater"] == "R3"
+
+    @pytest.mark.parametrize("status", ["undefined", "preview"])
+    def test_an_unplaced_point_is_not_a_landmark(self, tmp_path, status):
+        path = with_status(
+            write_markups_json(tmp_path / "t.mrk.json", SAMPLE_POINTS),
+            {"Medial epicondylar sulcus": status},
+        )
+        landmark_set = read_slicer_markups(path, case_id="C", side="left")
+
+        assert "femur.epicondyle_medial_sulcus" not in landmark_set
+        assert landmark_set.source["unplaced_labels"] == ["Medial epicondylar sulcus"]
+
+    def test_a_skipped_point_is_recorded_as_not_picked_with_the_reason(self, tmp_path):
+        path = with_status(
+            write_markups_json(tmp_path / "t.mrk.json", SAMPLE_POINTS),
+            {"Medial epicondylar sulcus": "missing"},
+        )
+        landmark = read_slicer_markups(path, case_id="C", side="left").get(
+            "femur.epicondyle_medial_sulcus"
+        )
+
+        assert landmark.status is LandmarkStatus.NOT_PICKED
+        assert landmark.position_mm is None
+        assert "skipped" in landmark.reason
+
+    def test_a_defined_point_reads_as_before(self, tmp_path):
+        path = with_status(
+            write_markups_json(tmp_path / "t.mrk.json", SAMPLE_POINTS),
+            {"Lateral epicondyle": "defined"},
+        )
+        landmark_set = read_slicer_markups(path, case_id="C", side="left")
+        assert landmark_set.get("femur.epicondyle_lateral").status is (
+            LandmarkStatus.PRESENT
+        )
+
+
+class TestSlicerTemplate:
+    def test_lists_every_pickable_landmark_in_registry_order(self, tmp_path):
+        path = write_slicer_template(tmp_path / "template.mrk.json")
+        document = json.loads(path.read_text())
+        points = document["markups"][0]["controlPoints"]
+
+        expected = [d.id for d in REGISTRY.values() if d.picked_in_increment_1]
+        assert [p["label"] for p in points] == expected
+
+    def test_points_start_unplaced_in_lps_millimetres(self, tmp_path):
+        document = json.loads(
+            write_slicer_template(tmp_path / "template.mrk.json").read_text()
+        )
+        markup = document["markups"][0]
+
+        assert markup["coordinateSystem"] == "LPS"
+        assert markup["coordinateUnits"] == "mm"
+        assert markup["fixedNumberOfControlPoints"] is True
+        assert {p["positionStatus"] for p in markup["controlPoints"]} == {"undefined"}
+
+    def test_each_point_carries_its_definition(self, tmp_path):
+        """The rater sees the registry's wording, not a paraphrase of it."""
+        document = json.loads(
+            write_slicer_template(tmp_path / "template.mrk.json").read_text()
+        )
+        sulcus = next(p for p in document["markups"][0]["controlPoints"]
+                      if p["label"] == "femur.epicondyle_medial_sulcus")
+        assert REGISTRY["femur.epicondyle_medial_sulcus"].definition in (
+            sulcus["description"]
+        )
+
+    def test_can_be_limited_to_one_bone(self, tmp_path):
+        document = json.loads(write_slicer_template(
+            tmp_path / "femur.mrk.json", bones=("femur",)
+        ).read_text())
+        labels = [p["label"] for p in document["markups"][0]["controlPoints"]]
+        assert labels and all(label.startswith("femur.") for label in labels)
+
+    def test_an_untouched_template_reads_as_no_landmarks(self, tmp_path):
+        path = write_slicer_template(tmp_path / "template.mrk.json")
+        landmark_set = read_slicer_markups(path, case_id="C", side="left")
+
+        assert len(landmark_set) == 0
+        assert landmark_set.source["unmatched_labels"] == []
+
+
+class TestOverlay:
+    """Manual picks laid over an automatic estimate.
+
+    A rater picks what the protocol asks for; everything else -- canal centres, points
+    skipped -- stays the automatic estimate, still marked as one, so the plan builds and
+    the report shows exactly which values rest on a human pick.
+    """
+
+    @staticmethod
+    def estimate():
+        return LandmarkSet("C", "left", "LPS", [
+            Landmark("femur.epicondyle_lateral", [1.0, 2.0, 3.0],
+                     LandmarkStatus.ESTIMATED, origin="auto:x"),
+            Landmark("femur.canal_centre_distal", [4.0, 5.0, 6.0],
+                     LandmarkStatus.ESTIMATED, origin="auto:y"),
+            Landmark("femur.head_centre", status=LandmarkStatus.OUT_OF_SCAN,
+                     reason="knee-only field of view"),
+        ], source={"kind": "automatic_estimate"})
+
+    def test_a_pick_replaces_the_estimate(self):
+        picks = LandmarkSet("C", "left", "LPS", [
+            Landmark("femur.epicondyle_lateral", [9.0, 9.0, 9.0],
+                     LandmarkStatus.PRESENT, origin="slicer"),
+        ])
+        merged = overlay_landmarks(self.estimate(), picks)
+
+        assert merged.get("femur.epicondyle_lateral").status is LandmarkStatus.PRESENT
+        assert np.allclose(merged.position("femur.epicondyle_lateral"), [9, 9, 9])
+
+    def test_an_unpicked_landmark_keeps_its_estimate(self):
+        merged = overlay_landmarks(self.estimate(), LandmarkSet("C", "left", "LPS"))
+        assert merged.get("femur.canal_centre_distal").status is (
+            LandmarkStatus.ESTIMATED
+        )
+
+    def test_a_skipped_landmark_keeps_its_estimate_and_the_skip_is_recorded(self):
+        picks = LandmarkSet("C", "left", "LPS", [
+            Landmark("femur.epicondyle_lateral", status=LandmarkStatus.NOT_PICKED,
+                     reason="skipped by the rater"),
+        ])
+        merged = overlay_landmarks(self.estimate(), picks)
+
+        assert merged.get("femur.epicondyle_lateral").status is (
+            LandmarkStatus.ESTIMATED
+        )
+        assert merged.source["skipped"] == ["femur.epicondyle_lateral"]
+
+    def test_an_external_head_centre_replaces_out_of_scan(self):
+        """How a hip centre measured outside the CT enters the plan."""
+        picks = LandmarkSet("C", "left", "LPS", [
+            Landmark("femur.head_centre", [0.0, 0.0, 400.0], LandmarkStatus.PRESENT,
+                     origin="functional_pivot"),
+        ])
+        merged = overlay_landmarks(self.estimate(), picks)
+        assert merged.get("femur.head_centre").origin == "functional_pivot"
+
+    def test_picks_in_ras_are_converted_before_merging(self):
+        picks = LandmarkSet("C", "left", "RAS", [
+            Landmark("femur.epicondyle_lateral", [9.0, 9.0, 9.0],
+                     LandmarkStatus.PRESENT, origin="slicer"),
+        ])
+        merged = overlay_landmarks(self.estimate(), picks)
+
+        assert merged.coordinate_system is CoordinateSystem.LPS
+        assert np.allclose(merged.position("femur.epicondyle_lateral"), [-9, -9, 9])
+
+    def test_records_both_sources_and_the_counts(self):
+        picks = LandmarkSet("C", "left", "LPS", [
+            Landmark("femur.epicondyle_lateral", [9.0, 9.0, 9.0],
+                     LandmarkStatus.PRESENT, origin="slicer"),
+        ], source={"kind": "slicer_markups", "rater": "R1"})
+        merged = overlay_landmarks(self.estimate(), picks)
+
+        assert merged.source["kind"] == "overlay"
+        assert merged.source["base"]["kind"] == "automatic_estimate"
+        assert merged.source["overlay"]["rater"] == "R1"
+        assert merged.source["picked"] == ["femur.epicondyle_lateral"]
+
+    @pytest.mark.parametrize("case_id, side", [("OTHER", "left"), ("C", "right")])
+    def test_refuses_a_different_case_or_side(self, case_id, side):
+        with pytest.raises(ValueError, match="different case"):
+            overlay_landmarks(self.estimate(), LandmarkSet(case_id, side, "LPS"))
 
 
 class TestLoadDispatch:

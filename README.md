@@ -250,8 +250,22 @@ tka measure ... --philosophy kinematic --tibial-resection 8
 ```
 
 It writes `plan.json` (hash-anchored to the input files), `report.html`
-(self-contained), and `landmarks.json`. Pass `--landmarks` to use reviewed landmarks
-instead of the automatic estimate.
+(self-contained), and `landmarks.json`. Pass `--landmarks` to lay reviewed landmarks
+over the automatic estimate: each pick replaces its estimate, and anything not picked
+stays estimated and is reported as such.
+
+For picking landmarks by hand in 3D Slicer, as a rating study does:
+
+```bash
+tka landmarks template --out template.mrk.json      # one named, unplaced point per landmark
+tka landmarks convert R1_case005.mrk.json --case-id 005 --side left \
+    --rater R1 --session 1 --femur FD1Left.stl --tibia TD1Left.stl --out R1_s1.json
+tka measure --femur FD1Left.stl --tibia TD1Left.stl --side left --landmarks R1_s1.json
+```
+
+Conversion records the rater and session on every point, converts to LPS, and refuses a
+file whose points miss the bone. A point skipped in Slicer is recorded as not picked
+with that reason; a point never placed is ignored.
 
 ## Inputs
 

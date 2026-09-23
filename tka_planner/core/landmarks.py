@@ -51,7 +51,9 @@ __all__ = [
     "read_slicer_markups",
     "read_landmark_set",
     "write_landmark_set",
+    "write_slicer_template",
     "load_landmarks",
+    "overlay_landmarks",
 ]
 
 SCHEMA_VERSION = "tka-landmarks/1.0.0"
@@ -723,11 +725,27 @@ class MissingLandmarks(LookupError):
 # ----------------------------------------------------------------------
 
 
+def _rating(rater, session) -> dict:
+    """Who picked, and in which sitting -- recorded only when supplied.
+
+    Inter- and intra-observer analysis is impossible without it, and it cannot be
+    recovered afterwards from the coordinates.
+    """
+    record = {}
+    if rater is not None:
+        record["rater"] = rater
+    if session is not None:
+        record["session"] = session
+    return record
+
+
 def read_slicer_fcsv(
     path: "str | Path",
     *,
     case_id: str,
     side: "str | Side",
+    rater: str | None = None,
+    session: "int | str | None" = None,
 ) -> LandmarkSet:
     """Read a legacy Slicer ``.fcsv`` markups file.
 
@@ -765,6 +783,7 @@ def read_slicer_fcsv(
         columns = ["id", "x", "y", "z", "ow", "ox", "oy", "oz",
                    "vis", "sel", "lock", "label", "desc", "associatedNodeID"]
 
+    rating = _rating(rater, session)
     landmarks, unmatched = [], []
     for row in csv.reader(data_lines):
         record = dict(zip(columns, row))
@@ -780,7 +799,7 @@ def read_slicer_fcsv(
                              float(record["z"])],
                 status=LandmarkStatus.PRESENT,
                 origin=f"slicer_fcsv:{path.name}",
-                metadata={"source_label": label},
+                metadata={"source_label": label, **rating},
             )
         )
 
@@ -792,6 +811,7 @@ def read_slicer_fcsv(
         source={
             "kind": "slicer_fcsv",
             "file": path.name,
+            **rating,
             "unmatched_labels": unmatched,
             "imported_utc": _utc_now(),
         },
@@ -803,11 +823,19 @@ def read_slicer_markups(
     *,
     case_id: str,
     side: "str | Side",
+    rater: str | None = None,
+    session: "int | str | None" = None,
 ) -> LandmarkSet:
     """Read a current Slicer ``.mrk.json`` markups file.
 
     Each markup node declares its own ``coordinateSystem``. Nodes disagreeing with one
     another are rejected rather than silently reconciled.
+
+    A control point's ``positionStatus`` is honoured. Points never placed
+    (``undefined``, or a ``preview`` still following the mouse) are not landmarks and
+    are listed as unplaced. A point the rater *skipped* (``missing``) is recorded as
+    not picked, with that reason, because "could not identify it" is a finding of the
+    rating study rather than an incomplete workflow.
     """
     path = Path(path)
     document = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -816,8 +844,9 @@ def read_slicer_markups(
     if not markups:
         raise ValueError(f"{path.name} contains no 'markups' array.")
 
+    rating = _rating(rater, session)
     systems = set()
-    landmarks, unmatched = [], []
+    landmarks, unmatched, unplaced = [], [], []
     for markup in markups:
         declared = markup.get("coordinateSystem")
         if declared is None:
@@ -843,13 +872,28 @@ def read_slicer_markups(
             if landmark_id is None:
                 unmatched.append(label)
                 continue
+            status = point.get("positionStatus", "defined")
+            if status in ("undefined", "preview"):
+                unplaced.append(label)
+                continue
+            if status == "missing":
+                landmarks.append(
+                    Landmark(
+                        id=landmark_id,
+                        status=LandmarkStatus.NOT_PICKED,
+                        origin=f"slicer_markups:{path.name}",
+                        reason="skipped by the rater: could not be identified",
+                        metadata={"source_label": label, **rating},
+                    )
+                )
+                continue
             landmarks.append(
                 Landmark(
                     id=landmark_id,
                     position_mm=point["position"],
                     status=LandmarkStatus.PRESENT,
                     origin=f"slicer_markups:{path.name}",
-                    metadata={"source_label": label},
+                    metadata={"source_label": label, **rating},
                 )
             )
 
@@ -869,10 +913,72 @@ def read_slicer_markups(
             "kind": "slicer_markups",
             "file": path.name,
             "schema": document.get("@schema"),
+            **rating,
             "unmatched_labels": unmatched,
+            "unplaced_labels": unplaced,
             "imported_utc": _utc_now(),
         },
     )
+
+
+SLICER_MARKUPS_SCHEMA = (
+    "https://raw.githubusercontent.com/slicer/slicer/main/Modules/Loadable/Markups/"
+    "Resources/Schema/markups-schema-v1.0.3.json#"
+)
+
+
+def write_slicer_template(
+    path: "str | Path",
+    *,
+    bones: tuple[str, ...] = ("femur", "tibia", "fibula"),
+) -> Path:
+    """Write a Slicer markups file of named, unplaced points -- one per landmark.
+
+    This is the rating protocol's picking sheet. Points follow registry order, which is
+    the order the picking checklist uses, and each carries the registry definition as
+    its description, so the rater reads the same words the report glossary prints. The
+    point count is fixed so a stray click cannot add an unnamed landmark, and every
+    point starts ``undefined`` so an unfinished sheet reads back as nothing picked rather
+    than as points at the origin.
+
+    Written in LPS, the frame the meshes arrive in.
+    """
+    definitions = [
+        definition for bone in bones
+        for definition in definitions_for_bone(bone, picked_only=True)
+    ]
+    document = {
+        "@schema": SLICER_MARKUPS_SCHEMA,
+        "markups": [{
+            "type": "Fiducial",
+            "coordinateSystem": "LPS",
+            "coordinateUnits": "mm",
+            "locked": False,
+            "fixedNumberOfControlPoints": True,
+            "labelFormat": "%N-%d",
+            "lastUsedControlPointNumber": len(definitions),
+            "controlPoints": [
+                {
+                    "id": str(index + 1),
+                    "label": definition.id,
+                    "description": f"{definition.display_name}. "
+                                   f"{' '.join(definition.definition.split())}",
+                    "associatedNodeID": "",
+                    "position": [0.0, 0.0, 0.0],
+                    "orientation": [-1.0, -0.0, -0.0, -0.0, -1.0, -0.0,
+                                    0.0, 0.0, 1.0],
+                    "selected": True,
+                    "locked": False,
+                    "visibility": True,
+                    "positionStatus": "undefined",
+                }
+                for index, definition in enumerate(definitions)
+            ],
+        }],
+    }
+    path = Path(path)
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 # ----------------------------------------------------------------------
@@ -960,27 +1066,74 @@ def load_landmarks(
     *,
     case_id: str | None = None,
     side: "str | Side | None" = None,
+    rater: str | None = None,
+    session: "int | str | None" = None,
 ) -> LandmarkSet:
     """Read landmarks from whichever supported format the file happens to be.
 
     Slicer files carry no case identity, so ``case_id`` and ``side`` are required for
-    them; the native format records its own.
+    them; the native format records its own, including any rater and session.
     """
     path = Path(path)
     name = path.name.lower()
 
     if name.endswith(".fcsv"):
         _require_identity(case_id, side, path)
-        return read_slicer_fcsv(path, case_id=case_id, side=side)
+        return read_slicer_fcsv(path, case_id=case_id, side=side,
+                                rater=rater, session=session)
     if name.endswith(".mrk.json"):
         _require_identity(case_id, side, path)
-        return read_slicer_markups(path, case_id=case_id, side=side)
+        return read_slicer_markups(path, case_id=case_id, side=side,
+                                   rater=rater, session=session)
     if name.endswith(".json"):
         return read_landmark_set(path)
 
     raise ValueError(
         f"Unrecognised landmark file type: {path.name}. Expected .fcsv, .mrk.json, "
         f"or a native .json landmark file."
+    )
+
+
+def overlay_landmarks(base: LandmarkSet, picks: LandmarkSet) -> LandmarkSet:
+    """Lay human picks over an automatic estimate of the same knee.
+
+    A pick with a position replaces the estimate outright -- including an
+    ``OUT_OF_SCAN`` placeholder, which is how a hip centre measured outside the CT
+    enters the plan. Everything the rater did not place, or skipped, keeps its
+    estimate *and its ``ESTIMATED`` status*, so the metrics built on it stay demoted and
+    the plan still builds. Nothing is promoted by the merge itself.
+
+    The picks are converted into the base's coordinate system first; the declared frame
+    of each file decides that, never an assumption.
+    """
+    if base.case_id != picks.case_id or base.side is not picks.side:
+        raise ValueError(
+            f"Refusing to overlay landmarks from a different case or side: "
+            f"{picks.case_id} ({picks.side}) onto {base.case_id} ({base.side})."
+        )
+    picks = picks.to_coordinate_system(base.coordinate_system)
+
+    merged = {landmark.id: landmark for landmark in base}
+    picked, skipped = [], []
+    for landmark in picks:
+        if landmark.is_usable:
+            merged[landmark.id] = landmark
+            picked.append(landmark.id)
+        else:
+            skipped.append(landmark.id)
+
+    return LandmarkSet(
+        case_id=base.case_id,
+        side=base.side,
+        coordinate_system=base.coordinate_system,
+        landmarks=list(merged.values()),
+        source={
+            "kind": "overlay",
+            "base": base.source,
+            "overlay": picks.source,
+            "picked": picked,
+            "skipped": skipped,
+        },
     )
 
 
