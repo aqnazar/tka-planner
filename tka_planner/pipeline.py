@@ -69,6 +69,7 @@ __all__ = [
     "read_plan",
     "render_case_report",
     "find_size_chart",
+    "fit_case",
 ]
 
 PLAN_SCHEMA = "tka-planner/plan"
@@ -81,7 +82,7 @@ INTENDED_USE = "research_and_demonstration_only__not_a_medical_device"
 REQUIRED_KEYS = (
     "schema", "schema_version", "case_id", "side", "tool_version", "inputs",
     "scan_coverage", "frames", "metrics", "surgical_plan", "sizing",
-    "quality_control", "landmarks", "controls", "trial", "geometry",
+    "quality_control", "landmarks", "fit", "controls", "trial", "geometry",
     "geometry_matches_plan", "intended_use",
 )
 REQUIRED_SIZING_KEYS = (
@@ -278,6 +279,55 @@ def plan_case(
     return plan, sizing
 
 
+def fit_case(
+    measurement: CaseMeasurement,
+    plan: SurgicalPlan,
+    sizing: SizingDecision,
+    library,
+) -> dict | None:
+    """How the planned components fit the bone, on each cut.
+
+    The components are taken from the implant library at the plan's size and posed
+    exactly as the viewer poses them, so the fit is of what the surgeon sees. Returns
+    ``None`` with no library, and names any component the library lacks rather than
+    guessing its shape.
+    """
+    from .core.fit import section_fit
+    from .geom import mesh as gm
+    from .scene.build import resolve_component_meshes, seat
+
+    if library is None:
+        return None
+    m = measurement
+    specs = resolve_component_meshes(
+        library, chart=m.chart, sizing=sizing, side=str(m.side)
+    )
+    result = {"library_sizes": {}, "missing": []}
+    for name, cut, bone, frame, side_of_cut in (
+        ("tibial_component", "tibial_proximal", m.tibia, m.tibial_frame, 1.0),
+        ("femoral_component", "femoral_distal", m.femur, m.femoral_frame, -1.0),
+    ):
+        spec = specs.get(name)
+        if spec is None:
+            result["missing"].append(name)
+            continue
+        posed = gm.transformed(
+            read_stl(spec["path"]), seat(plan.components[name], spec["scale"])
+        )
+        resection = plan.resections[cut]
+        fit = section_fit(
+            cut=cut, bone=bone, component=posed,
+            point=resection.point, normal=resection.normal,
+            component_side=side_of_cut,
+            lateral=frame.lateral, anterior=frame.x_anterior,
+        )
+        result[name] = fit.to_dict()
+        result["library_sizes"][name] = {
+            "source_size": spec["source_size"], "scale": round(spec["scale"], 6),
+        }
+    return result
+
+
 def discrete_sizing(measurement: CaseMeasurement) -> SizingDecision:
     """The legacy round-down chart size, kept beside every plan for comparison."""
     return select_discrete_size(
@@ -292,6 +342,7 @@ def plan_document(
     plan: SurgicalPlan,
     sizing: SizingDecision,
     *,
+    fit: dict | None = None,
     controls: dict | None = None,
     trial: dict | None = None,
     geometry: dict | None = None,
@@ -302,6 +353,7 @@ def plan_document(
     Inputs are named by file name and content hash, never by full path: a path carries
     the folder layout of whoever planned the case, which can hold identifying names.
 
+    ``fit`` is :func:`fit_case`'s result, ``None`` when no implant library was given.
     ``controls`` and ``trial`` are the application's settings, and ``geometry`` its
     last commit. The command line has none of them and writes ``None``, so the keys are
     always present and a reader never has to ask which front end wrote the file.
@@ -337,6 +389,7 @@ def plan_document(
             "counts": m.landmark_counts(),
             "source": _plain(m.landmarks.source),
         },
+        "fit": fit,
         "controls": controls,
         "trial": trial,
         "geometry": geometry,

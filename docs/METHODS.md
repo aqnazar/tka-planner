@@ -200,6 +200,33 @@ coronal construction and differs by the condylar twist angle. The direction of t
 rotation is "toward the epicondylar axis", which is what the clinical rule means;
 deriving it geometrically sent it the wrong way and left the component 6° short.
 
+## Component fit
+
+Fit is judged on the cut surface, where the component meets the bone. At each cut the
+**bone section** (the bone mesh sliced by the cut plane) is compared with the **component
+footprint** (the posed component sliced 1 mm off the cut on its own side: through the tray
+plate above the tibial cut, and through the distal plate below the distal femoral cut).
+The components come from the implant library at the plan's size, posed exactly as the
+viewer poses them.
+
+Both outlines are filled on a 0.25 mm grid in the plane by the even-odd rule, so a
+hollow section, such as the intercondylar notch, stays hollow. The grid's axes are the
+bone's lateral and anterior directions laid into the cut, so the quadrants are anatomical
+on both knees. Reported per cut:
+
+- coverage of the cut surface, and the share of the footprint that is on bone;
+- overhang area, and in each quadrant the largest **overhang** (footprint beyond the
+  bone edge) and **underhang** (bone beyond the footprint edge), as distances in mm;
+- the ML and AP extents of both outlines.
+
+An overhang over 2 mm raises a flag. That limit is a convention from the literature on
+tibial overhang, not a validated threshold, and the distances are always reported.
+
+On case P009 the femur is sized from the bounding box of its distal quarter, 90.2 mm ML,
+which the epicondyles set. The bone at the distal cut is 76.5 mm wide, so the solved
+component overhangs the distal cut by up to 12 mm. The legacy pipeline sizes the femur
+the same way. The fit check exists to expose exactly this kind of mismatch.
+
 ## Manual adjustment
 
 Every control on the planning screen is a field in an `Adjustments` record passed *into*

@@ -16,7 +16,12 @@ from pathlib import Path
 
 from tka_planner.core.landmarks import write_landmark_set
 from tka_planner.geom import mesh as gm
-from tka_planner.pipeline import plan_document, render_case_report, write_plan
+from tka_planner.pipeline import (
+    fit_case,
+    plan_document,
+    render_case_report,
+    write_plan,
+)
 
 from .html import write_report
 
@@ -37,6 +42,8 @@ def export_session(session, out_dir, *, commit=None, write_meshes: bool = True) 
     # last commit filled in where the command line writes None.
     document = plan_document(
         session.measurement, session.plan, session.sizing,
+        fit=fit_case(session.measurement, session.plan, session.sizing,
+                     session.library),
         controls=_controls(session),
         trial={
             "flexion_deg": session.trial.flexion_deg,

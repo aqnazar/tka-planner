@@ -23,6 +23,7 @@ from .core.qc import QCReport, QualityControlError, check_landmarks_on_mesh
 from .core.sides import Side
 from .pipeline import (
     discrete_sizing,
+    fit_case,
     measure_case,
     plan_case,
     plan_document,
@@ -84,6 +85,7 @@ def _measure(args: argparse.Namespace) -> int:
         ),
     )
     discrete = discrete_sizing(m)
+    fit = fit_case(m, surgical, sizing, args.library)
     controls = {
         "philosophy": args.philosophy,
         "size_override": args.size or "",
@@ -93,8 +95,10 @@ def _measure(args: argparse.Namespace) -> int:
 
     report_path = write_report(render_case_report(m, surgical, sizing),
                                output / "report.html")
-    plan_path = write_plan(plan_document(m, surgical, sizing, controls=controls),
-                           output / "plan.json")
+    plan_path = write_plan(
+        plan_document(m, surgical, sizing, fit=fit, controls=controls),
+        output / "plan.json",
+    )
 
     # -- Console summary ----------------------------------------------
     print()
@@ -124,6 +128,19 @@ def _measure(args: argparse.Namespace) -> int:
           f"(discrete chart would give {discrete.nearest_discrete_size})")
     if discrete.flags:
         print(f"  discrete chart flags: {', '.join(discrete.flags)}")
+    if fit is not None:
+        print()
+        for name in ("tibial_component", "femoral_component"):
+            if name not in fit:
+                continue
+            f = fit[name]
+            print(f"  {name.replace('_', ' '):18s} coverage "
+                  f"{100 * f['coverage_fraction']:5.1f}%, overhang max "
+                  f"{f['max_overhang_mm']:4.1f} mm, underhang max "
+                  f"{f['max_underhang_mm']:4.1f} mm"
+                  + (f"  [{', '.join(f['flags'])}]" if f["flags"] else ""))
+        if fit["missing"]:
+            print(f"  not in the library: {', '.join(fit['missing'])}")
     print()
     print(f"  -> {plan_path}")
     print(f"  -> {report_path}")
@@ -228,6 +245,10 @@ def main(argv: list[str] | None = None) -> int:
     measure.add_argument(
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
         help="alignment philosophy",
+    )
+    measure.add_argument(
+        "--library", default=None,
+        help="implant library folder; with it the plan includes the fit check",
     )
     measure.add_argument(
         "--size", default=None,

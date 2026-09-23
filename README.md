@@ -254,6 +254,9 @@ It writes `plan.json` (hash-anchored to the input files), `report.html`
 over the automatic estimate: each pick replaces its estimate, and anything not picked
 stays estimated and is reported as such.
 
+Pass `--library` with the implant library folder to add the fit check: coverage of
+each cut, and overhang and underhang by quadrant, for the tray and the femoral component.
+
 The resection depths come from the size chart for the solved size, interpolated
 between chart sizes, so there is no fixed default. `--femoral-resection-delta` and
 `--tibial-resection-delta` take more or less bone from there, as the application's
