@@ -1,0 +1,50 @@
+# The suite needs no Blender and no patient data, so it runs anywhere. Both operating
+# systems are in the matrix because the paper states the plan is reproducible across
+# them, and Node is installed so the viewer's own GLB parser is exercised rather than
+# skipped.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Test
+        run: python -m pytest -q -rs
+
+  # The exact dependency set the paper's numbers come from.
+  pinned:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: python -m pip install -e ".[dev]" -c constraints-paper.txt
+      - name: Test
+        run: python -m pytest -q -rs
