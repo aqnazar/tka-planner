@@ -246,13 +246,18 @@ Same computation, no Blender, useful for batches and for the paper's figures:
 
 ```bash
 tka measure --femur FD1Left.stl --tibia TD1Left.stl --side left --out plan/
-tka measure ... --philosophy kinematic --tibial-resection 8
+tka measure ... --philosophy kinematic --tibial-resection-delta 2
 ```
 
 It writes `plan.json` (hash-anchored to the input files), `report.html`
 (self-contained), and `landmarks.json`. Pass `--landmarks` to lay reviewed landmarks
 over the automatic estimate: each pick replaces its estimate, and anything not picked
 stays estimated and is reported as such.
+
+The resection depths come from the size chart for the solved size, interpolated
+between chart sizes, so there is no fixed default. `--femoral-resection-delta` and
+`--tibial-resection-delta` take more or less bone from there, as the application's
+resection controls do.
 
 For picking landmarks by hand in 3D Slicer, as a rating study does:
 

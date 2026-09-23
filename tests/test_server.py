@@ -143,7 +143,6 @@ def test_every_adjustment_drives_the_api(api, session_id, field):
     [
         {"philosophy": "kinematic"},
         {"size_override": "M2"},
-        {"tibial_resection_mm": 10.0},
         {"insert_thickness_mm": 12.0},
         {"use_insert": False},
         {"resection_mode": "plane"},

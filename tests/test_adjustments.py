@@ -29,6 +29,9 @@ from tests.synthetic import mirror_landmarks, synthetic_knee
 def plan_for(landmarks, **kwargs):
     femoral = build_femoral_frame(landmarks)
     tibial = build_tibial_frame(landmarks)
+    # Size L2 of the chart: 9 mm distal femur, 21 mm below the top of the tibia.
+    kwargs.setdefault("femoral_thickness_mm", 9.0)
+    kwargs.setdefault("tibial_resection_mm", 21.0)
     return plan_alignment(landmarks, femoral, tibial, **kwargs)
 
 

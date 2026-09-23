@@ -31,7 +31,7 @@ from .core.landmarks_auto import estimate_landmarks
 from .core.meshio import read_stl
 from .core.measure import measure_femoral_ml, measure_tibial_plateau
 from .core.metrics import compute_all
-from .core.planning import KINEMATIC, MECHANICAL, plan_alignment
+from .core.planning import KINEMATIC, MECHANICAL, Adjustments, plan_alignment
 from .core.qc import (
     QCReport,
     assess_femur_coverage,
@@ -156,7 +156,11 @@ def _measure(args: argparse.Namespace) -> int:
         landmarks, femoral_frame, tibial_frame,
         target=target,
         femoral_thickness_mm=sizing.femoral_thickness_mm,
-        tibial_resection_mm=args.tibial_resection,
+        tibial_resection_mm=sizing.tibial_resection_mm,
+        adjustments=Adjustments(
+            femoral_resection_delta_mm=args.femoral_resection_delta,
+            tibial_resection_delta_mm=args.tibial_resection_delta,
+        ),
         native_slope_deg=metrics["posterior_slope_medial_deg"].value,
         femur_mesh=femur, tibia_mesh=tibia,
     )
@@ -349,9 +353,15 @@ def main(argv: list[str] | None = None) -> int:
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
         help="alignment philosophy",
     )
+    # The depths themselves come from the size chart for the solved size; these move
+    # the cut from there, as the application's resection controls do.
     measure.add_argument(
-        "--tibial-resection", type=float, default=10.0,
-        help="tibial resection depth below the higher plateau, in mm",
+        "--femoral-resection-delta", type=float, default=0.0,
+        help="bone off the distal femur beyond the chart depth for the size, in mm",
+    )
+    measure.add_argument(
+        "--tibial-resection-delta", type=float, default=0.0,
+        help="bone off the proximal tibia beyond the chart depth for the size, in mm",
     )
     measure.set_defaults(func=_measure)
 

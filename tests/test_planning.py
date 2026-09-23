@@ -27,6 +27,9 @@ def frames_for(landmarks):
 
 def plan_for(landmarks, **kwargs):
     femoral, tibial = frames_for(landmarks)
+    # Size L2 of the chart: 9 mm distal femur, 21 mm below the top of the tibia.
+    kwargs.setdefault("femoral_thickness_mm", 9.0)
+    kwargs.setdefault("tibial_resection_mm", 21.0)
     return plan_alignment(landmarks, femoral, tibial, **kwargs)
 
 
@@ -59,15 +62,68 @@ class TestResectionDepths:
         assert max(femoral.medial_depth_mm,
                    femoral.lateral_depth_mm) == pytest.approx(thickness, abs=0.01)
 
-    @pytest.mark.parametrize("resection", [8.0, 10.0, 12.0])
-    def test_tibial_depth_is_referenced_to_the_higher_plateau(self, resection):
-        """The less worn side is the reference, because the other has lost bone."""
-        plan = plan_for(synthetic_knee("left", mpta_deg=85.0),
-                        tibial_resection_mm=resection)
+    @pytest.mark.parametrize("resection", [16.0, 21.0, 22.0])
+    def test_tibial_depth_is_referenced_to_the_most_proximal_point(self, resection):
+        """The size chart's tibial depth runs from the top of the tibia, the eminence,
+        not from the plateau -- the datum the legacy pipeline used."""
+        landmarks = synthetic_knee("left", mpta_deg=85.0)
+        plan = plan_for(landmarks, tibial_resection_mm=resection)
         tibial = plan.resections["tibial_proximal"]
 
-        assert max(tibial.medial_depth_mm,
-                   tibial.lateral_depth_mm) == pytest.approx(resection, abs=0.01)
+        spines = np.array([landmarks.position("tibia.spine_medial"),
+                           landmarks.position("tibia.spine_lateral")])
+        top = spines[np.argmax(spines @ tibial.normal)]
+        assert np.dot(top - tibial.point, tibial.normal) == pytest.approx(
+            resection, abs=0.01)
+        # Measured from the plateau the same cut reads shallower, by the eminence height.
+        assert max(tibial.medial_depth_mm, tibial.lateral_depth_mm) < resection
+
+    def test_a_tibia_mesh_sets_the_datum_at_its_highest_point(self):
+        """With the bone present, the datum is the mesh's top along the cut normal, which
+        can sit above the picked spines."""
+        from tka_planner.core.meshio import Mesh
+
+        landmarks = synthetic_knee("left")
+        plan = plan_for(landmarks)
+        normal = plan.resections["tibial_proximal"].normal
+        spine = np.array(landmarks.position("tibia.spine_medial"))
+        peak = spine + 3.0 * normal
+        mesh = Mesh(vertices=np.array([spine, peak, spine - 40.0 * normal]),
+                    faces=np.array([[0, 1, 2]]))
+
+        with_mesh = plan_for(landmarks, tibia_mesh=mesh)
+        tibial = with_mesh.resections["tibial_proximal"]
+
+        assert with_mesh.diagnostics["tibial_resection_datum_source"] == "mesh"
+        assert np.dot(peak - tibial.point, tibial.normal) == pytest.approx(21.0, abs=0.01)
+
+    def test_without_spines_or_mesh_the_plateau_stands_in(self):
+        """The tibial frame itself needs the spines, so this fallback is only reachable
+        through the datum helper; it must still pick the higher plateau."""
+        from tka_planner.core.landmarks import LandmarkSet
+        from tka_planner.core.planning import _tibial_proximal_point
+
+        full = synthetic_knee("left", mpta_deg=85.0)
+        plateaus = ("tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest")
+        landmarks = LandmarkSet(
+            case_id=full.case_id, side=full.side,
+            coordinate_system=full.coordinate_system,
+            landmarks=[lm for lm in full if lm.id in plateaus],
+        )
+        normal = plan_for(full).resections["tibial_proximal"].normal
+
+        point, source = _tibial_proximal_point(landmarks, normal)
+
+        assert source == "plateau landmarks"
+        heights = [np.dot(full.position(i), normal) for i in plateaus]
+        assert np.dot(point, normal) == pytest.approx(max(heights))
+
+    def test_the_plan_states_both_datums(self):
+        diagnostics = plan_for(synthetic_knee("left")).diagnostics
+
+        assert diagnostics["tibial_resection_datum"] == "most proximal point of the tibia"
+        assert diagnostics["tibial_resection_from_datum_mm"] == 21.0
+        assert diagnostics["femoral_resection_from_datum_mm"] == 9.0
 
     def test_a_valgus_femur_resects_more_medially(self):
         """mLDFA below 90 means the lateral condyle sits proximal, so it loses less."""
@@ -220,14 +276,14 @@ class TestMirrorInvariance:
 
 class TestWarnings:
     def test_a_cut_that_misses_a_compartment_is_flagged(self):
-        """A shallow cut referenced to the higher plateau may never reach the worn one.
+        """A cut too shallow below the eminence may never reach the worn plateau.
 
         The negative depth is the correct answer rather than an error -- it says the
         saw does not touch that compartment -- but it is a surgically meaningless plan,
         so it must be surfaced rather than reported as a resection.
         """
         plan = plan_for(synthetic_knee("left", mpta_deg=84.0),
-                        tibial_resection_mm=0.0)
+                        tibial_resection_mm=4.0)
         tibial = plan.resections["tibial_proximal"]
 
         assert min(tibial.medial_depth_mm, tibial.lateral_depth_mm) < 0

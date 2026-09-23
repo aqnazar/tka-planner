@@ -113,17 +113,22 @@ Not every column is parametric, and the model does not pretend otherwise:
 So the chart is interpolated rather than fitted to a law, and quantised columns are
 rounded.
 
-**Resection depth is not sizing.** `femur_distal_cut` and `tibia_proximal_cut` are
-exactly `0.1125 ×` and `0.2625 ×` `femur_ML` across all twelve rows, so they describe
-component *thickness*, a property of the implant. Conflating the two is why the legacy
-pipeline could not plan alignment: choosing a size fixed the resection, leaving no free
-variable for an alignment target.
+**Resection depths are parametric.** `femur_distal_cut` and `tibia_proximal_cut` are
+exactly `0.1125 ×` and `0.2625 ×` `femur_ML` across all twelve rows. Each chart size has
+its own depth, and a continuous size takes the interpolated depth, so there is no fixed
+default. The depth sets how far below its datum a cut sits; the alignment philosophy
+sets the cut's angle; the surgeon's resection controls add to the depth.
 
-> **Open question.** `tibia_proximal_cut` runs 16.3–22.1 mm where a clinical proximal
-> tibial resection is 8–10 mm. It looks like resection *plus* construct height, or a
-> distance from a different datum. Needs a CAD cross-check before any resection metric
-> derived from it is published. Tracked as question 3.1 in
-> [CLINICAL_QUESTIONS.md](CLINICAL_QUESTIONS.md).
+The two depths have different datums, as the implant defines them:
+
+- **Femur:** from the more distal of the two distal condyles. At L2 this is 9.0 mm.
+- **Tibia:** from the **most proximal point of the tibia** along the cut normal, which is
+  usually the intercondylar eminence. That is why the column reads 16.3–22.1 mm where a
+  depth below the plateau reads 8–10. The legacy pipeline used the same datum (the top
+  of the tibia's bounding box), so a comparison with it is like for like.
+
+The plan records both datums, the depth from each, and the depth below each plateau.
+Without a tibia mesh, the tibial spines stand in for the top of the bone.
 
 ## Alignment planning
 
@@ -283,6 +288,13 @@ rounds. Everything downstream then searches along the bone's own directions.
 An earlier version took the extremes of the epicondylar band along the *world* axes.
 On a femur rotated ~15° that finds whatever part of the condylar circumference is widest
 in world X, and it put the rotational reference **26° out**.
+
+The plateau low points are searched on the **articular surface only**: faces within 55°
+of horizontal, the highest in each 2 mm cell seen from above, away from the edge of that
+surface and from the intercondylar strip, in the middle 60% of each compartment. The
+first version took the lowest vertex of a 22 mm slab at the top of the bone, and that is
+always the slab floor on the cortex. On case P009 both landmarks sat exactly 22 mm below
+the top, level with each other, so MPTA came out as 90° by construction. It is 84.4°.
 
 Confidence is recorded per landmark. Condylar and plateau extremes are good; epicondyles
 fair; the tibial rotational references weakest, since a patellar tendon insertion has no

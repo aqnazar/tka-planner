@@ -110,7 +110,6 @@ TRIAL_PROPERTIES = (
 PLAN_PROPERTIES = (
     "philosophy",
     "size_override",
-    "tibial_resection_mm",
     "insert_thickness_mm",
     "use_insert",
     "resection_mode",
@@ -277,12 +276,6 @@ class TKAPlannerProperties(PropertyGroup):
              "Cuts parallel to the native joint surfaces"),
         ],
         default="mechanical",
-        update=_replan,
-    )
-    tibial_resection_mm: FloatProperty(
-        name="Tibial resection",
-        description="Depth below the higher (less worn) plateau, in millimetres",
-        default=10.0, min=0.0, max=25.0, step=25, precision=1,
         update=_replan,
     )
     size_override: EnumProperty(
@@ -688,7 +681,6 @@ class TKA_PT_panel(Panel):
         layout.label(text="Plan", icon="MODIFIER")
         layout.prop(properties, "philosophy", text="")
         layout.prop(properties, "size_override")
-        layout.prop(properties, "tibial_resection_mm")
 
         column = layout.column(align=True)
         column.scale_y = 1.2

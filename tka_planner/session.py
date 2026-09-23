@@ -62,7 +62,7 @@ TIBIAL_ONLY = frozenset(
     name for name in ADJUSTMENT_FIELDS if name.startswith("tibial_")
 )
 BOTH_BONES = frozenset({
-    "coronal_correction_deg", "philosophy", "size_override", "tibial_resection_mm",
+    "coronal_correction_deg", "philosophy", "size_override",
     "resection_mode", "build_bone_shells",
 })
 # Controls that move nothing a boolean depends on, in any mode.
@@ -94,7 +94,6 @@ class Controls:
 
     philosophy: str = "mechanical"
     size_override: str = ""
-    tibial_resection_mm: float = 8.0
     insert_thickness_mm: float = 9.0
     use_insert: bool = True
     resection_mode: str = "block"
@@ -415,7 +414,7 @@ class PlanningSession:
                 MECHANICAL if self.controls.philosophy == "mechanical" else KINEMATIC
             ),
             femoral_thickness_mm=sizing.femoral_thickness_mm,
-            tibial_resection_mm=self.controls.tibial_resection_mm,
+            tibial_resection_mm=sizing.tibial_resection_mm,
             native_slope_deg=self._native_slope_deg,
             adjustments=self._adjustments(),
             femur_mesh=self._femur, tibia_mesh=self._tibia,

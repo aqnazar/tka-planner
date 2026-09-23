@@ -32,16 +32,22 @@ The model is therefore piecewise-linear interpolation across the chart, with lin
 extrapolation beyond either end. It reproduces the chart exactly at chart points, so
 legacy parity is provable, while remaining continuous in between and unbounded outside.
 
-Resection depth is not sizing
------------------------------
-``femur_distal_cut`` and ``tibia_proximal_cut`` are exactly proportional to implant
-width (``0.1125`` and ``0.2625`` times ``femur_ML`` respectively, across all twelve
-rows). They therefore describe the **thickness of the component**, a property of the
-implant, not a surgical decision about the patient. Conflating the two is why the legacy
-pipeline could not plan alignment at all: choosing a size fixed the resection depth,
-leaving no free variable through which to express an alignment target. Here they are
-reported as component properties, and the resection plane is set by the alignment
-philosophy.
+Resection depths are parametric
+-------------------------------
+``femur_distal_cut`` and ``tibia_proximal_cut`` are the resection depths the implant
+needs, exactly proportional to implant width (``0.1125`` and ``0.2625`` times
+``femur_ML`` across all twelve rows). Each chart size has its own value, and a
+continuous size takes the interpolated value, so the depth follows the implant being
+fitted. Neither has a fixed default.
+
+The two are measured from different datums. The femoral depth runs from the more
+distal of the distal condyles, and at size L2 it is the 9 mm the reference bone model
+was planned with. The tibial depth runs from the **most proximal point of the tibia**,
+usually the intercondylar eminence, which is why it reads 16 to 22 mm where a depth
+below the plateau would read 8 to 10. The planner states both datums in the plan.
+
+The depth fixes how far below the datum the cut sits, not the angle of the cut, which
+the alignment philosophy sets. The surgeon's resection controls add to it.
 """
 
 from __future__ import annotations
@@ -228,7 +234,7 @@ class SizingDecision:
     implant_ml_mm: float
     implant_ap_mm: float
     femoral_thickness_mm: float
-    tibial_construct_thickness_mm: float
+    tibial_resection_mm: float
     insert_thin_mm: float
     insert_thick_mm: float
     ap_mismatch_mm: float | None = None
@@ -250,8 +256,7 @@ class SizingDecision:
             "implant_ml_mm": round(self.implant_ml_mm, 2),
             "implant_ap_mm": round(self.implant_ap_mm, 2),
             "femoral_thickness_mm": round(self.femoral_thickness_mm, 3),
-            "tibial_construct_thickness_mm": round(
-                self.tibial_construct_thickness_mm, 3),
+            "tibial_resection_mm": round(self.tibial_resection_mm, 3),
             "insert_thin_mm": self.insert_thin_mm,
             "insert_thick_mm": self.insert_thick_mm,
             "ap_mismatch_mm": (round(self.ap_mismatch_mm, 2)
@@ -348,7 +353,7 @@ def solve_parametric_size(
         implant_ml_mm=implant_ml,
         implant_ap_mm=implant_ap,
         femoral_thickness_mm=chart.value_at("femur_distal_cut", parameter),
-        tibial_construct_thickness_mm=chart.value_at("tibia_proximal_cut", parameter),
+        tibial_resection_mm=chart.value_at("tibia_proximal_cut", parameter),
         insert_thin_mm=chart.value_at("insert_thin", parameter),
         insert_thick_mm=chart.value_at("insert_thick", parameter),
         ap_mismatch_mm=ap_mismatch,
@@ -429,7 +434,7 @@ def select_discrete_size(
         implant_ml_mm=implant_ml,
         implant_ap_mm=implant_ap,
         femoral_thickness_mm=chart.value_at("femur_distal_cut", parameter),
-        tibial_construct_thickness_mm=chart.value_at("tibia_proximal_cut", parameter),
+        tibial_resection_mm=chart.value_at("tibia_proximal_cut", parameter),
         insert_thin_mm=chart.value_at("insert_thin", parameter),
         insert_thick_mm=chart.value_at("insert_thick", parameter),
         ap_mismatch_mm=(implant_ap - measured_ap_mm

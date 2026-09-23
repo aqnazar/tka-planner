@@ -22,10 +22,10 @@ surgeon to choose; **[data]** needs something measured, picked or supplied.
 | # | Question | Why it blocks |
 |---|---|---|
 | 1.1 | Which alignment philosophy is the default, and is restricted kinematic needed? | Determines what the primary output even is |
-| 2.1 | Tibial resection: how much, measured from which plateau? | Hardcoded 10 mm from the less-worn side, unverified |
+| 2.1 | Tibial resection: how much, measured from which plateau? | **Answered 2026-09-23:** the chart depth for the size, from the most proximal point of the tibia |
 | 2.3 | Posterior slope target, and does it follow the implant's CR/PS design? | Hardcoded 3°, applied to every case |
 | 2.5 | Femoral rotation: fixed 3° off the posterior condylar axis, or measured to the surgical TEA per patient? | Currently fixed; unsafe in valgus knees |
-| 3.1 | What does the size chart's `tibia_proximal_cut` column (16.3–22.1 mm) actually measure? | Cannot publish any resection metric derived from it |
+| 3.1 | What does the size chart's `tibia_proximal_cut` column (16.3–22.1 mm) actually measure? | **Answered 2026-09-23:** resection depth from the most proximal point of the tibia |
 | 4.1 | Is a bone-only plan with no soft-tissue balancing clinically useful? | Defines the honest scope of the whole system |
 | 5.1 | Should osteophytes be removed from the segmentation before planning? | Osteophytes corrupt every condylar and plateau landmark we take |
 | 7.1 | What accuracy would make this credible, and what is the ground truth to test against? | We have no acceptance criterion to validate against |
@@ -61,6 +61,10 @@ unworn compartment? See also 5.2.
 
 These are all defaults in `tka_planner/core/planning.py`. Every one of them was chosen
 because a number was needed, not because it was clinically established.
+
+> **Answered 2026-09-23.** There is no fixed depth. Both depths come from the size chart
+> for the planned size, interpolated between sizes. The tibial depth is measured from the
+> most proximal point of the tibia, not from a plateau. See 3.1.
 
 **2.1 [decision] Tibial resection depth: we use 10 mm, measured from the *higher*
 (less-worn) plateau.** Two things to confirm: the magnitude, and the datum. The common
@@ -100,6 +104,11 @@ geometric signature on a bone surface, so this may need to be a manual pick in e
 ---
 
 ## 3. The implant size chart
+
+> **Answered 2026-09-23.** Both columns are correct resection depths. `femur_distal_cut`
+> is measured from the more distal condyle (9 mm at L2). `tibia_proximal_cut` is measured
+> from the most proximal point of the tibia, usually the eminence, which is why it is
+> larger than a depth below the plateau. The planner now uses both, per size.
 
 **3.1 [data] What does the `tibia_proximal_cut` column measure?** It runs 16.3–22.1 mm
 across the twelve chart sizes, where a clinical proximal tibial resection is 8–10 mm. It

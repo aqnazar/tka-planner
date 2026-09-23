@@ -247,8 +247,8 @@ def plan_alignment(
     tibial_frame: AnatomicalFrame,
     *,
     target: AlignmentTarget = MECHANICAL,
-    femoral_thickness_mm: float = 9.0,
-    tibial_resection_mm: float = 10.0,
+    femoral_thickness_mm: float,
+    tibial_resection_mm: float,
     tibial_tray_thickness_mm: float = 0.0,
     native_slope_deg: float | None = None,
     adjustments: Adjustments = NO_ADJUSTMENT,
@@ -275,9 +275,19 @@ def plan_alignment(
     properties of a diaphyseal fit that happens to lean forward because the leg lay at an
     angle in the scanner.
 
-    ``femoral_thickness_mm`` is the distal thickness of the femoral component, a property
-    of the implant taken from the size chart. ``tibial_resection_mm`` is measured from the
-    *higher* (less worn) plateau, since the other has lost bone to disease.
+    Both depths are **parametric**: they come from the size chart at the plan's size
+    parameter, so a chart size gets its own published value and a continuous size gets
+    the value interpolated between its neighbours. There is no default, because the
+    right depth depends on the implant that is being fitted.
+
+    ``femoral_thickness_mm`` is the chart's ``femur_distal_cut``, measured from the more
+    distal of the two distal condyles. ``tibial_resection_mm`` is the chart's
+    ``tibia_proximal_cut``, measured from the **most proximal point of the tibia** along
+    the cut normal -- usually the intercondylar eminence, so the figure is larger than a
+    depth below the plateau. That is the datum the chart was defined against and the one
+    the legacy pipeline used, so a like-for-like comparison with it depends on it. The
+    depth below each plateau, the figure a surgeon usually reads, is still reported per
+    compartment on the resection plane.
 
     ``adjustments`` carries whatever a surgeon has changed by hand. It enters here rather
     than being applied to the returned plan so that the plan remains reproducible from
@@ -429,11 +439,18 @@ def plan_alignment(
     plateau_points = np.array(landmarks.require(
         "tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"
     ))
-    plateau_projections = plateau_points @ tibial_normal
+    tibial_datum, tibial_datum_source = _tibial_proximal_point(
+        landmarks, tibial_normal, tibia_mesh
+    )
+    if tibial_datum_source == "plateau landmarks":
+        warnings.append(
+            "Neither a tibia mesh nor the tibial spines were available, so the tibial "
+            "datum (the most proximal point of the tibia) was approximated by the "
+            "higher plateau. The tibial cut sits higher than the chart intends."
+        )
     tibial_point = _plane_origin(
         plateau_points, tibial_normal,
-        seat=plateau_points[int(np.argmax(plateau_projections))]
-        - tibial_seat_mm * tibial_normal,
+        seat=tibial_datum - tibial_seat_mm * tibial_normal,
         mesh=tibia_mesh,
     )
     tibial_medial, tibial_lateral = _plane_depths(
@@ -539,7 +556,7 @@ def plan_alignment(
             "tibial_proximal": ResectionPlane(
                 "tibial_proximal", tibial_point, tibial_normal,
                 tibial_medial, tibial_lateral,
-                f"{tibial_seat_mm:.0f} mm below the higher plateau, "
+                f"{tibial_seat_mm:.1f} mm below the most proximal point of the tibia, "
                 f"{slope_deg:.1f} degrees posterior slope, sharing the femoral "
                 f"coronal reference",
             ),
@@ -550,7 +567,12 @@ def plan_alignment(
         diagnostics={
             "target": target.description,
             "femoral_component_thickness_mm": femoral_thickness_mm,
-            "tibial_resection_reference_mm": tibial_seat_mm,
+            "femoral_resection_datum": "most distal of the two distal condyles",
+            "femoral_resection_from_datum_mm": round(femoral_seat_mm, 3),
+            "tibial_resection_datum": "most proximal point of the tibia",
+            "tibial_resection_datum_source": tibial_datum_source,
+            "tibial_resection_datum_mm": [round(float(v), 3) for v in tibial_datum],
+            "tibial_resection_from_datum_mm": round(tibial_seat_mm, 3),
             "femoral_flexion_deg": femoral_flexion_deg,
             "coronal_axis_disagreement_deg": round(coronal_disagreement, 2),
             "cut_ml_slope_shared": ml_disagreement <= 0.01,
@@ -732,6 +754,38 @@ def _plane_origin(
         centre = np.asarray(points, dtype=float).mean(axis=0)
 
     return centre + np.dot(seat - centre, normal) * normal
+
+
+def _tibial_proximal_point(
+    landmarks: LandmarkSet, normal: np.ndarray, mesh=None
+) -> tuple[np.ndarray, str]:
+    """The tibial resection datum: the point of the tibia furthest along the cut normal.
+
+    Taken along the cut normal rather than the scanner's axis, so the datum is the first
+    point a plane parallel to the planned cut would touch as it came down onto the bone.
+    The legacy pipeline used the top of the bounding box, which is the same point once
+    the cut is perpendicular to the scanner axis, as it always was there.
+
+    Without a mesh, the tibial spines stand in: they are the peaks of the eminence, so
+    they are the top of the bone up to how exactly they were picked. Failing those, the
+    plateau landmarks are used. They lie well below the top, so the cut then sits too
+    high, and the caller warns.
+    """
+    normal = unit(normal)
+    if mesh is not None and len(mesh.vertices):
+        heights = mesh.vertices @ normal
+        return np.asarray(mesh.vertices[int(np.argmax(heights))], dtype=float), "mesh"
+
+    for ids, source in (
+        (("tibia.spine_medial", "tibia.spine_lateral"), "tibial spine landmarks"),
+        (("tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"),
+         "plateau landmarks"),
+    ):
+        present = [i for i in ids if landmarks.available(i)]
+        if present:
+            points = np.array([landmarks.position(i) for i in present], dtype=float)
+            return points[int(np.argmax(points @ normal))], source
+    raise ValueError("The tibial resection datum needs a tibia mesh or tibial landmarks.")
 
 
 def _tilt_about(

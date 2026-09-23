@@ -185,3 +185,27 @@ class TestChartAccess:
         """Insert thickness is quantised, so it has flat regions and no unique inverse."""
         with pytest.raises(ValueError, match="not strictly increasing"):
             chart.parameter_for("insert_thin", 10.0)
+
+
+class TestParametricResectionDepths:
+    """Both cut depths belong to the size: a chart size gets its published value and a
+    continuous size the value between its neighbours."""
+
+    def test_a_chart_size_carries_its_published_depths(self, chart):
+        decision = select_discrete_size(chart, measured_ml_mm=80.0)
+
+        assert decision.nearest_discrete_size == "L2"
+        assert decision.femoral_thickness_mm == pytest.approx(9.0)
+        assert decision.tibial_resection_mm == pytest.approx(21.0)
+
+    def test_a_continuous_size_interpolates_both_depths(self, chart):
+        decision = solve_parametric_size(chart, measured_ml_mm=79.0)
+
+        assert decision.femoral_thickness_mm == pytest.approx((8.775 + 9.0) / 2)
+        assert decision.tibial_resection_mm == pytest.approx((20.475 + 21.0) / 2)
+
+    def test_the_depths_are_serialised_under_their_own_names(self, chart):
+        record = solve_parametric_size(chart, measured_ml_mm=79.0).to_dict()
+
+        assert record["tibial_resection_mm"] == pytest.approx(20.7375, abs=1e-3)
+        assert "tibial_construct_thickness_mm" not in record

@@ -87,9 +87,11 @@ def test_the_alignment_philosophy_can_be_switched(session):
     assert session.plan.philosophy == "kinematic"
 
 
-def test_the_tibial_resection_depth_is_a_control(session):
+def test_the_tibial_resection_depth_follows_the_size(session):
+    """No fixed depth: each size carries its own, from the chart."""
+    session.replan(size_override="S1")
     before = session.scene.world("tibial_proximal").copy()
-    session.replan(tibial_resection_mm=12.0)
+    session.replan(size_override="L4")
 
     assert session.scene.world("tibial_proximal")[:3, 3] != pytest.approx(
         before[:3, 3]

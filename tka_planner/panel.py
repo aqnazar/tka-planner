@@ -25,9 +25,6 @@ CONTROL_SCHEMA = (
              "choices": [["", "Solve from anatomy"]],
              "help": "Auto solves a continuous size from the measurement. The listed "
                      "sizes are the twelve the chart publishes."},
-            {"name": "tibial_resection_mm", "label": "Tibial resection",
-             "kind": "float", "min": 0.0, "max": 25.0, "step": 0.5, "unit": "mm",
-             "help": "Depth below the higher, less worn plateau."},
             {"name": "coronal_correction_deg", "label": "Varus / valgus",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Coronal correction applied to both cuts together, so the "
@@ -39,8 +36,8 @@ CONTROL_SCHEMA = (
         "controls": (
             {"name": "femoral_resection_delta_mm", "label": "Distal resection",
              "kind": "float", "min": -6.0, "max": 10.0, "step": 0.1, "unit": "mm",
-             "help": "Extra bone off the distal femur, beyond the component "
-                     "thickness."},
+             "help": "Bone off the distal femur beyond the size chart's depth "
+                     "for this size, measured from the more distal condyle."},
             {"name": "femoral_flexion_delta_deg", "label": "Flexion (cut)",
              "kind": "float", "min": -10.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Sagittal flexion of the femoral cut and component. This changes "
@@ -66,7 +63,9 @@ CONTROL_SCHEMA = (
         "controls": (
             {"name": "tibial_resection_delta_mm", "label": "Resection",
              "kind": "float", "min": -6.0, "max": 10.0, "step": 0.1, "unit": "mm",
-             "help": "Extra bone off the proximal tibia, beyond the set depth."},
+             "help": "Bone off the proximal tibia beyond the size chart's depth "
+                     "for this size, measured from the most proximal point of the "
+                     "tibia."},
             {"name": "tibial_slope_delta_deg", "label": "Posterior slope",
              "kind": "float", "min": -10.0, "max": 10.0, "step": 0.5, "unit": "deg",
              "help": "Change to the planned posterior slope. Positive is more slope."},
