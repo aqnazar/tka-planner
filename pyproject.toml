@@ -19,8 +19,35 @@ blender = ["bpy>=4.4"]
 [project.scripts]
 tka = "tka_planner.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["tka_planner*"]
+[tool.setuptools]
+# Listed rather than discovered, because two of them are not directories under
+# tka_planner/: the viewer and the size chart live at the top of the repository, where
+# a checkout runs them from, but an installed package must carry them. They are mapped
+# in as tka_planner/web and tka_planner/data, which is where the server and the
+# size-chart lookup search when not running from a checkout.
+packages = [
+    "tka_planner",
+    "tka_planner.addon",
+    "tka_planner.blender",
+    "tka_planner.core",
+    "tka_planner.geom",
+    "tka_planner.geom.kernels",
+    "tka_planner.report",
+    "tka_planner.scene",
+    "tka_planner.server",
+    "tka_planner.store",
+    "tka_planner.validation",
+    "tka_planner.web",
+    "tka_planner.data",
+]
+
+[tool.setuptools.package-dir]
+"tka_planner.web" = "web"
+"tka_planner.data" = "data"
+
+[tool.setuptools.package-data]
+"tka_planner.web" = ["*.html", "*.js", "*.css", "vendor/*"]
+"tka_planner.data" = ["SizeChart.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

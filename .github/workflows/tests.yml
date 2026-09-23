@@ -48,3 +48,14 @@ jobs:
         run: python -m pip install -e ".[dev]" -c constraints-paper.txt
       - name: Test
         run: python -m pytest -q -rs
+      # The suite imports the checkout, so it cannot see what a real install is
+      # missing. Install the built wheel over it and use it from outside the checkout.
+      - name: Installed package carries the viewer and the size chart
+        shell: bash
+        run: |
+          python -m pip wheel --no-deps . -w dist
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "from tka_planner.session import find_size_chart; print(find_size_chart())"
+          python -c "from tka_planner.server.httpd import WEB_ROOT; assert (WEB_ROOT / 'index.html').is_file(), WEB_ROOT"
+          tka landmarks template --out template.mrk.json

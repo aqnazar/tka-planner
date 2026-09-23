@@ -43,9 +43,8 @@ from .core.qc import (
 )
 from .core.sides import Side
 from .core.sizing import load_size_chart, select_discrete_size, solve_parametric_size
+from .session import find_size_chart
 from .report.html import render_report, write_report
-
-DEFAULT_SIZE_CHART = Path(__file__).parent.parent / "data" / "SizeChart.csv"
 
 
 def _jsonable(value):
@@ -136,7 +135,10 @@ def _measure(args: argparse.Namespace) -> int:
     metrics = compute_all(landmarks, femoral_frame, tibial_frame)
 
     # -- Sizing -------------------------------------------------------
-    chart = load_size_chart(args.size_chart)
+    # The same lookup the application uses, so a checkout and an installed package
+    # both find the chart without a path being passed.
+    size_chart = Path(args.size_chart) if args.size_chart else find_size_chart()
+    chart = load_size_chart(size_chart)
     femoral_measure = measure_femoral_ml(femur, femoral_frame)
     tibial_measure = measure_tibial_plateau(tibia, tibial_frame)
     measured_ml, measured_ap = femoral_measure.ml_mm, femoral_measure.ap_mm
@@ -182,7 +184,7 @@ def _measure(args: argparse.Namespace) -> int:
              "sha256": femur.sha256},
             {"role": "tibia mesh", "name": Path(args.tibia).name,
              "sha256": tibia.sha256},
-            {"role": "size chart", "name": Path(args.size_chart).name,
+            {"role": "size chart", "name": size_chart.name,
              "sha256": chart.sha256},
         ],
         landmark_summary=counts,
@@ -340,7 +342,8 @@ def main(argv: list[str] | None = None) -> int:
                          help="who picked the landmark file, if it is a Slicer file")
     measure.add_argument("--session", default=None,
                          help="rating session of the landmark file")
-    measure.add_argument("--size-chart", default=str(DEFAULT_SIZE_CHART))
+    measure.add_argument("--size-chart", default=None,
+                         help="size chart CSV; defaults to the bundled chart")
     measure.add_argument(
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
         help="alignment philosophy",
