@@ -80,8 +80,11 @@ were generated. They are listed so their effect on those results can be assessed
    is clamped with only a printed warning. *Effect: real.* Case 005 measures 86.4 mm
    femoral ML against a largest size of 84.0 mm and was clamped to L4.
 
-5. **`SizeChart.csv` column `tibia_proximal_cut_m` is implausible as a resection
-   depth**, running 16.3–22.1 mm where a clinical proximal tibial resection is
-   ~8–10 mm. It is exactly `0.2625 x femur_ML_mm` across all twelve rows, suggesting
-   it encodes resection plus construct height, or a distance from a different datum.
-   Requires a CAD cross-check before any resection metric derived from it is published.
+5. ~~`SizeChart.csv` column `tibia_proximal_cut_m` is implausible as a resection
+   depth.~~ **Not a defect (confirmed by the lead author, 2026-09-23).** The
+   column runs 16.3–22.1 mm because it is measured from the **most proximal point of the
+   tibia** (usually the intercondylar eminence), not from a plateau; the script places
+   the tibia's top that far above the cut (line 1100). It is exactly
+   `0.2625 x femur_ML_mm` across all twelve rows. The new planner keeps this datum as its
+   "top of tibia" option for the like-for-like comparison, and defaults to the commercial
+   convention of 9 mm below the less affected plateau.

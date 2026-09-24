@@ -22,7 +22,7 @@ surgeon to choose; **[data]** needs something measured, picked or supplied.
 | # | Question | Why it blocks |
 |---|---|---|
 | 1.1 | Which alignment philosophy is the default, and is restricted kinematic needed? | Determines what the primary output even is |
-| 2.1 | Tibial resection: how much, measured from which plateau? | **Answered 2026-09-23:** the chart depth for the size, from the most proximal point of the tibia |
+| 2.1 | Tibial resection: how much, measured from which plateau? | **Answered 2026-09-24:** the commercial convention, 9 mm below the less affected plateau by default |
 | 2.3 | Posterior slope target, and does it follow the implant's CR/PS design? | Hardcoded 3°, applied to every case |
 | 2.5 | Femoral rotation: fixed 3° off the posterior condylar axis, or measured to the surgical TEA per patient? | Currently fixed; unsafe in valgus knees |
 | 3.1 | What does the size chart's `tibia_proximal_cut` column (16.3–22.1 mm) actually measure? | **Answered 2026-09-23:** resection depth from the most proximal point of the tibia |
@@ -62,9 +62,12 @@ unworn compartment? See also 5.2.
 These are all defaults in `tka_planner/core/planning.py`. Every one of them was chosen
 because a number was needed, not because it was clinically established.
 
-> **Answered 2026-09-23.** There is no fixed depth. Both depths come from the size chart
-> for the planned size, interpolated between sizes. The tibial depth is measured from the
-> most proximal point of the tibia, not from a plateau. See 3.1.
+> **Answered 2026-09-24.** The planner follows the commercial stylus convention
+> (Triathlon, ATTUNE, Persona): by default 9 mm below the lowest point of the **less
+> affected plateau**, with 2 mm below the more affected plateau as the alternative. The
+> size chart's depth from the top of the tibia (3.1) is kept as a third option, the legacy
+> datum, for comparison with the old pipeline. The femoral depth is the component's distal
+> thickness from the more distal condyle. The surgeon's deltas adjust both.
 
 **2.1 [decision] Tibial resection depth: we use 10 mm, measured from the *higher*
 (less-worn) plateau.** Two things to confirm: the magnitude, and the datum. The common
@@ -116,6 +119,10 @@ scales as exactly `0.2625 × femur_ML`, so it is a property of the implant, not 
 patient. Our reading is that it is resection *plus* construct height, or a distance from a
 different datum. We need the CAD definition confirmed before any resection figure derived
 from it is published. The same applies to `femur_distal_cut` at `0.1125 × femur_ML`.
+
+> **Answered 2026-09-24.** The insert is parametric. The planner solves its thickness so
+> the construct closes the tighter compartment in extension with no gap, and the surgeon
+> can make it thicker or thinner. The gap is shown in Reduce mode by distracting the tibia.
 
 **3.2 [decision] Insert thickness selection.** The chart supplies a thin and a thick
 insert per size. We have no rule for choosing between them, because the real criterion is
@@ -297,7 +304,7 @@ evaluation?** Ethics approval, institutional route, and who owns that process.
 If the meeting produces nothing else, these four items unblock the most:
 
 1. **Answers to the eight blocking questions** in the summary table.
-2. **The CAD definition of the two resection columns** in the size chart (3.1).
+2. ~~The CAD definition of the two resection columns~~ (answered 2026-09-23, see 3.1).
 3. **Two surgeons picking a full landmark set on ten cases**, to quantify inter-observer
    variability and give us a ground truth for plan agreement (6.2, 7.2).
 4. **A decision on full-limb imaging** — even a topogram on a handful of cases converts
