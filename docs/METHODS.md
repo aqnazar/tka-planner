@@ -155,13 +155,18 @@ The gap is seen in **Reduce** mode. A distraction pulls the tibia away from the 
 along its own axis, a rigid pose that does not touch the plan, and it composes with
 flexion, varus/valgus stress and the drawer.
 
-**Component register and collision.** Each component is placed from its own bone, so
-they need not sit square on each other. The plan reports the femoral component's
-rotation over the tray and its anterior and lateral offset. With the library loaded, the
-posed femoral component and the stretched insert are compared surface to surface. Where
-the femoral component still reaches into the insert, a collision is flagged with its
-location. On P009 the components are 9.8° and 8.9 mm out of register, and the femoral
-component meets the insert's anterior lip 5 mm deep.
+**Component register and collision.** The femoral component and the tray are designed in
+register: imported together they sit square on each other, and only the height between
+them changes. So the femur leads. The tray takes the femoral component's rotation, seen
+in its own cut plane, and sits directly under the femoral origin along its cut normal.
+The tibial rotation and slides are the surgeon's deliberate departure from register, and
+the plan reports it as the femoral component's rotation over the tray and its anterior
+and lateral offset (zero by default). Where the tray then sits against the tibia's own
+axis and the centre of its cut is reported separately, as the coverage question. With the
+library loaded, the posed femoral component and the stretched insert are compared surface
+to surface, and a collision is flagged with its location. Placing each component from its
+own bone, as the planner did before 2026-09-26, put P009's components 9.8° and 8.9 mm out
+of register, with the femoral component 5 mm into the insert's anterior lip.
 
 ## Alignment planning
 

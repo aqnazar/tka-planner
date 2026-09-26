@@ -291,3 +291,11 @@ def test_the_session_imports_no_bpy(session):
     session.commit()
 
     assert "bpy" not in sys.modules
+
+
+def test_the_report_shows_where_the_tray_sits_on_the_tibia(session):
+    lines = session.report_lines()
+
+    assert "HEAD|Tray on the tibia" in lines
+    assert any(line.startswith("Rotation off tibial axis|") for line in lines)
+    assert any(line.startswith("Offset from cut centre AP|") for line in lines)

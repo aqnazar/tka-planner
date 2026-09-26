@@ -87,13 +87,16 @@ CONTROL_SCHEMA = (
                      "mediolateral slope with the femoral cut, and the plan says so."},
             {"name": "tibial_rotation_delta_deg", "label": "Rotation",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
-             "help": "External rotation of the tray about its cut normal."},
+             "help": "Turn the tray out of register with the femoral component, about "
+                     "its cut normal. Zero keeps the two square. Positive is external."},
             {"name": "tibial_shift_ap_mm", "label": "Anterior / posterior",
              "kind": "float", "min": -10.0, "max": 10.0, "step": 0.1, "unit": "mm",
-             "help": "Slide the tray across its cut. Positive is anterior."},
+             "help": "Slide the tray out of register with the femoral component. "
+                     "Positive is anterior."},
             {"name": "tibial_shift_ml_mm", "label": "Medial / lateral",
              "kind": "float", "min": -10.0, "max": 10.0, "step": 0.1, "unit": "mm",
-             "help": "Slide the tray across its cut. Positive is lateral."},
+             "help": "Slide the tray out of register with the femoral component. "
+                     "Positive is lateral."},
         ),
     },
     {

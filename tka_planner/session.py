@@ -431,6 +431,17 @@ class PlanningSession:
                 f"Anterior offset|{diagnostics['component_offset_anterior_mm']:+.1f} mm",
                 f"Lateral offset|{diagnostics['component_offset_lateral_mm']:+.1f} mm",
             ]
+        if diagnostics.get("tray_rotation_from_tibial_axis_deg") is not None:
+            lines += [
+                "",
+                "HEAD|Tray on the tibia",
+                f"Rotation off tibial axis|"
+                f"{diagnostics['tray_rotation_from_tibial_axis_deg']:+.1f} deg",
+                f"Offset from cut centre AP|"
+                f"{diagnostics['tray_offset_from_tibial_cut_centre_anterior_mm']:+.1f} mm",
+                f"Offset from cut centre ML|"
+                f"{diagnostics['tray_offset_from_tibial_cut_centre_lateral_mm']:+.1f} mm",
+            ]
 
         lines += [
             "",
