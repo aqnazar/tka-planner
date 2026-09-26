@@ -568,11 +568,16 @@ def plan_alignment(
     shared_origin = np.asarray(femoral_pose[:3, 3], dtype=float)
     tray_origin = shared_origin - float(
         np.dot(shared_origin - tibial_point, tibial_normal)) * tibial_normal
+    # The tray slides along its own axes. Its anterior now comes from the femur and can
+    # sit well off the tibia's own axis (28 degrees on the reference bone), so the
+    # tibial frame's lateral is no longer square to it; sliding along that would move
+    # the tray obliquely, part of an ML slide landing in AP.
+    tray_lateral = _lateral_of(tibial_anterior, tibial_normal, tibial_frame.lateral)
     tray_pose = _shift_component(
         _component_pose(tray_origin, tibial_normal, convention="tibial",
                         anterior=tibial_anterior),
         tibial_normal,
-        anterior=tibial_anterior, lateral=tibial_frame.lateral,
+        anterior=tibial_anterior, lateral=tray_lateral,
         ap_mm=adjustments.tibial_shift_ap_mm,
         ml_mm=adjustments.tibial_shift_ml_mm,
     )
@@ -827,12 +832,10 @@ def _component_register(
     normal = unit(tibial_normal)
     femoral = unit(_in_plane_of(femoral_anterior, normal))
     tibial = unit(_in_plane_of(tibial_anterior, normal))
-    lateral_in_plane = unit(_in_plane_of(lateral, normal))
-    # The tray's own lateral: a quarter turn from its anterior, towards the knee's lateral
-    # side. Measuring against the frame's lateral instead reads zero once the tray turns.
-    tray_lateral = unit(np.cross(normal, tibial))
-    if float(np.dot(tray_lateral, lateral_in_plane)) < 0:
-        tray_lateral = -tray_lateral
+    # The tray's own lateral. Measuring against the frame's lateral instead reads zero
+    # rotation once the tray turns, and skews the offsets once the tray is off the
+    # tibial axis.
+    tray_lateral = _lateral_of(tibial, normal, lateral)
     rotation = float(np.degrees(np.arctan2(
         np.dot(femoral, tray_lateral), np.dot(femoral, tibial))))
 
@@ -842,8 +845,19 @@ def _component_register(
     return {
         "component_rotation_mismatch_deg": round(rotation, 2),
         "component_offset_anterior_mm": round(float(np.dot(offset, tibial)), 2),
-        "component_offset_lateral_mm": round(float(np.dot(offset, lateral_in_plane)), 2),
+        "component_offset_lateral_mm": round(float(np.dot(offset, tray_lateral)), 2),
     }
+
+
+def _lateral_of(anterior: np.ndarray, normal: np.ndarray, lateral: np.ndarray) -> np.ndarray:
+    """A component's own lateral: a quarter turn from its anterior about the cut normal,
+    towards the knee's lateral side. Square to the anterior by construction, so a slide
+    or an offset split along the pair has no cross-talk on either knee."""
+    normal = unit(normal)
+    own = unit(np.cross(normal, _in_plane_of(anterior, normal)))
+    if float(np.dot(own, _in_plane_of(lateral, normal))) < 0:
+        own = -own
+    return own
 
 
 def _tray_on_tibia(

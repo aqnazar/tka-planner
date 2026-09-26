@@ -632,3 +632,34 @@ class TestSharedPose:
         right = plan_for(mirror_landmarks(synthetic_knee("left"))).diagnostics
         for key in TRAY_ON_TIBIA:
             assert right[key] == pytest.approx(left[key], abs=0.01)
+
+
+class TestTraySlideOffTheTibialAxis:
+    """A tray slide must move along the tray's own axes, even when the femur has turned
+    the tray well away from the tibia's own axis."""
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_a_medial_lateral_tray_slide_does_not_leak_into_anterior(self, side):
+        landmarks = synthetic_knee(side)
+        turned = Adjustments(femoral_rotation_delta_deg=20.0)
+        base = plan_for(landmarks, adjustments=turned).diagnostics
+        slid = plan_for(landmarks, adjustments=Adjustments(
+            femoral_rotation_delta_deg=20.0, tibial_shift_ml_mm=3.0)).diagnostics
+
+        assert slid["component_offset_anterior_mm"] == pytest.approx(
+            base["component_offset_anterior_mm"], abs=0.02)
+        assert slid["component_offset_lateral_mm"] == pytest.approx(
+            base["component_offset_lateral_mm"] - 3.0, abs=0.02)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_a_tray_slide_moves_it_exactly_along_its_own_axes(self, side):
+        landmarks = synthetic_knee(side)
+        base = plan_for(landmarks, adjustments=Adjustments(femoral_rotation_delta_deg=20.0))
+        slid = plan_for(landmarks, adjustments=Adjustments(
+            femoral_rotation_delta_deg=20.0, tibial_shift_ml_mm=3.0))
+
+        tray = base.components["tibial_component"]
+        moved = slid.components["tibial_component"][:3, 3] - tray[:3, 3]
+        # Tray local: +X patient-left, +Y posterior. An ML slide has no AP part.
+        assert float(np.dot(moved, tray[:3, 1])) == pytest.approx(0.0, abs=1e-6)
+        assert abs(float(np.dot(moved, tray[:3, 0]))) == pytest.approx(3.0, abs=1e-6)
