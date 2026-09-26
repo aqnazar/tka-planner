@@ -170,3 +170,24 @@ def test_a_slide_moves_the_patient_specific_part_by_exactly_the_slide(
     after = session.scene.nodes[component].rest[:3, 3]
 
     assert np.linalg.norm(after - before) == pytest.approx(2.0, abs=0.05)
+
+
+@pytest.mark.parametrize("control", ["femoral_shift_ap_mm", "femoral_shift_ml_mm"])
+def test_a_femoral_slide_carries_the_patient_specific_tray(session, control):
+    """The tray is in register with the femoral component, so it moves with it."""
+    before = session.scene.nodes["tibial_component"].rest[:3, 3].copy()
+    session.replan(**{control: 2.0})
+    after = session.scene.nodes["tibial_component"].rest[:3, 3]
+
+    assert np.linalg.norm(after - before) == pytest.approx(2.0, abs=0.1)
+
+
+def test_the_patient_specific_parts_are_shown_in_register(session):
+    """The displayed CAD origins are coaxial along the tray's normal."""
+    femoral = session.scene.nodes["femoral_component"].rest
+    tray = session.scene.nodes["tibial_component"].rest
+    normal = tray[:3, 2] / np.linalg.norm(tray[:3, 2])
+    offset = femoral[:3, 3] - tray[:3, 3]
+    in_plane = offset - np.dot(offset, normal) * normal
+
+    assert np.linalg.norm(in_plane) == pytest.approx(0.0, abs=0.05)

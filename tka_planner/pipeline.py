@@ -516,24 +516,32 @@ def component_scales(
                             specs["tibial_component"]["scale"]]),
     }
     # The library part's footprint is not centred on its CAD origin, so once it is the
-    # patient's size it is slid in its own plane until its box centre is the section's.
-    shifts = {}
-    for group, record, lib in (("femoral", spec["femoral_component"], lib_f),
-                               ("tibial", spec["tibial_component"], lib_t)):
-        centre = np.asarray(record["diagnostics"]["section_centre_mm"], dtype=float)
-        shifts[group] = np.array([
-            *(centre - scales[group][:2] * np.asarray(lib["centre"])), 0.0])
+    # patient's size the femoral part is slid in its own plane until its box centre is
+    # the section's.
+    record = spec["femoral_component"]
+    centre = np.asarray(record["diagnostics"]["section_centre_mm"], dtype=float)
+    shifts = {"femoral": np.array([
+        *(centre - scales["femoral"][:2] * np.asarray(lib_f["centre"])), 0.0])}
 
     # The centring above follows the pose, so on its own it would undo the surgeon's
-    # slide of a component across its cut. The slide is put back on top of it, in the
-    # component's own axes: femoral +X anterior, +Y patient-left; tray +X patient-left,
-    # +Y posterior. Lateral is patient-left on a left knee.
+    # slide of the femoral component across its cut. The slide is put back on top of it,
+    # in the component's own axes: +X anterior, +Y patient-left. Lateral is patient-left
+    # on a left knee.
     lateral_sign = -1.0 if str(measurement.side).lower().startswith("r") else 1.0
     a = plan.adjustments
     shifts["femoral"] += np.array([a.femoral_shift_ap_mm,
                                    lateral_sign * a.femoral_shift_ml_mm, 0.0])
-    shifts["tibial"] += np.array([lateral_sign * a.tibial_shift_ml_mm,
-                                  -a.tibial_shift_ap_mm, 0.0])
+
+    # The tray is in register with the femoral component: the plan puts its origin
+    # directly under the femoral one. So it takes the femoral part's slide rather than
+    # being centred on its own cut. Centring each part on its own cut would pull the two
+    # apart again. The femoral slide is carried over in world terms and re-expressed in
+    # the tray's axes (+X patient-left, +Y posterior). The surgeon's own tray slide is
+    # already in the tray's pose.
+    femoral_pose = np.asarray(plan.components["femoral_component"], dtype=float)
+    tray_pose = np.asarray(plan.components["tibial_component"], dtype=float)
+    world = femoral_pose[:3, :2] @ shifts["femoral"][:2]
+    shifts["tibial"] = np.array([*(tray_pose[:3, :2].T @ world), 0.0])
     return {"scales": scales, "shifts": shifts}
 
 
