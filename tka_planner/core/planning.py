@@ -532,39 +532,54 @@ def plan_alignment(
         landmarks, femoral_frame, femoral_normal,
         target.femoral_rotation_deg + adjustments.femoral_rotation_delta_deg,
     )
-    tibial_anterior = _rotate_in_plane(
-        _in_plane_of(tibial_frame.x_anterior, tibial_normal),
-        tibial_normal,
-        adjustments.tibial_rotation_delta_deg,
-        toward=tibial_frame.lateral,
-    )
-    components = {
-        "femoral_component": _component_pose(
-            femoral_point, femoral_normal, convention="femoral",
-            anterior=femoral_anterior,
-        ),
-        "tibial_component": _component_pose(
-            tibial_point, tibial_normal, convention="tibial",
-            anterior=tibial_anterior,
-        ),
-    }
-
+    # ---- Shared pose: the tray follows the femoral component ----------
+    #
+    # The femoral component and the tray are designed in register: imported together
+    # they sit square on each other, and only the height between them changes. So the
+    # femur leads, as it did in the legacy pipeline's "retained" mode. The femoral
+    # component is placed off the posterior condylar axis as above; the tray takes that
+    # rotation, seen in its own cut plane, and sits directly under the femoral origin
+    # along its own cut normal. Placing the tray from the tibia's own axis instead put
+    # the two 9.8 degrees and 8.9 mm apart on P009 and 27.9 degrees apart on the
+    # reference bone, with the femoral component running into the insert.
+    #
+    # Femoral rotation and slides therefore carry the tray. The tibial rotation and
+    # slides are the surgeon's deliberate departure from register, zero by default.
+    #
     # Component position is not resection. A shift slides the implant across the cut it
     # sits on, so it is applied to the pose alone and both shift directions are taken in
     # the plane of that cut -- otherwise moving a component forwards would also lift it
     # off its own cut surface.
-    components["femoral_component"] = _shift_component(
-        components["femoral_component"], femoral_normal,
+    tibial_normal = unit(tibial_normal)
+    femoral_pose = _shift_component(
+        _component_pose(femoral_point, femoral_normal, convention="femoral",
+                        anterior=femoral_anterior),
+        femoral_normal,
         anterior=femoral_anterior, lateral=femoral_frame.lateral,
         ap_mm=adjustments.femoral_shift_ap_mm,
         ml_mm=adjustments.femoral_shift_ml_mm,
     )
-    components["tibial_component"] = _shift_component(
-        components["tibial_component"], tibial_normal,
+    tibial_anterior = _rotate_in_plane(
+        _in_plane_of(femoral_anterior, tibial_normal),
+        tibial_normal,
+        adjustments.tibial_rotation_delta_deg,
+        toward=tibial_frame.lateral,
+    )
+    shared_origin = np.asarray(femoral_pose[:3, 3], dtype=float)
+    tray_origin = shared_origin - float(
+        np.dot(shared_origin - tibial_point, tibial_normal)) * tibial_normal
+    tray_pose = _shift_component(
+        _component_pose(tray_origin, tibial_normal, convention="tibial",
+                        anterior=tibial_anterior),
+        tibial_normal,
         anterior=tibial_anterior, lateral=tibial_frame.lateral,
         ap_mm=adjustments.tibial_shift_ap_mm,
         ml_mm=adjustments.tibial_shift_ml_mm,
     )
+    components = {
+        "femoral_component": femoral_pose,
+        "tibial_component": tray_pose,
+    }
 
     # A cutting block shares its implant's CAD origin, so it shares its pose exactly --
     # including any manual shift, since the block is the instrument that would realise
@@ -587,6 +602,13 @@ def plan_alignment(
     register = _component_register(
         components, femoral_anterior=femoral_anterior,
         tibial_anterior=tibial_anterior, tibial_normal=tibial_normal,
+        lateral=tibial_frame.lateral,
+    )
+    tray_on_tibia = _tray_on_tibia(
+        components["tibial_component"],
+        own_anterior=_in_plane_of(tibial_frame.x_anterior, tibial_normal),
+        own_centre=tibial_point,
+        tibial_normal=tibial_normal,
         lateral=tibial_frame.lateral,
     )
 
@@ -645,6 +667,7 @@ def plan_alignment(
             "cut_ml_disagreement_deg": round(ml_disagreement, 3),
             **gaps,
             **register,
+            **tray_on_tibia,
             "reference_sagittal_tilt_removed": True,
             "cut_angle_between_deg": round(float(np.degrees(
                 angle_between(femoral_normal, tibial_normal)
@@ -794,12 +817,11 @@ def _component_register(
 ) -> dict:
     """How far the femoral and tibial components are out of line in extension.
 
-    Each is placed from its own bone -- the femoral component off the posterior condylar
-    axis at its cut's centre, the tray off the tibial frame at its cut's centre -- so they
-    need not sit square on each other. The rotation between them, seen along the tibial
-    cut normal, and the offset of the femoral origin over the tray, are what a planning
-    screen shows so the surgeon can bring them into register. Positive rotation means the
-    femoral component is turned towards lateral relative to the tray; positive offsets are
+    The tray is placed in register with the femoral component, so with no tibial
+    rotation or slide these read zero. They measure the surgeon's departure from
+    register: the rotation between the two, seen along the tibial cut normal, and the
+    offset of the femoral origin over the tray. Positive rotation means the femoral
+    component is turned towards lateral relative to the tray; positive offsets are
     anterior and lateral.
     """
     normal = unit(tibial_normal)
@@ -821,6 +843,45 @@ def _component_register(
         "component_rotation_mismatch_deg": round(rotation, 2),
         "component_offset_anterior_mm": round(float(np.dot(offset, tibial)), 2),
         "component_offset_lateral_mm": round(float(np.dot(offset, lateral_in_plane)), 2),
+    }
+
+
+def _tray_on_tibia(
+    tray_pose: np.ndarray,
+    *,
+    own_anterior: np.ndarray,
+    own_centre: np.ndarray,
+    tibial_normal: np.ndarray,
+    lateral: np.ndarray,
+) -> dict:
+    """Where the tray sits against the tibia's own axis and the centre of its cut.
+
+    The tray follows the femoral component, so it need not be square to the tibia or
+    centred on the cut. This is how far it is from both: the rotation of the tray's
+    anterior direction from the tibial frame's, seen along the cut normal, positive when
+    the tray is turned towards lateral (external); and the offset of the tray origin from
+    the centroid of the tibial cut section, positive anterior and lateral. It is what a
+    surgeon weighs coverage against.
+    """
+    normal = unit(tibial_normal)
+    tray_anterior = _in_plane_of(-np.asarray(tray_pose[:3, 1], dtype=float), normal)
+    own = _in_plane_of(own_anterior, normal)
+    lateral_in_plane = _in_plane_of(lateral, normal)
+    own_lateral = unit(np.cross(normal, own))
+    if float(np.dot(own_lateral, lateral_in_plane)) < 0:
+        own_lateral = -own_lateral
+    rotation = float(np.degrees(np.arctan2(
+        np.dot(tray_anterior, own_lateral), np.dot(tray_anterior, own))))
+
+    offset = (np.asarray(tray_pose[:3, 3], dtype=float)
+              - np.asarray(own_centre, dtype=float))
+    offset = offset - np.dot(offset, normal) * normal
+    return {
+        "tray_rotation_from_tibial_axis_deg": round(rotation, 2),
+        "tray_offset_from_tibial_cut_centre_anterior_mm": round(
+            float(np.dot(offset, own)), 2),
+        "tray_offset_from_tibial_cut_centre_lateral_mm": round(
+            float(np.dot(offset, lateral_in_plane)), 2),
     }
 
 

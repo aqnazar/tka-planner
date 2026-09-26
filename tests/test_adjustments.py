@@ -526,3 +526,109 @@ class TestComponentRegister:
             base["component_offset_anterior_mm"] - 2.0, abs=0.05)
         assert slid["component_offset_lateral_mm"] == pytest.approx(
             base["component_offset_lateral_mm"] - 3.0, abs=0.05)
+
+
+def _in_plane(vector, normal):
+    normal = unit(np.asarray(normal, dtype=float))
+    vector = np.asarray(vector, dtype=float)
+    return unit(vector - np.dot(vector, normal) * normal)
+
+
+def _anteriors(plan):
+    """Femoral and tray anterior directions, both seen in the tibial cut plane."""
+    normal = plan.resections["tibial_proximal"].normal
+    femoral = _in_plane(plan.components["femoral_component"][:3, 0], normal)
+    tray = _in_plane(-plan.components["tibial_component"][:3, 1], normal)
+    return femoral, tray
+
+
+TRAY_ON_TIBIA = (
+    "tray_rotation_from_tibial_axis_deg",
+    "tray_offset_from_tibial_cut_centre_anterior_mm",
+    "tray_offset_from_tibial_cut_centre_lateral_mm",
+)
+
+
+class TestSharedPose:
+    """The femoral component and the tray are designed in register, so the femur leads.
+
+    Imported together the two parts sit square on each other and only the height
+    between them changes. The tray therefore takes the femoral rotation and sits under
+    the femoral origin; the tibial controls are a deliberate departure from that.
+    """
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_the_tray_sits_square_under_the_femoral_component(self, side):
+        plan = plan_for(synthetic_knee(side))
+        femoral, tray = _anteriors(plan)
+
+        assert float(np.degrees(angle_between(femoral, tray))) == pytest.approx(
+            0.0, abs=1e-6)
+        d = plan.diagnostics
+        assert d["component_rotation_mismatch_deg"] == pytest.approx(0.0, abs=0.01)
+        assert d["component_offset_anterior_mm"] == pytest.approx(0.0, abs=0.01)
+        assert d["component_offset_lateral_mm"] == pytest.approx(0.0, abs=0.01)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("adjustments", [
+        Adjustments(),
+        Adjustments(tibial_slope_delta_deg=4.0, tibial_varus_delta_deg=2.0),
+    ])
+    def test_the_tray_origin_stays_on_the_tibial_cut(self, side, adjustments):
+        plan = plan_for(synthetic_knee(side), adjustments=adjustments)
+        cut = plan.resections["tibial_proximal"]
+        tray = plan.components["tibial_component"]
+
+        assert float(np.dot(tray[:3, 3] - cut.point, cut.normal)) == pytest.approx(
+            0.0, abs=1e-9)
+        assert np.allclose(tray[:3, 2], unit(cut.normal), atol=1e-9)
+
+    @pytest.mark.parametrize("delta", [-4.0, 3.0])
+    def test_femoral_rotation_turns_the_tray_with_it(self, delta):
+        landmarks = synthetic_knee("left")
+        plain = plan_for(landmarks)
+        turned = plan_for(
+            landmarks, adjustments=Adjustments(femoral_rotation_delta_deg=delta))
+
+        _, before = _anteriors(plain)
+        _, after = _anteriors(turned)
+        assert float(np.degrees(angle_between(before, after))) == pytest.approx(
+            abs(delta), abs=0.05)
+        assert turned.diagnostics["component_rotation_mismatch_deg"] == pytest.approx(
+            0.0, abs=0.01)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_a_femoral_slide_carries_the_tray(self, side):
+        landmarks = synthetic_knee(side)
+        plain = plan_for(landmarks)
+        slid = plan_for(landmarks, adjustments=Adjustments(
+            femoral_shift_ap_mm=2.0, femoral_shift_ml_mm=-1.5))
+
+        moved = (slid.components["tibial_component"][:3, 3]
+                 - plain.components["tibial_component"][:3, 3])
+        assert float(np.linalg.norm(moved)) == pytest.approx(np.hypot(2.0, 1.5), abs=0.05)
+        assert slid.diagnostics["component_offset_anterior_mm"] == pytest.approx(
+            0.0, abs=0.01)
+        assert slid.diagnostics["component_offset_lateral_mm"] == pytest.approx(
+            0.0, abs=0.01)
+
+    def test_the_tray_on_the_tibia_is_reported(self):
+        plan = plan_for(synthetic_knee("left"))
+        for key in TRAY_ON_TIBIA:
+            assert isinstance(plan.diagnostics[key], float)
+
+    def test_tibial_rotation_turns_the_tray_off_the_tibial_axis_by_as_much(self):
+        landmarks = synthetic_knee("left")
+        base = plan_for(landmarks).diagnostics
+        turned = plan_for(
+            landmarks, adjustments=Adjustments(tibial_rotation_delta_deg=5.0)).diagnostics
+
+        assert (turned["tray_rotation_from_tibial_axis_deg"]
+                - base["tray_rotation_from_tibial_axis_deg"]) == pytest.approx(
+            5.0, abs=0.05)
+
+    def test_the_tray_on_the_tibia_is_mirror_invariant(self):
+        left = plan_for(synthetic_knee("left")).diagnostics
+        right = plan_for(mirror_landmarks(synthetic_knee("left"))).diagnostics
+        for key in TRAY_ON_TIBIA:
+            assert right[key] == pytest.approx(left[key], abs=0.01)

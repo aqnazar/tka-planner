@@ -313,17 +313,18 @@ class TestComponentPoses:
             assert np.isclose(float(np.linalg.det(rotation)), 1.0, atol=1e-9), name
 
     def test_components_sit_on_their_cut_planes(self):
+        """The femoral origin is its cut's centre; the tray, in register under the
+        femoral component, sits on its cut but not necessarily at the cut's centre."""
         plan = plan_for(synthetic_knee("left"))
 
-        for component, resection in (
-            ("femoral_component", "femoral_distal"),
-            ("tibial_component", "tibial_proximal"),
-        ):
-            assert np.allclose(
-                plan.components[component][:3, 3],
-                plan.resections[resection].point,
-                atol=1e-9,
-            )
+        assert np.allclose(
+            plan.components["femoral_component"][:3, 3],
+            plan.resections["femoral_distal"].point,
+            atol=1e-9,
+        )
+        cut = plan.resections["tibial_proximal"]
+        assert float(np.dot(plan.components["tibial_component"][:3, 3] - cut.point,
+                            cut.normal)) == pytest.approx(0.0, abs=1e-9)
 
 
 class TestMirrorInvariance:
