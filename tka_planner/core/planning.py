@@ -1021,9 +1021,10 @@ def _rotational_reference(
     construction; the two differ by the condylar twist angle, so borrowing the frame's
     would rotate the component by that much.
 
-    External rotation carries the lateral side of the component anteriorly. The sense is
-    resolved by testing against the frame's own lateral and anterior directions, so it
-    is right on both knees with no conditional.
+    External rotation turns the component's anterior toward the patient's lateral side,
+    so the posterior cut takes more off the medial condyle. The sense is resolved
+    against the frame's own lateral direction, so it is right on both knees with no
+    conditional.
 
     Falls back to the frame's anterior axis when the posterior condyles are unavailable.
     """
@@ -1050,15 +1051,12 @@ def _rotational_reference(
             unit(anterior * np.cos(t) + np.cross(z_axis, anterior) * np.sin(t))
             for t in (angle, -angle)
         ]
-        # Which way is "external" is settled by the epicondylar axis rather than by
-        # geometric reasoning about where the lateral side goes. The clinical rule means
-        # something specific: three degrees of external rotation from the posterior
-        # condylar line is a stand-in for the surgical epicondylar axis, which sits
-        # externally rotated relative to it by the condylar twist angle. So the correct
-        # turn is simply the one heading toward the epicondylar reference. Deriving the
-        # sense geometrically instead sent it the other way, leaving the component about
-        # six degrees short.
-        toward = _in_plane_of(frame.x_anterior, normal)
+        # External is the turn that carries the anterior toward the lateral side. It
+        # used to be taken as the turn toward the frame's epicondylar anterior, which is
+        # the same thing only while the epicondylar axis sits externally of the condylar
+        # line. On three knees of the cohort it sits internally (negative condylar
+        # twist), and the 3 degrees went internal there.
+        toward = _in_plane_of(frame.lateral, normal)
         anterior = max(turns, key=lambda v: float(np.dot(v, toward)))
         if external_rotation_deg < 0:
             anterior = min(turns, key=lambda v: float(np.dot(v, toward)))

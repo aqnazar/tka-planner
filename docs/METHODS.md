@@ -234,9 +234,12 @@ the component 42 mm below its cut and 32 mm to the side.
 
 Femoral component rotation is set off the **posterior condylar axis with 3° external
 rotation**, as in theatre — not off the frame's epicondylar axis, which serves the
-coronal construction and differs by the condylar twist angle. The direction of that
-rotation is "toward the epicondylar axis", which is what the clinical rule means;
-deriving it geometrically sent it the wrong way and left the component 6° short.
+coronal construction and differs by the condylar twist angle. External means the
+component's anterior turns toward the patient's lateral side, so the posterior cut takes
+more off the medial condyle. It was once taken as "toward the epicondylar axis", which
+agrees only while that axis sits externally of the condylar line. On three knees it sits
+internally (twist −4.9°, −0.6° and −2.3°), and the 3° went internal there. It is now
+tested on both sides at twists from −6° to +6°.
 
 ## The patient-specific implant
 
