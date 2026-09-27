@@ -6,6 +6,8 @@ measurement is stubbed. Duplicating that would mean three chances for the stub t
 away from what ``PlanningSession._measure`` actually produces.
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -72,6 +74,12 @@ def library(tmp_path):
         "CuttingBlock(Tibia)Shell_M2.stl",
     ):
         gm.write_stl(gm.box(20.0), size / filename)
+    # A made-up box design: the real one is private design data.
+    (root / "femoral_box.json").write_text(json.dumps({
+        "anterior_flare_deg": 7.0, "chamfer_deg": 40.0,
+        "posterior_condyle_thickness_mm": 8.0, "flange_thickness_mm": 3.5,
+        "distal_face_fraction": 0.45, "posterior_chamfer_fraction": 0.25,
+    }), encoding="utf-8")
     return root
 
 

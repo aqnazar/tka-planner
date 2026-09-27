@@ -191,3 +191,129 @@ def test_the_patient_specific_parts_are_shown_in_register(session):
     in_plane = offset - np.dot(offset, normal) * normal
 
     assert np.linalg.norm(in_plane) == pytest.approx(0.0, abs=0.05)
+
+
+# A made-up design, deliberately unlike any real one.
+BOX_DESIGN = {"anterior_flare_deg": 7.0, "chamfer_deg": 40.0,
+              "posterior_condyle_thickness_mm": 8.0, "flange_thickness_mm": 3.5,
+              "distal_face_fraction": 0.45, "posterior_chamfer_fraction": 0.25}
+
+
+def test_the_cut_box_is_placed_with_the_library_s_design(tmp_path):
+    from types import SimpleNamespace
+
+    from tests.test_femoral_box import femur
+    from tka_planner.pipeline import femoral_cut_box_case
+
+    (tmp_path / "femoral_box.json").write_text(json.dumps(BOX_DESIGN), encoding="utf-8")
+    measurement = SimpleNamespace(femur=femur(), side="right")
+    plan = SimpleNamespace(components={"femoral_component": IDENTITY})
+
+    box = femoral_cut_box_case(measurement, plan, tmp_path)
+
+    assert box["available"]
+    assert box["resections_mm"]["posterior_medial"] == pytest.approx(8.0, abs=0.3)
+    assert box["flange_height_mm"] == pytest.approx(40.0, abs=1.5)
+
+
+def test_a_library_without_a_box_design_says_so(tmp_path):
+    from types import SimpleNamespace
+
+    from tests.test_femoral_box import femur
+    from tka_planner.pipeline import femoral_cut_box_case
+
+    measurement = SimpleNamespace(femur=femur(), side="right")
+    plan = SimpleNamespace(components={"femoral_component": IDENTITY})
+
+    box = femoral_cut_box_case(measurement, plan, tmp_path)
+
+    assert box["available"] is False
+    assert "femoral_box.json" in box["reason"]
+    assert femoral_cut_box_case(measurement, plan, None) is None
+
+
+def test_a_bone_the_box_cannot_be_placed_on_gives_the_reason(tmp_path):
+    from types import SimpleNamespace
+
+    from tests.test_femoral_box import femur
+    from tka_planner.pipeline import femoral_cut_box_case
+
+    (tmp_path / "femoral_box.json").write_text(json.dumps(BOX_DESIGN), encoding="utf-8")
+    measurement = SimpleNamespace(femur=femur(length=70.0), side="right")
+    plan = SimpleNamespace(components={"femoral_component": IDENTITY})
+
+    box = femoral_cut_box_case(measurement, plan, tmp_path)
+
+    assert not box["available"]
+    assert "anterior cortex" in box["reason"]
+
+
+def test_the_specification_carries_the_resection_table(session):
+    from tka_planner.pipeline import implant_spec_case
+
+    spec = implant_spec_case(session.measurement, session.plan, session.sizing,
+                             session.library)
+    table = spec["resections"]["table_mm"]
+    femoral = session.plan.resections["femoral_distal"]
+
+    assert set(table) == {"femoral_distal_medial", "femoral_distal_lateral",
+                          "femoral_posterior_medial", "femoral_posterior_lateral",
+                          "femoral_anterior", "tibial_medial", "tibial_lateral"}
+    assert table["femoral_distal_medial"] == pytest.approx(femoral.medial_depth_mm,
+                                                           abs=0.01)
+    assert "available" in spec["femoral_component"]["cut_box"]
+
+
+@pytest.mark.parametrize("content", [
+    '{"anterior_flare_deg": 7.0}',                                  # keys missing
+    '{"anterior_flare_deg": 7.0,',                                  # not JSON
+    json.dumps({**BOX_DESIGN, "distal_face_fraction": 0.9}),        # impossible box
+    json.dumps({**BOX_DESIGN, "chamfer_deg": "forty"}),             # not a number
+])
+def test_a_malformed_box_design_is_reported_rather_than_stopping_the_plan(
+        tmp_path, content):
+    from types import SimpleNamespace
+
+    from tests.test_femoral_box import femur
+    from tka_planner.pipeline import femoral_cut_box_case
+
+    (tmp_path / "femoral_box.json").write_text(content, encoding="utf-8")
+    measurement = SimpleNamespace(femur=femur(), side="right")
+    plan = SimpleNamespace(components={"femoral_component": IDENTITY})
+
+    box = femoral_cut_box_case(measurement, plan, tmp_path)
+
+    assert box["available"] is False
+    assert "femoral_box.json" in box["reason"]
+
+
+def test_the_table_takes_each_compartment_from_the_placed_box(session, monkeypatch):
+    import tka_planner.pipeline as pipeline
+
+    placed = {"available": True,
+              "resections_mm": {"posterior_medial": 6.4, "posterior_lateral": 2.9,
+                                "anterior": 9.1}}
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case", lambda *a, **k: placed)
+
+    table = pipeline.implant_spec_case(session.measurement, session.plan,
+                                       session.sizing, session.library)[
+        "resections"]["table_mm"]
+
+    assert table["femoral_posterior_medial"] == 6.4
+    assert table["femoral_posterior_lateral"] == 2.9
+    assert table["femoral_anterior"] == 9.1
+
+
+def test_shaping_the_parts_for_the_viewer_does_not_place_the_box(session, monkeypatch):
+    """The viewer's scaling reads only the sections; placing the box there as well
+    doubled the cost of every change of a control for nothing."""
+    import tka_planner.pipeline as pipeline
+
+    calls = []
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case",
+                        lambda *a, **k: calls.append(1) or None)
+
+    pipeline.component_scales(session.measurement, session.plan, session.sizing,
+                              session.library)
+
+    assert calls == []

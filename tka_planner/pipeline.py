@@ -71,6 +71,8 @@ __all__ = [
     "render_case_report",
     "find_size_chart",
     "fit_case",
+    "box_design",
+    "femoral_cut_box_case",
     "implant_spec_case",
     "component_scales",
     "IMPLANT_MODES",
@@ -394,11 +396,77 @@ def library_dimensions(spec: dict, group: str) -> dict:
     return _STL_CACHE[key]
 
 
+def box_design(library):
+    """The femoral component's box design, from ``femoral_box.json`` in the implant
+    library, or ``None``. It is design data, kept with the implant rather than in the
+    planner."""
+    from .core.femoral_box import BoxDesign
+
+    if library is None:
+        return None
+    path = Path(library) / "femoral_box.json"
+    if not path.exists():
+        return None
+    return BoxDesign.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+
+def femoral_cut_box_case(measurement: CaseMeasurement, plan: SurgicalPlan,
+                         library) -> dict | None:
+    """The femoral cut box on this plan's femoral component, or why it was not placed.
+
+    ``None`` with no implant library: without the implant there is no box to place.
+    """
+    from .core.femoral_box import femoral_cut_box
+
+    if library is None:
+        return None
+    # The design file is written by hand, so a typo in it must not stop the plan: it
+    # is reported like any other reason the box could not be placed.
+    try:
+        design = box_design(library)
+    except (ValueError, KeyError, TypeError) as error:
+        return {"available": False,
+                "reason": f"The implant library's femoral_box.json cannot be used: "
+                          f"{type(error).__name__}: {error}"}
+    if design is None:
+        return {"available": False,
+                "reason": "The implant library has no femoral_box.json, the femoral "
+                          "component's box design."}
+    medial_sign = 1.0 if str(measurement.side).lower().startswith("r") else -1.0
+    try:
+        box = femoral_cut_box(measurement.femur,
+                              plan.components["femoral_component"],
+                              medial_sign=medial_sign, design=design,
+                              samples=_femur_samples(measurement.femur))
+    except ValueError as error:
+        return {"available": False, "reason": str(error)}
+    return {"available": True, **box.to_dict()}
+
+
+def _femur_samples(femur: Mesh) -> np.ndarray:
+    """The femur's surface samples, kept for the femur last asked about.
+
+    Sampling is half the cost of placing the box and does not depend on the plan, so it
+    is done once per femur rather than on every change of a control. The mesh itself is
+    held, so its identity cannot be reused by another while it is cached.
+    """
+    from .core.femoral_box import femur_samples
+
+    if _SAMPLES.get("femur") is not femur:
+        _SAMPLES.update(femur=femur, samples=femur_samples(femur))
+    return _SAMPLES["samples"]
+
+
+_SAMPLES: dict = {}
+
+
 def implant_spec_case(
     measurement: CaseMeasurement,
     plan: SurgicalPlan,
     sizing: SizingDecision,
     library=None,
+    *,
+    with_cut_box: bool = True,
 ) -> dict:
     """The patient-specific implant, measured on this plan's cuts: what the CAD model
     is given to build.
@@ -442,6 +510,23 @@ def implant_spec_case(
         "flange_height": round(depth["height_mm"], 2),
         "distal_thickness": round(float(sizing.femoral_thickness_mm), 2),
     })
+    # The viewer's scaling reads only the sections, so it skips placing the box.
+    box = femoral_cut_box_case(m, plan, library) if with_cut_box else None
+    femoral_record["cut_box"] = box
+    placed = box is not None and box.get("available")
+    femoral_cut = plan.resections["femoral_distal"]
+    tibial_cut = plan.resections["tibial_proximal"]
+    table = {
+        "femoral_distal_medial": round(femoral_cut.medial_depth_mm, 2),
+        "femoral_distal_lateral": round(femoral_cut.lateral_depth_mm, 2),
+        "femoral_posterior_medial": (box["resections_mm"]["posterior_medial"]
+                                     if placed else None),
+        "femoral_posterior_lateral": (box["resections_mm"]["posterior_lateral"]
+                                      if placed else None),
+        "femoral_anterior": box["resections_mm"]["anterior"] if placed else None,
+        "tibial_medial": round(tibial_cut.medial_depth_mm, 2),
+        "tibial_lateral": round(tibial_cut.lateral_depth_mm, 2),
+    }
     tibial_record = tibial.to_dict()
     tibial_record["dimensions_mm"]["tray_thickness"] = plan.diagnostics.get(
         "tray_thickness_mm")
@@ -465,6 +550,7 @@ def implant_spec_case(
             "femoral_datum": diagnostics.get("femoral_resection_datum"),
             "tibial_mm": diagnostics.get("tibial_resection_from_datum_mm"),
             "tibial_datum": diagnostics.get("tibial_resection_datum"),
+            "table_mm": table,
         },
         "catalogue_equivalent": {
             "size_parameter": round(float(sizing.size_parameter), 4),
@@ -502,7 +588,8 @@ def component_scales(
                                      side=str(measurement.side))
     if "femoral_component" not in specs or "tibial_component" not in specs:
         return None
-    spec = spec or implant_spec_case(measurement, plan, sizing, library)
+    spec = spec or implant_spec_case(measurement, plan, sizing, library,
+                                     with_cut_box=False)
     femoral = spec["femoral_component"]["dimensions_mm"]
     tibial = spec["tibial_component"]["dimensions_mm"]
     lib_f = library_dimensions(specs["femoral_component"], "femoral")
