@@ -263,6 +263,46 @@ the notch, off the bone.
 On P009: femoral ML 76.5 mm, AP 74.5 mm, condyles 29.0 and 29.3 mm wide with an 18.3 mm
 notch; tray ML 81.3 mm, AP 65.0 mm, medial 50.5 mm and lateral 61.0 mm.
 
+**The femoral cut box.** The femoral component sits on five cuts. The alignment plans
+the distal cut, and the other four are placed on the bone in the component's frame
+(`core/femoral_box.py`). The design's angles are fixed and only lengths change: the
+anterior cut keeps the design's flare from the component axis, the chamfers keep their
+angle, and the posterior cut stays parallel to the axis.
+
+- **Posterior cut.** Placed by posterior referencing: the component's posterior-condyle
+  thickness comes off the more prominent condyle, and the other condyle loses less,
+  depending on the planned rotation.
+- **Anterior cut.** Placed flush at the top of the trochlea:
+  1. The most anterior bone within the component's width is traced at each height up the
+     femur, as the anterior profile.
+  2. A line is fitted to that profile over the shaft, 60–100 mm above the distal cut.
+  3. The trochlea is what stands proud of that line below the shaft. It fades into the
+     shaft smoothly, without an edge. So its top is taken as the first height above its
+     highest point where it has fallen to a tenth of that height (or 0.25 mm, whichever
+     is more) and stays there for 5 mm. Measured against the trochlea's own height, a
+     millimetre-scale ridge isn't lost in a tenth of a millimetre of noise. Requiring
+     5 mm means one noisy band can't end it early.
+
+  The flared cut crosses the cortex at that height, and the flange ends there. So the
+  cortex above the flange isn't notched, and there's no gap under the flange's tip. The
+  deepest bone the cut removes below the flange is the anterior resection. That depth,
+  minus the flange's thickness, is reported as the patellofemoral lowering against the
+  native trochlea. Both are measured along the component's AP axis. The profile's excess
+  over the shaft line is kept in the specification for review. A trochlea that is still
+  fading within 5 mm of the shaft window is flagged. The design file is validated when
+  it's read, and a malformed one is reported as the reason the box wasn't placed.
+- **Chamfers.** The box between the two cuts is divided between the distal face and the
+  chamfers in the design's proportions. The component's CAD origin is the centre of the
+  distal face.
+
+The design's angles and thicknesses are the implant's own design data. They're read from
+`femoral_box.json` in the implant library and aren't part of this repository.
+
+The specification carries the box, the lengths it gives the CAD model, and the resection
+table: distal, posterior medial and lateral, anterior, and tibial medial and lateral. A
+scan that ends less than 100 mm above the distal cut can't show the shaft, so the box
+isn't placed there, and the specification says why.
+
 **Display and fit until the CAD model builds it.** In the default *patient-specific*
 mode, the library parts are scaled per axis to the patient's width and depth (keeping the
 size's scale along the component axis) and slid in their own plane onto the centre of the
