@@ -299,3 +299,79 @@ def test_the_report_shows_where_the_tray_sits_on_the_tibia(session):
     assert "HEAD|Tray on the tibia" in lines
     assert any(line.startswith("Rotation off tibial axis|") for line in lines)
     assert any(line.startswith("Offset from cut centre AP|") for line in lines)
+
+
+PLACED_BOX = {"available": True, "flange_height_mm": 41.0,
+              "patellofemoral_lowering_mm": 3.4, "anterior_notch_mm": 0.0,
+              "resections_mm": {"posterior_medial": 6.4, "posterior_lateral": 2.9,
+                                "anterior": 9.1}}
+
+
+def test_the_readout_carries_the_femoral_box_resections(session, monkeypatch):
+    import tka_planner.pipeline as pipeline
+
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case", lambda *a: PLACED_BOX)
+    session.replan()
+    lines = session.report_lines()
+
+    assert "Femoral posterior medial|6.4 mm" in lines
+    assert "Femoral posterior lateral|2.9 mm" in lines
+    assert "Femoral anterior|9.1 mm" in lines
+    assert "Patellofemoral lowering|+3.4 mm" in lines
+    assert "Flange height|41.0 mm" in lines
+
+
+def test_the_readout_says_why_the_box_was_not_placed(session, monkeypatch):
+    import tka_planner.pipeline as pipeline
+
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case",
+                        lambda *a: {"available": False, "reason": "too short"})
+    session.replan()
+
+    assert "Femoral box|not placed: too short" in session.report_lines()
+
+
+def test_a_notching_anterior_cut_is_warned_about(session, monkeypatch):
+    import tka_planner.pipeline as pipeline
+
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case",
+                        lambda *a: {**PLACED_BOX, "anterior_notch_mm": 1.2})
+    session.replan()
+
+    assert ("WARN|The anterior femoral cut notches the cortex by 1.2 mm"
+            in session.report_lines())
+
+
+def test_the_box_is_measured_once_per_plan(session, monkeypatch):
+    import tka_planner.pipeline as pipeline
+
+    calls = []
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case",
+                        lambda *a: calls.append(1) or PLACED_BOX)
+    session.replan()
+    # Re-planning measures the implant for the viewer too; count only the readout's.
+    calls.clear()
+    session.report_lines()
+    session.report_lines()
+
+    assert len(calls) == 1
+
+
+def test_a_tibial_change_does_not_measure_the_femoral_box_again(session, monkeypatch):
+    """The box depends only on the femur and the femoral component's pose."""
+    import tka_planner.pipeline as pipeline
+
+    calls = []
+    monkeypatch.setattr(pipeline, "femoral_cut_box_case",
+                        lambda *a: calls.append(1) or PLACED_BOX)
+    session.replan()
+    session.report_lines()
+    calls.clear()
+
+    session.replan(tibial_slope_delta_deg=2.0)
+    session.report_lines()
+    assert calls == []
+
+    session.replan(femoral_rotation_delta_deg=2.0)
+    session.report_lines()
+    assert len(calls) == 1
