@@ -126,11 +126,12 @@ Patient folders go in `data/cases`, one folder per case, each holding `FD1Left.s
 is deliberate: the folder name is the anonymised case id, and no scan or identity
 belongs in the repository.
 
-The implant library is a set of component meshes, and it is not in this repository
-either: it is the output of the CAD side of the project rather than source. Give the
-launcher one by setting `TKA_IMPLANT_LIBRARY` to its folder, or by putting the meshes
-in `data/implants`. Without a library the planner still measures the knee, builds the
-frames, plans the cuts and carves them; only the components are missing from the scene.
+The implant catalogue is in `data/implants`: twelve sizes, S1 to L4, each with the
+femoral component, tibial plate, insert, and both cutting blocks and their shells, plus
+`SizeChart.csv` and `femoral_box.json` (the femoral component's box design). The
+launcher uses it by itself. To plan with another library, set `TKA_IMPLANT_LIBRARY` to
+its folder. Without any library the planner still measures the knee, builds the frames,
+plans the cuts and carves them; only the components are missing from the scene.
 
 **Plan.** The panel carries every control: alignment philosophy, implant size, resection
 depths, slope, rotation, component position and insert thickness. The planned cut is
@@ -315,7 +316,8 @@ points do not land on the mesh is rejected rather than silently mis-placed.
 | `tka_planner/report/` | Single-file HTML reports, no external assets. |
 | `tka_planner/validation/` | Cohort runner and landmark sensitivity analysis. |
 | `eval/` | The parametric demo (the implant built in Fusion from the plan) and the evaluation scripts, with two synthetic demo knees. See its `README.md`. |
-| `tools/publish_eval.py` | Copies `eval/` from the private working folder, leaving patient data behind. |
+| `data/implants/` | The implant catalogue: twelve sizes, the size chart and the femoral box design. |
+| `tools/publish_eval.py` | Copies `eval/` from the private working folder and the catalogue from its export, leaving patient data behind. |
 | `media/` | Figures. Videos stay local. |
 | `docs/METHODS.md` | Every methodological decision, why it was made, and what it replaced. |
 | `archive/blender-addon/` | The add-on before the port, kept as its parity reference. |

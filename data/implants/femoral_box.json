@@ -1,0 +1,9 @@
+{
+  "source": "Knee Prosthesis (Femoral) v57, measured 2026-09-26/27 (J-curve sketch and body). Angles fixed by author ruling 2026-09-27; only lengths change.",
+  "anterior_flare_deg": 10.11,
+  "chamfer_deg": 45.0,
+  "posterior_condyle_thickness_mm": 5.77,
+  "flange_thickness_mm": 5.0,
+  "distal_face_fraction": 0.53818,
+  "posterior_chamfer_fraction": 0.21446
+}

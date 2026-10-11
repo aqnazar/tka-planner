@@ -22,10 +22,9 @@ private/
 data/cases/**/*.stl
 !tests/fixtures/**/*.stl
 
-# The implant library is a separate design output, not source. The launcher picks it
-# up from here when it exists, so a folder or a junction called data/implants makes
-# one double-click work without setting anything.
-data/implants/
+# The implant catalogue is committed in data/implants/ (all twelve sizes, without the
+# bones exported with them), mirrored from the export by tools/publish_eval.py. The
+# launcher picks it up from there, so one double-click works without setting anything.
 
 # Pipeline outputs
 Output/
