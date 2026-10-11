@@ -1,0 +1,274 @@
+{
+ "DEMO_SMALL": {
+  "femoral": {
+   "distal": {
+    "overhang_max_mm": 4.96,
+    "overhang_p95_mm": 3.54,
+    "ml_extent_part": [
+     -26.4,
+     26.6
+    ],
+    "ml_extent_bone": [
+     -27.7,
+     28.1
+    ],
+    "outside_mm2": 90.6,
+    "part_mm2": 904.8,
+    "ml_overhang_plus_y_mm": 6.75,
+    "ml_overhang_minus_y_mm": 4.0,
+    "centre_offset_mm": [
+     0.42,
+     0.03
+    ]
+   },
+   "posterior": {
+    "overhang_max_mm": 2.51,
+    "overhang_p95_mm": 2.26,
+    "ml_extent_part": [
+     -26.6,
+     26.4
+    ],
+    "ml_extent_bone": [
+     -28.8,
+     27.7
+    ],
+    "outside_mm2": 22.0,
+    "part_mm2": 386.1,
+    "ml_overhang_plus_y_mm": -1.25,
+    "ml_overhang_minus_y_mm": -0.75,
+    "centre_offset_mm": [
+     2.06,
+     -3.13
+    ]
+   },
+   "anterior": {
+    "overhang_max_mm": 32.37,
+    "overhang_p95_mm": 27.1,
+    "ml_extent_part": [
+     -25.2,
+     24.6
+    ],
+    "ml_extent_bone": [
+     -21.2,
+     -7.7
+    ],
+    "outside_mm2": 741.0,
+    "part_mm2": 920.4,
+    "ml_overhang_plus_y_mm": 33.25,
+    "ml_overhang_minus_y_mm": 4.25,
+    "centre_offset_mm": [
+     3.22,
+     13.25
+    ]
+   },
+   "anterior chamfer": {
+    "overhang_max_mm": 11.41,
+    "overhang_p95_mm": 7.7,
+    "ml_extent_part": [
+     -26.5,
+     26.5
+    ],
+    "ml_extent_bone": [
+     -22.8,
+     21.5
+    ],
+    "outside_mm2": 500.5,
+    "part_mm2": 1053.2,
+    "ml_overhang_plus_y_mm": 33.0,
+    "ml_overhang_minus_y_mm": 4.25,
+    "centre_offset_mm": [
+     1.44,
+     3.83
+    ]
+   },
+   "posterior chamfer": {
+    "overhang_max_mm": 2.61,
+    "overhang_p95_mm": 2.02,
+    "ml_extent_part": [
+     -26.6,
+     26.4
+    ],
+    "ml_extent_bone": [
+     -29.1,
+     28.4
+    ],
+    "outside_mm2": 35.4,
+    "part_mm2": 534.1,
+    "ml_overhang_plus_y_mm": -1.5,
+    "ml_overhang_minus_y_mm": -1.0,
+    "centre_offset_mm": [
+     0.1,
+     -0.09
+    ]
+   }
+  },
+  "plate": {
+   "overhang_max_mm": 0.0,
+   "overhang_p95_mm": 0.0,
+   "ml_extent_part": [
+    -30.3,
+    22.7
+   ],
+   "ml_extent_bone": [
+    -32.8,
+    24.7
+   ],
+   "outside_mm2": 0.0,
+   "part_mm2": 1386.9,
+   "ml_overhang_plus_y_mm": -1.5,
+   "ml_overhang_minus_y_mm": -1.25,
+   "centre_offset_mm": [
+    -2.04,
+    0.73
+   ]
+  },
+  "insert_vs_plate": {
+   "insert_centre": [
+    -1.1,
+    -3.36
+   ],
+   "plate_centre": [
+    -1.42,
+    -3.45
+   ],
+   "overlap_mm3": -0.0,
+   "insert_floor_footprint_mm2": 915.8
+  }
+ },
+ "DEMO_LARGE": {
+  "femoral": {
+   "distal": {
+    "overhang_max_mm": 7.21,
+    "overhang_p95_mm": 5.4,
+    "ml_extent_part": [
+     -39.9,
+     40.1
+    ],
+    "ml_extent_bone": [
+     -41.1,
+     41.9
+    ],
+    "outside_mm2": 151.9,
+    "part_mm2": 1787.5,
+    "ml_overhang_plus_y_mm": 9.25,
+    "ml_overhang_minus_y_mm": 6.75,
+    "centre_offset_mm": [
+     -0.16,
+     0.44
+    ]
+   },
+   "posterior": {
+    "overhang_max_mm": 5.3,
+    "overhang_p95_mm": 4.51,
+    "ml_extent_part": [
+     -40.1,
+     39.9
+    ],
+    "ml_extent_bone": [
+     -41.4,
+     41.1
+    ],
+    "outside_mm2": 146.1,
+    "part_mm2": 754.8,
+    "ml_overhang_plus_y_mm": 2.25,
+    "ml_overhang_minus_y_mm": 53.75,
+    "centre_offset_mm": [
+     -0.57,
+     -7.39
+    ]
+   },
+   "anterior": {
+    "overhang_max_mm": 48.75,
+    "overhang_p95_mm": 40.75,
+    "ml_extent_part": [
+     -37.7,
+     37.0
+    ],
+    "ml_extent_bone": [
+     -30.0,
+     -11.5
+    ],
+    "outside_mm2": 1571.6,
+    "part_mm2": 1800.2,
+    "ml_overhang_plus_y_mm": 48.75,
+    "ml_overhang_minus_y_mm": 9.0,
+    "centre_offset_mm": [
+     6.82,
+     18.86
+    ]
+   },
+   "anterior chamfer": {
+    "overhang_max_mm": 16.97,
+    "overhang_p95_mm": 11.85,
+    "ml_extent_part": [
+     -40.0,
+     40.0
+    ],
+    "ml_extent_bone": [
+     -33.8,
+     32.5
+    ],
+    "outside_mm2": 889.8,
+    "part_mm2": 2045.3,
+    "ml_overhang_plus_y_mm": 50.5,
+    "ml_overhang_minus_y_mm": 8.5,
+    "centre_offset_mm": [
+     2.16,
+     4.99
+    ]
+   },
+   "posterior chamfer": {
+    "overhang_max_mm": 3.82,
+    "overhang_p95_mm": 2.69,
+    "ml_extent_part": [
+     -40.1,
+     39.9
+    ],
+    "ml_extent_bone": [
+     -42.1,
+     42.1
+    ],
+    "outside_mm2": 45.0,
+    "part_mm2": 1019.1,
+    "ml_overhang_plus_y_mm": -1.25,
+    "ml_overhang_minus_y_mm": -0.25,
+    "centre_offset_mm": [
+     -0.02,
+     -0.6
+    ]
+   }
+  },
+  "plate": {
+   "overhang_max_mm": 0.0,
+   "overhang_p95_mm": 0.0,
+   "ml_extent_part": [
+    -43.4,
+    33.1
+   ],
+   "ml_extent_bone": [
+    -48.7,
+    37.1
+   ],
+   "outside_mm2": 0.0,
+   "part_mm2": 2763.7,
+   "ml_overhang_plus_y_mm": -1.25,
+   "ml_overhang_minus_y_mm": -2.0,
+   "centre_offset_mm": [
+    -2.96,
+    1.38
+   ]
+  },
+  "insert_vs_plate": {
+   "insert_centre": [
+    -1.52,
+    -4.47
+   ],
+   "plate_centre": [
+    -1.73,
+    -4.58
+   ],
+   "overlap_mm3": -0.0,
+   "insert_floor_footprint_mm2": 2094.1
+  }
+ }
+}

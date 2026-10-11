@@ -314,6 +314,9 @@ points do not land on the mesh is rejected rather than silently mis-placed.
 | `tka_planner/addon/` | The planning screen: patient in, models and numbers out. |
 | `tka_planner/report/` | Single-file HTML reports, no external assets. |
 | `tka_planner/validation/` | Cohort runner and landmark sensitivity analysis. |
+| `eval/` | The parametric demo (the implant built in Fusion from the plan) and the evaluation scripts, with two synthetic demo knees. See its `README.md`. |
+| `tools/publish_eval.py` | Copies `eval/` from the private working folder, leaving patient data behind. |
+| `media/` | Figures. Videos stay local. |
 | `docs/METHODS.md` | Every methodological decision, why it was made, and what it replaced. |
 | `archive/blender-addon/` | The add-on before the port, kept as its parity reference. |
 | `legacy/` | The frozen script behind the first paper. Do not modify — see its `PROVENANCE.md`. |

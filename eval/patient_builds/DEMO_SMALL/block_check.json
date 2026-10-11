@@ -1,0 +1,76 @@
+{
+ "block_version": 2,
+ "cut_lines": {
+  "distal": [
+   11.23,
+   0.0,
+   -11.23,
+   -0.0
+  ],
+  "posterior": [
+   -20.18,
+   8.95,
+   -20.19,
+   22.46
+  ],
+  "anterior": [
+   23.8,
+   12.57,
+   30.4,
+   49.99
+  ],
+  "posterior chamfer": [
+   -11.23,
+   -0.0,
+   -20.18,
+   8.95
+  ],
+  "anterior chamfer": [
+   11.23,
+   0.0,
+   23.8,
+   12.57
+  ]
+ },
+ "sections": {
+  "-60.0": {
+   "points": 54,
+   "max_dev_mm": 0.005
+  },
+  "-10.0": {
+   "points": 78,
+   "max_dev_mm": 0.005
+  },
+  "0.0": {
+   "points": 78,
+   "max_dev_mm": 0.005
+  },
+  "10.0": {
+   "points": 78,
+   "max_dev_mm": 0.005
+  },
+  "60.0": {
+   "points": 50,
+   "max_dev_mm": 0.005
+  }
+ },
+ "femoral_vertices_on_box": 3893,
+ "bone_cut": {
+  "kernel": {
+   "backend": "manifold3d",
+   "operation": "difference",
+   "repaired_target": [
+    "welded"
+   ],
+   "repaired_tool": [
+    "welded"
+   ],
+   "fallback": null,
+   "notes": []
+  },
+  "lowest_z_mm": -0.0,
+  "below_distal_cut": 0,
+  "behind_posterior_cut": 0,
+  "outside_box_mm": 0.005
+ }
+}
