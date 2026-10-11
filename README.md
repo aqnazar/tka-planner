@@ -104,7 +104,7 @@ without a screen at all.
 ### The application
 
 ```bash
-tka serve --cases path/to/cases --library path/to/implant/library
+tka serve --cases path/to/cases --library data/implants
 ```
 
 That starts a local server and opens a browser at `http://127.0.0.1:8731/`. Nothing
@@ -260,7 +260,7 @@ planned cuts, as dimensions and outlines in each component's CAD frame. `fusion/
 describes how the Fusion scripts put it into the parametric model, and
 `tka cad-params --spec ... --map ...` previews the parameters without Fusion.
 
-Pass `--library` with the implant library folder to add the fit check: coverage of
+Pass `--library` with the implant library folder (`data/implants` for the catalogue) to add the fit check: coverage of
 each cut, and overhang and underhang by quadrant, for the tray and the femoral component.
 `--implant-mode catalogue` fits the library part at one scale instead of the
 patient-specific shape.
