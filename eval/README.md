@@ -19,18 +19,16 @@ python demo_server.py --port 8770
 Then open http://127.0.0.1:8770. It opens on two synthetic knees, `DEMO_SMALL` and
 `DEMO_LARGE`, each with its bones and the parts already built for it.
 
-What runs with only this repository:
+Everything but the Fusion build runs from this repository alone:
 
 - the knees, their built parts, the fit checks and the J-curves
 - the live plan controls, Commit and the resection
 - trial reduction and the flexion arc on the built parts (`kinematics.py`)
+- Implant: deriving the parameters from the plan, with the catalogue in `data/implants/`
+  (`TKA_IMPLANT_LIBRARY` points it at another library)
 
-What needs more:
-
-| Step | Needs |
-|---|---|
-| Implant: derive the parameters | An implant library with its `femoral_box.json`. Point `TKA_IMPLANT_LIBRARY` at it, or put it at `data/implants/`, as for the launcher. |
-| Build | Fusion, its MCP add-in listening on `127.0.0.1:27182`, and the parametric Fusion documents the build copies (`tray_audit/copies.json` names them). |
+**Build** needs Fusion, its MCP add-in listening on `127.0.0.1:27182`, and the parametric
+Fusion documents the build copies (`tray_audit/copies.json` names them).
 
 ## What is here
 
@@ -49,8 +47,8 @@ Paths inside the JSON files are relative to `eval/`.
 
 ## What is not
 
-The cohort knees, the reference knee's own scans, the implant library and the Fusion
-documents stay private. The cohort scripts refer to knees by case id only and read
+The cohort knees, the reference knee's own scans and the Fusion documents stay
+private. The cohort scripts refer to knees by case id only and read
 them from a local `Patient Dataset/` that is never committed.
 
 The demo knees are the reference knee scaled independently along its three axes

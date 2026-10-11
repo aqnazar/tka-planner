@@ -7,13 +7,19 @@ knee's own files, logs, Fusion audit output and one-off probes (_*.py) stay behi
 Absolute paths in the knees' JSON become paths relative to eval/. The copy is refused
 if anything patient-identifying or machine-specific is left in it.
 
-  python tools/publish_eval.py           # mirror into eval/
+It also mirrors the implant catalogue, all twelve sizes, into data/implants/, where the
+launcher and the demo find it: the implants, cutting blocks and shells, SizeChart.csv and
+femoral_box.json. The bones exported with each size (FD1*, TD1*) and print projects
+(.3mf, which carry the slicer account) stay behind.
+
+  python tools/publish_eval.py           # mirror into eval/ and data/implants/
   python tools/publish_eval.py --dry-run # list what would change
 """
 
 import argparse
 import fnmatch
 import json
+import os
 import re
 import shutil
 import sys
@@ -24,6 +30,10 @@ SRC = REPO / "docs" / "Prep for paper" / "eval"
 DST = REPO / "eval"
 DEMO = ("DEMO_SMALL", "DEMO_LARGE")
 KEEP = {"README.md"}                    # written in eval/ by hand, never mirrored
+# The catalogue as exported (TKA_LIBRARY_SOURCE overrides), and where the repo carries it.
+LIB_SRC = Path(os.environ.get("TKA_LIBRARY_SOURCE") or REPO.parent / "BP" / "Scaled_STLs")
+LIB_DST = REPO / "data" / "implants"
+LIB_FILES = {"SizeChart.csv", "femoral_box.json"}
 
 # Copied as they are (glob patterns relative to the private eval/).
 FILES = ["*.py", "demo_app/*.html", "demo_app/*.js", "demo_app/*.css",
@@ -82,6 +92,16 @@ def collect():
     return out
 
 
+def collect_library():
+    """{relative path: bytes} of the catalogue: every size's parts, without its bones."""
+    out = {}
+    for p in sorted(LIB_SRC.rglob("*")):
+        bone = p.name.upper().startswith(("FD1", "TD1"))
+        if p.is_file() and (p.name in LIB_FILES or (p.suffix.lower() == ".stl" and not bone)):
+            out[p.relative_to(LIB_SRC).as_posix()] = p.read_bytes()
+    return out
+
+
 def check(files):
     problems = []
     for rel, data in files.items():
@@ -99,40 +119,49 @@ def check(files):
     return problems
 
 
+def mirror(files, dst, dry_run, keep=frozenset()):
+    """Make dst hold exactly files (apart from keep); print what changes."""
+    existing = {p.relative_to(dst).as_posix() for p in dst.rglob("*") if p.is_file()} if dst.exists() else set()
+    existing = {r for r in existing - set(keep) if "__pycache__" not in r}
+    added = sorted(r for r in files if r not in existing)
+    changed = sorted(r for r in files if r in existing and (dst / r).read_bytes() != files[r])
+    removed = sorted(existing - set(files))
+    name = dst.relative_to(REPO).as_posix()
+    for label, rels in (("add", added), ("update", changed), ("remove", removed)):
+        for r in rels:
+            print(f"{label:7} {name}/{r}")
+    size = sum(len(d) for d in files.values()) / 2**20
+    print(f"{name}/: {len(files)} files, {size:.1f} MB: {len(added)} new, {len(changed)} changed, "
+          f"{len(removed)} removed\n")
+    if dry_run:
+        return
+    for r in added + changed:
+        (dst / r).parent.mkdir(parents=True, exist_ok=True)
+        (dst / r).write_bytes(files[r])
+    for r in removed:
+        (dst / r).unlink()
+    for d in sorted((p for p in dst.rglob("*") if p.is_dir()), reverse=True):
+        if not any(d.iterdir()):
+            d.rmdir()
+    shutil.rmtree(dst / "__pycache__", ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    if not SRC.exists():
-        sys.exit(f"no private eval folder at {SRC}")
-    files = collect()
-    problems = check(files)
+    for folder in (SRC, LIB_SRC):
+        if not folder.exists():
+            sys.exit(f"no folder at {folder}")
+    if LIB_SRC.resolve() == LIB_DST.resolve():
+        sys.exit("TKA_LIBRARY_SOURCE points at data/implants itself; point it at the exported catalogue")
+    files, library = collect(), collect_library()
+    problems = check(files) + check({f"data/implants/{r}": d for r, d in library.items()})
     if problems:
         print("Refusing to publish:\n  " + "\n  ".join(problems))
         sys.exit(1)
-
-    existing = {p.relative_to(DST).as_posix() for p in DST.rglob("*") if p.is_file()} if DST.exists() else set()
-    existing -= KEEP
-    existing = {r for r in existing if "__pycache__" not in r}
-    added = sorted(r for r in files if r not in existing)
-    changed = sorted(r for r in files if r in existing and (DST / r).read_bytes() != files[r])
-    removed = sorted(existing - set(files))
-    for label, rels in (("add", added), ("update", changed), ("remove", removed)):
-        for r in rels:
-            print(f"{label:7} {r}")
-    size = sum(len(d) for d in files.values()) / 2**20
-    print(f"\n{len(files)} files, {size:.1f} MB: {len(added)} new, {len(changed)} changed, {len(removed)} removed")
-    if args.dry_run:
-        return
-    for r in added + changed:
-        (DST / r).parent.mkdir(parents=True, exist_ok=True)
-        (DST / r).write_bytes(files[r])
-    for r in removed:
-        (DST / r).unlink()
-    for d in sorted((p for p in DST.rglob("*") if p.is_dir()), reverse=True):
-        if not any(d.iterdir()):
-            d.rmdir()
-    shutil.rmtree(DST / "__pycache__", ignore_errors=True)
+    mirror(files, DST, args.dry_run, keep=KEEP)
+    mirror(library, LIB_DST, args.dry_run)
 
 
 if __name__ == "__main__":

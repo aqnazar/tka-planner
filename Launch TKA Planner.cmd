@@ -11,9 +11,9 @@ set "CASE=first"
 set "SIDE=left"
 set "COMMIT=1"
 
-rem The implant library is a separate design output, not part of this repository.
-rem Point TKA_IMPLANT_LIBRARY at your own folder of component meshes, or drop them
-rem in data\implants. Without one the planner still measures, aligns and resects;
+rem The implant catalogue ships in data\implants. Point TKA_IMPLANT_LIBRARY at another
+rem folder of component meshes to plan with that instead. Without any library the
+rem planner still measures, aligns and resects;
 rem only the components are missing from the scene.
 if defined TKA_IMPLANT_LIBRARY (set "LIBRARY=%TKA_IMPLANT_LIBRARY%") else (set "LIBRARY=%~dp0data\implants")
 
