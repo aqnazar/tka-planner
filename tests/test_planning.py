@@ -327,6 +327,57 @@ class TestComponentPoses:
                             cut.normal)) == pytest.approx(0.0, abs=1e-9)
 
 
+def external_rotation_off_pca(landmarks, plan):
+    """The femoral component's rotation from the posterior condylar axis, in degrees,
+    positive when its anterior turns toward the patient's lateral side: external."""
+    pose = plan.components["femoral_component"]
+    normal = pose[:3, 2] / np.linalg.norm(pose[:3, 2])
+
+    def flat(v):
+        v = v - np.dot(v, normal) * normal
+        return v / np.linalg.norm(v)
+
+    frame = build_femoral_frame(landmarks)
+    lateral = flat(frame.lateral)
+    medial, lateral_condyle = landmarks.require(
+        "femur.condyle_posterior_medial", "femur.condyle_posterior_lateral")
+    condylar_line = flat(lateral_condyle - medial)
+    square = flat(np.cross(normal, condylar_line))
+    if np.dot(square, frame.x_anterior) < 0:
+        square = -square      # the quarter turn from the line that points forwards
+    lateral = flat(lateral - np.dot(lateral, square) * square)
+    anterior = flat(pose[:3, 0])
+    toward_lateral = np.dot(anterior, lateral)
+    return float(np.degrees(np.arctan2(toward_lateral, np.dot(anterior, square))))
+
+
+class TestFemoralRotation:
+    """Femoral rotation is set off the posterior condylar axis, externally, on every
+    knee. External means the component's anterior turns toward the lateral side; which
+    way that is must not depend on where the epicondyles happen to sit. On three knees
+    of the cohort the epicondylar axis lies internal of the condylar line (negative
+    twist), and the planner used to turn the 3 degrees the wrong way on exactly those."""
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("twist", [-6.0, -2.0, 0.0, 2.0, 6.0])
+    def test_three_degrees_external_whatever_the_condylar_twist(self, side, twist):
+        landmarks = synthetic_knee(side, condylar_twist_deg=twist)
+        plan = plan_for(landmarks, target=MECHANICAL)
+
+        assert external_rotation_off_pca(landmarks, plan) == pytest.approx(3.0, abs=0.01)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("twist", [-4.0, 4.0])
+    def test_the_rotation_control_adds_external_rotation(self, side, twist):
+        from tka_planner.core.planning import Adjustments
+
+        landmarks = synthetic_knee(side, condylar_twist_deg=twist)
+        plan = plan_for(landmarks, target=MECHANICAL,
+                        adjustments=Adjustments(femoral_rotation_delta_deg=2.0))
+
+        assert external_rotation_off_pca(landmarks, plan) == pytest.approx(5.0, abs=0.01)
+
+
 class TestMirrorInvariance:
     @pytest.mark.parametrize("philosophy", [MECHANICAL, KINEMATIC])
     def test_resection_depths_survive_mirroring(self, philosophy):

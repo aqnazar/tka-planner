@@ -53,3 +53,10 @@ docs/superpowers/
 
 # Plan-execution scratch (ledgers, review packages).
 .superpowers/
+
+# Media: videos are too large for GitHub and stay local; images are committed.
+media/*.mp4
+# Development report and its formatting spec and assets stay local.
+docs/Отчёт_о_разработке_планировщика_ТЭКС.md
+docs/Report-formatting.txt
+docs/report_assets/

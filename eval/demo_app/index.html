@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Parametric TKA Planner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="bar">
+  <div class="brand"><span class="mark"></span>PARAMETRIC TKA</div>
+  <button id="knee" class="patient" title="Choose another knee"><span class="k-label">Choose a knee</span><span id="side" class="pill"></span><span class="caret">&#9662;</span></button>
+  <nav id="steps">
+    <button data-step="anatomy"><b>1</b>Anatomy</button>
+    <button data-step="plan"><b>2</b>Plan</button>
+    <button data-step="implant"><b>3</b>Implant</button>
+    <button data-step="reduce"><b>4</b>Reduce</button>
+    <button data-step="build"><b>5</b>Build</button>
+  </nav>
+  <div id="state" class="mono"></div>
+  <div id="server-ctl">
+    <button id="srv-restart" title="Restart the server (reloads its code; open sessions are dropped)">&#8635;</button>
+    <button id="srv-stop" title="Stop the server">&#9211;</button>
+  </div>
+</header>
+
+<main id="main">
+  <aside id="left">
+    <section data-panel="anatomy">
+      <h2>Anatomy</h2>
+      <p class="hint">The bones as segmented from the CT, and the landmarks found on them automatically. Every axis and cut of the plan is built from these points. Hover a landmark to find it; click to go to it.</p>
+      <div id="knee-facts"></div>
+      <div id="landmark-list"></div>
+      <div class="buttons"><button class="primary next" data-go="plan">Next: plan the cuts &rarr;</button></div>
+    </section>
+    <section data-panel="plan" hidden>
+      <h2>Plan</h2>
+      <p class="hint">Every slider re-plans live. <b>Commit</b> cuts the bones; the implant is derived from the committed plan.</p>
+      <div class="buttons"><button id="commit" class="primary">Commit cuts</button><button id="reset">Reset</button></div>
+      <div id="controls"></div>
+      <div class="buttons"><button class="primary next" data-go="implant">Next: derive the implant &rarr;</button></div>
+    </section>
+    <section data-panel="implant" hidden>
+      <h2>Implant from the patient</h2>
+      <p class="hint">Rules turn this plan's cuts into the Fusion parameters of the three parts. Nothing is picked from a catalogue.</p>
+      <div class="buttons"><button id="derive" class="primary">Derive from current plan</button><button id="open-figs">J-curve and tray</button></div>
+      <div id="derivation"></div>
+      <div class="buttons"><button class="primary next" data-go="reduce">Next: trial reduction &rarr;</button></div>
+    </section>
+    <section data-panel="reduce" hidden>
+      <h2>Trial reduction</h2>
+      <p class="hint">The Fusion-built parts on the committed cuts. Flexion rolls the femur on its own J-curve; the motion profile sets how the condyles roll back and the femur turns.</p>
+      <div class="control"><div class="row"><span class="name">Motion profile</span></div>
+        <select id="motion">
+          <option value="published">Medial pivot (published TKA profile)</option>
+          <option value="fixed">J-curve rolling only, no rollback</option>
+        </select></div>
+      <div id="trial"></div>
+      <div class="buttons"><button id="play" class="primary">Play flexion 0&ndash;120&deg;</button><button id="reset-trial">Reset pose</button></div>
+      <div id="kin-now"></div>
+      <div id="kin-charts"></div>
+      <div class="buttons"><button class="primary next" data-go="build">Next: build in Fusion &rarr;</button></div>
+    </section>
+    <section data-panel="build" hidden>
+      <h2>Build in Fusion</h2>
+      <p class="hint">One Fusion design per part, driven by parameters. A build copies nothing by hand: it sets the parameters derived from the plan, rebuilds, checks every feature, saves a version and exports the parts.</p>
+      <div class="buttons"><button id="build" class="primary">Build this plan in Fusion</button></div>
+      <div id="buildlog" class="mono"></div>
+      <div id="fusion"></div>
+    </section>
+  </aside>
+
+  <section id="stage">
+    <div id="view"></div>
+    <div id="labels"></div>
+    <div id="views">
+      <button data-view="ap">AP</button><button data-view="lateral">Lateral</button><button data-view="medial">Medial</button>
+      <button data-view="tibia">Tibia axial</button><button data-view="femur">Femur axial</button><button data-view="iso">3D</button>
+    </div>
+    <div id="scene-panel">
+      <div class="sp-head"><span>Scene</span><button id="sp-toggle" title="Collapse">&minus;</button></div>
+      <div id="scene-rows"></div>
+    </div>
+    <button id="toggle-left" class="edge left" title="Hide the side panel">&lsaquo;</button>
+    <button id="toggle-right" class="edge right" title="Hide the readout">&rsaquo;</button>
+    <div id="banner" hidden></div>
+    <div id="drawer" hidden>
+      <div class="drawer-head"><h3>The patient against the implant</h3><button id="drawer-close">Close</button></div>
+      <div id="figures"></div>
+    </div>
+    <div id="busy" hidden><span></span></div>
+  </section>
+
+  <aside id="right">
+    <div id="readout"></div>
+  </aside>
+</main>
+
+<div id="intro" hidden>
+  <div class="intro-card">
+    <div class="intro-left">
+      <div class="brand big"><span class="mark"></span>PARAMETRIC TKA</div>
+      <h1>A knee implant made from the patient's own CT</h1>
+      <p>A total knee replacement is normally chosen from a catalogue of sizes. Here the femoral component, tibial tray and insert are <b>designed for each knee</b>: a planner places the cuts on the bones from the CT, rules turn the cuts into the parameters of three Fusion designs, and Fusion rebuilds the parts. The parts are then reduced on the cut bones and flexed.</p>
+      <ol class="flow">
+        <li><b>Anatomy</b> the segmented bones and the landmarks found on them</li>
+        <li><b>Plan</b> alignment and the five femoral and one tibial cut, live</li>
+        <li><b>Implant</b> the Fusion parameters, derived from the cuts by rules</li>
+        <li><b>Reduce</b> the built parts on the cut bones, flexed through 120&deg;</li>
+        <li><b>Build</b> Fusion rebuilds the three parts from a changed plan (about a minute)</li>
+      </ol>
+      <p class="fine">Research prototype, Satbayev University. Not a medical device. Knees are shown by case id only.</p>
+    </div>
+    <div class="intro-right">
+      <h2>Choose a knee</h2>
+      <div id="knee-cards"></div>
+    </div>
+  </div>
+</div>
+
+<footer id="pipeline">
+  <span class="on">CT segmentation</span><i></i><span data-s="anatomy">landmarks &amp; axes</span><i></i><span data-s="plan">plan &amp; cuts</span><i></i>
+  <span data-s="implant">rules &rarr; parameters</span><i></i><span data-s="build">Fusion rebuild</span><i></i><span data-s="reduce">placed &amp; reduced</span>
+  <span class="note">Research prototype. Not a medical device.</span>
+</footer>
+
+<script type="importmap">{"imports": {"three": "./vendor/three.module.js"}}</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

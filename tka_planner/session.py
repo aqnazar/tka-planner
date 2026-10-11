@@ -412,6 +412,18 @@ class PlanningSession:
             f"Tibial lateral|{tibial.lateral_depth_mm:.1f} mm",
             f"Tibia measured from|{diagnostics['tibial_resection_datum']}",
         ]
+        box = self.femoral_cut_box
+        if box is not None and box.get("available"):
+            cuts = box["resections_mm"]
+            lines += [
+                f"Femoral posterior medial|{cuts['posterior_medial']:.1f} mm",
+                f"Femoral posterior lateral|{cuts['posterior_lateral']:.1f} mm",
+                f"Femoral anterior|{cuts['anterior']:.1f} mm",
+                f"Patellofemoral lowering|{box['patellofemoral_lowering_mm']:+.1f} mm",
+                f"Flange height|{box['flange_height_mm']:.1f} mm",
+            ]
+        elif box is not None:
+            lines.append(f"Femoral box|not placed: {box['reason']}")
 
         if diagnostics.get("insert_thickness_mm") is not None:
             lines += [
@@ -467,6 +479,9 @@ class PlanningSession:
             lines.append(f"WARN|Sizing: {', '.join(sizing.flags)}")
         for warning in plan.warnings:
             lines.append(f"WARN|{warning}")
+        if box is not None and box.get("available") and box["anterior_notch_mm"] > 0.5:
+            lines.append(f"WARN|The anterior femoral cut notches the cortex by "
+                         f"{box['anterior_notch_mm']:.1f} mm")
 
         if self.stale:
             lines.append("WARN|Geometry does not match the plan: press Commit")
@@ -530,6 +545,29 @@ class PlanningSession:
             cached = (key, component_scales(self.measurement, self.plan, self.sizing,
                                             self.library, self.controls.implant_mode))
             self._transforms_cache = cached
+        return cached[1]
+
+    @property
+    def femoral_cut_box(self) -> dict | None:
+        """The femoral cut box on the current plan.
+
+        It depends only on the femur and the femoral component's pose, so it is kept
+        until one of those changes: a tibial control or a display toggle re-plans without
+        moving it, and does not pay to place it again.
+        """
+        import numpy as np
+
+        from tka_planner import pipeline
+
+        if self.library is None or self.plan is None:
+            return None
+        pose = np.asarray(self.plan.components["femoral_component"], dtype=float)
+        key = (id(self.measurement), str(self.library), pose.tobytes())
+        cached = getattr(self, "_cut_box_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, pipeline.femoral_cut_box_case(
+                self.measurement, self.plan, self.library))
+            self._cut_box_cache = cached
         return cached[1]
 
     def _insert_stretch(self) -> dict | None:
