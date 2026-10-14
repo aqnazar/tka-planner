@@ -115,4 +115,8 @@ def test_a_synthetic_knee_runs_through_the_pipeline_with_its_bone_like_meshes():
         femur_path="f.stl", tibia_path="t.stl", case_id="CASE_SYN", side="right",
     )
     assert case.metrics["mldfa_deg"].value == pytest.approx(87.5, abs=1e-6)
-    assert case.femoral_measure.ml_mm > 75.0
+    # The sizing box reads the mesh. An ellipsoid narrows towards its tip, and the box
+    # spans the distal end of the bone (sized by the condyles, not the scan), so the
+    # width is the ellipsoid's there: less than its widest, more than nothing plausible.
+    widest = float(np.ptp(bone_like(knee, "femur").vertices[:, 0]))
+    assert 60.0 < case.femoral_measure.ml_mm <= widest
