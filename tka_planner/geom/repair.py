@@ -15,7 +15,8 @@ import numpy as np
 
 from tka_planner.core.meshio import Mesh, weld_vertices
 
-__all__ = ["is_manifold", "edge_report", "repair"]
+__all__ = ["is_manifold", "edge_report", "repair", "connected_components",
+           "repair_statistics"]
 
 
 def _edges(faces: np.ndarray) -> np.ndarray:
@@ -65,13 +66,26 @@ def repair(mesh: Mesh) -> tuple[Mesh, tuple[str, ...]]:
     still not manifold afterwards is reported as such rather than forced, because the
     honest answer to a hole in a segmentation is to say there is a hole.
     """
+    fixed, actions, _ = _repair(mesh)
+    return fixed, actions
+
+
+def _repair(mesh: Mesh) -> tuple[Mesh, tuple[str, ...], dict]:
+    """:func:`repair`, also returning how many of each thing it changed.
+
+    The counts are kept apart from the action strings so that statistics reported over
+    a cohort come from the repair itself rather than from parsing its messages.
+    """
     actions: list[str] = []
+    changed = {"vertices_merged": 0, "degenerate_faces_removed": 0,
+               "duplicate_faces_removed": 0}
     working = mesh
 
     if not _is_welded(working) or edge_report(working)["boundary_edges"]:
         welded = weld_vertices(working)
         if welded.n_vertices < working.n_vertices:
             actions.append("welded")
+            changed["vertices_merged"] = working.n_vertices - welded.n_vertices
             working = welded
 
     faces = working.faces
@@ -84,6 +98,7 @@ def repair(mesh: Mesh) -> tuple[Mesh, tuple[str, ...]]:
     if dropped:
         actions.append(f"dropped {dropped} degenerate face"
                        f"{'s' if dropped != 1 else ''}")
+        changed["degenerate_faces_removed"] = dropped
         faces = faces[keep]
 
     _, first, counts = np.unique(
@@ -93,10 +108,11 @@ def repair(mesh: Mesh) -> tuple[Mesh, tuple[str, ...]]:
     if duplicated:
         actions.append(f"dropped {duplicated} duplicate face"
                        f"{'s' if duplicated != 1 else ''}")
+        changed["duplicate_faces_removed"] = duplicated
         faces = faces[np.sort(first)]
 
     if not actions:
-        return mesh, ()
+        return mesh, (), changed
 
     return Mesh(
         vertices=working.vertices,
@@ -104,7 +120,63 @@ def repair(mesh: Mesh) -> tuple[Mesh, tuple[str, ...]]:
         source_path=mesh.source_path,
         sha256=mesh.sha256,
         metadata={**mesh.metadata, "repaired": list(actions)},
-    ), tuple(actions)
+    ), tuple(actions), changed
+
+
+def connected_components(mesh: Mesh) -> int:
+    """How many edge-connected pieces the mesh's faces form.
+
+    Counted on the mesh as given, so a triangle soup counts every triangle as a piece:
+    weld first. A bone segmentation should be one piece; a second one is usually a loose
+    fragment the segmentation kept, which a boolean cuts along with the bone without
+    complaint.
+
+    Union-find by hooking each root onto the smallest root it touches and then
+    compressing every path, both vectorised, so a million-triangle bone takes a few
+    passes rather than a Python loop over its vertices.
+    """
+    faces = mesh.faces
+    if len(faces) == 0:
+        return 0
+    parent = np.arange(mesh.n_vertices)
+    edges = _edges(faces)
+    while True:
+        a, b = parent[edges[:, 0]], parent[edges[:, 1]]
+        differ = a != b
+        if not differ.any():
+            break
+        # Every label is a root here, and a root only ever hooks onto a smaller one,
+        # so no cycle can form.
+        np.minimum.at(parent, np.maximum(a, b)[differ], np.minimum(a, b)[differ])
+        while True:
+            jumped = parent[parent]
+            if np.array_equal(jumped, parent):
+                break
+            parent = jumped
+    return int(len(np.unique(parent[np.unique(faces)])))
+
+
+def repair_statistics(mesh: Mesh) -> dict:
+    """What preparing a mesh for the kernel does to it, counted.
+
+    Runs the same repair the manifold3d kernel runs before every cut and reports what
+    it changed, what it could not fix, and how many pieces are left. ``accepted`` is the
+    kernel's own test: a mesh that is not manifold after repair is refused, not forced.
+    """
+    fixed, actions, changed = _repair(mesh)
+    report = edge_report(fixed)
+    return {
+        "triangles_in": int(mesh.n_triangles),
+        "vertices_in": int(mesh.n_vertices),
+        **changed,
+        "triangles_out": int(fixed.n_triangles),
+        "vertices_out": int(fixed.n_vertices),
+        "boundary_edges": report["boundary_edges"],
+        "nonmanifold_edges": report["nonmanifold_edges"],
+        "components": connected_components(fixed),
+        "accepted": not any(report.values()),
+        "actions": list(actions),
+    }
 
 
 def _is_welded(mesh: Mesh) -> bool:
