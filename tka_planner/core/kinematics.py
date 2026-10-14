@@ -312,10 +312,14 @@ class FlexionLimit:
 
     ``max_flexion_deg`` is the last angle found clear; the contact that stops it was
     found at most ``resolution_deg`` later. ``censored`` means nothing was hit by
-    ``stop_deg``, so the limit is at least that. Pairs already blocked at the starting
-    angle cannot limit flexion they never allowed; they are listed, and left out of the
-    search, so a plan problem at extension is reported rather than read as a flexion
-    limit of zero.
+    ``stop_deg``, so the limit is at least that.
+
+    Pairs already blocked at the starting angle cannot limit flexion they never
+    allowed, so a plan problem at extension is reported (``blocked_at_start``) rather
+    than read as a flexion limit of zero. Such a pair is set aside only until the sweep
+    first finds it clear; from then on a new contact of that pair counts like any
+    other. ``never_cleared`` names the pairs that stayed in contact throughout, which
+    therefore never took part in the search.
     """
 
     trajectory: str
@@ -327,6 +331,7 @@ class FlexionLimit:
     step_deg: float
     resolution_deg: float
     blocked_at_start: tuple[Contact, ...] = ()
+    never_cleared: tuple[str, ...] = ()
     evaluations: int = 0
 
     @property
@@ -344,6 +349,7 @@ class FlexionLimit:
             "first_pair": self.first_pair,
             "contacts": [c.to_dict() for c in self.contacts],
             "blocked_at_start": [c.to_dict() for c in self.blocked_at_start],
+            "never_cleared": list(self.never_cleared),
             "search": {"start_deg": self.start_deg, "stop_deg": self.stop_deg,
                        "step_deg": self.step_deg, "resolution_deg": self.resolution_deg,
                        "evaluations": self.evaluations},
@@ -369,26 +375,29 @@ def search_max_flexion(
         raise ValueError("The step and the resolution must be positive.")
     evaluations = 0
 
-    def blocking(angle, ignored=frozenset()):
+    def blocking(angle):
         nonlocal evaluations
         evaluations += 1
-        return [c for c in contacts_at(float(angle))
-                if c.blocks and c.pair not in ignored]
+        return [c for c in contacts_at(float(angle)) if c.blocks]
 
     at_start = tuple(blocking(start_deg))
-    ignored = frozenset(c.pair for c in at_start)
+    ignored = {c.pair for c in at_start}
 
     clear = float(start_deg)
     angles = np.arange(start_deg + step_deg, stop_deg + 1e-9, step_deg)
     for angle in angles:
-        hits = blocking(angle, ignored)
+        found_here = blocking(angle)
+        # A pair set aside at extension is taken back once it has been seen clear.
+        ignored &= {c.pair for c in found_here}
+        hits = [c for c in found_here if c.pair not in ignored]
         if not hits:
             clear = float(angle)
             continue
+        armed_ignore = frozenset(ignored)
         low, high, found = clear, float(angle), hits
         while high - low > resolution_deg:
             middle = (low + high) / 2.0
-            middle_hits = blocking(middle, ignored)
+            middle_hits = [c for c in blocking(middle) if c.pair not in armed_ignore]
             if middle_hits:
                 high, found = middle, middle_hits
             else:
@@ -397,13 +406,14 @@ def search_max_flexion(
             trajectory=trajectory, max_flexion_deg=low, censored=False,
             contacts=tuple(found), start_deg=start_deg, stop_deg=stop_deg,
             step_deg=step_deg, resolution_deg=resolution_deg,
-            blocked_at_start=at_start, evaluations=evaluations,
+            blocked_at_start=at_start, never_cleared=tuple(sorted(ignored)),
+            evaluations=evaluations,
         )
     return FlexionLimit(
         trajectory=trajectory, max_flexion_deg=clear, censored=True, contacts=(),
         start_deg=start_deg, stop_deg=stop_deg, step_deg=step_deg,
         resolution_deg=resolution_deg, blocked_at_start=at_start,
-        evaluations=evaluations,
+        never_cleared=tuple(sorted(ignored)), evaluations=evaluations,
     )
 
 

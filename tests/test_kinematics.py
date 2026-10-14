@@ -206,6 +206,22 @@ def test_a_pair_blocked_at_extension_is_listed_not_read_as_zero_flexion():
     assert 59.5 <= limit.max_flexion_deg < 60.0
 
 
+def test_a_pair_blocked_at_extension_counts_again_once_it_has_separated():
+    def contacts(a):
+        seated = a < 12.0 or a >= 88.0      # in contact at first, again from 88 deg
+        return [_contact("insert_vs_bone", a)] if seated else []
+
+    limit = search_max_flexion(contacts)
+    assert [c.pair for c in limit.blocked_at_start] == ["insert_vs_bone"]
+    assert limit.never_cleared == ()
+    assert 87.5 <= limit.max_flexion_deg < 88.0
+
+
+def test_a_pair_that_never_separates_is_named():
+    limit = search_max_flexion(lambda a: [_contact("stuck", a)], stop_deg=60.0)
+    assert limit.censored and limit.never_cleared == ("stuck",)
+
+
 def test_the_envelope_is_the_spread_over_scenarios():
     limits = {
         name: search_max_flexion(lambda a, at=at: [_contact("w", a)] if a >= at else [])

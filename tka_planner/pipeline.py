@@ -1204,7 +1204,9 @@ def flexion_model(
 
     The parts are the library parts posed and shaped exactly as the viewer and
     :func:`fit_case` pose them; the bones are cut by the plan's cutting blocks, as
-    Commit cuts them. ``None`` with no library, or when it lacks a part.
+    Commit cuts them. ``None`` with no library, or when it lacks a part. A bone surface
+    that is not closed raises ``ValueError``, as Commit does: the search needs solids,
+    and holes are reported rather than filled.
 
     ``femoral_offset_mm`` moves the femoral component that far anteriorly along its own
     AP axis, relative to the femur, with the joint re-seated on the component: the
