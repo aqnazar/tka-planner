@@ -6,3 +6,4 @@ by :func:`paper.harness.experiment`. Add a module here and to the import list be
 
 from . import e00_cohort  # noqa: F401
 from . import e06c_hip_centre  # noqa: F401
+from . import e_regression  # noqa: F401

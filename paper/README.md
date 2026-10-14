@@ -33,3 +33,4 @@ the same refusals.
 |---|---|---|
 | E0 | Cohort inventory and acceptance | cohort |
 | E6c | Functional hip centre from camera-tracked pivoting: accuracy vs arc, noise, samples, pelvic motion (synthetic part) | synthetic |
+| REG | Regression check: every landmark, frame, metric and the default plan per knee against a frozen baseline (`TKA_REG_FREEZE=1` freezes; baselines in `TKA_PAPER_OUT/baselines/`) | cohort |
