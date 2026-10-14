@@ -34,6 +34,7 @@ the same refusals.
 | Id | Experiment | Data |
 |---|---|---|
 | E0 | Cohort inventory and acceptance | cohort |
+| E2 | Metamorphic invariance: mirror + side swap, random rigid motions, scanner rotation about each axis (-30 to +30 deg), decimation (50%, 10%), remeshing, vertex noise; automatic and oracle (carried) landmarks | cohort |
 | E6c | Functional hip centre from camera-tracked pivoting: accuracy vs arc, noise, samples, pelvic motion (synthetic part) | synthetic |
 | REG | Regression check: every landmark, frame, metric and the default plan per knee against a frozen baseline (`TKA_REG_FREEZE=1` freezes; baselines in `TKA_PAPER_OUT/baselines/`) | cohort |
 | E7a | Sizing measurement: legacy bounding box vs resection cross-section at the planned cuts; chart-size changes | cohort |
