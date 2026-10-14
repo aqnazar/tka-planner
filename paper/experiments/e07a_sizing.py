@@ -169,7 +169,7 @@ def run(ctx: Context) -> None:
                      f"in {changed} "
                      f"of {stats['n']} knees (box minus cut: {min(steps):+d} to "
                      f"{max(steps):+d} sizes).")
-    ctx.table("summary", summary, digits=2)
+    ctx.table("sizing_summary", summary, digits=2)
 
     for case_id in ("P009L", "P009R"):
         r = next((x for x in rows if x["case"] == case_id and x["dimension"] == "femur_ML"),

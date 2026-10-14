@@ -19,7 +19,9 @@ scans.
 top of the checkout, gitignored). A knee is a folder holding an `FD*` femur and a `TD*`
 tibia, plus segmentation exports whose names carry the case id (`..._P009_L...`).
 Knees are only ever named by case id and side. The implant catalogue is `data/implants/`
-(or `TKA_IMPLANT_LIBRARY`). Experiments that need no cohort (synthetic knees, the
+(or `TKA_IMPLANT_LIBRARY`). E7b also reads the private Fusion builds of the
+patient-specific parts, read-only and only when `TKA_PATIENT_BUILDS` names their folder
+(one `<knee>/` per build with `job.json`, `femoral.stl`, `plate.stl`). Experiments that need no cohort (synthetic knees, the
 kernel checks) run from a plain checkout.
 
 **Adding an experiment.** A module `paper/experiments/eNN_<topic>.py` with a
@@ -34,3 +36,5 @@ the same refusals.
 | E0 | Cohort inventory and acceptance | cohort |
 | E6c | Functional hip centre from camera-tracked pivoting: accuracy vs arc, noise, samples, pelvic motion (synthetic part) | synthetic |
 | REG | Regression check: every landmark, frame, metric and the default plan per knee against a frozen baseline (`TKA_REG_FREEZE=1` freezes; baselines in `TKA_PAPER_OUT/baselines/`) | cohort |
+| E7a | Sizing measurement: legacy bounding box vs resection cross-section at the planned cuts; chart-size changes | cohort |
+| E7b | Implant fit on the cuts: chart size vs uniform scale vs patient-specific (and the Fusion-regenerated parts, with `TKA_PATIENT_BUILDS`) | cohort |
