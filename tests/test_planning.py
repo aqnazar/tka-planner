@@ -415,6 +415,78 @@ class TestMirrorInvariance:
         )
 
 
+class TestThePlanTurnsWithTheKnee:
+    """The plan is the femur's and the tibia's, wherever the leg lay in the scanner.
+
+    With oracle landmarks carried through a rigid motion, every cut and every component
+    must move with the bones. The femoral cut used to have its sagittal tilt stripped
+    against the scanner's anterior axis, so tipping the leg by an angle in the scanner
+    flexed the femoral component on the femur by exactly that angle (paper experiment
+    E2), while the tibial cut, set from the tibial axis, followed its bone.
+    """
+
+    @staticmethod
+    def _turned(landmarks, rotation):
+        from tests.test_frames import _turned
+        return _turned(landmarks, rotation)
+
+    @pytest.mark.parametrize("philosophy", [MECHANICAL, KINEMATIC])
+    @pytest.mark.parametrize("axis,angle", [([1, 0, 0], 10.0), ([1, 0, 0], -30.0),
+                                            ([0, 1, 0], 20.0), ([0, 0, 1], 30.0),
+                                            ([0.4, 0.2, 0.9], 25.0)])
+    def test_cuts_and_components_move_with_the_bones(self, philosophy, axis, angle):
+        from tests.test_frames import _rotation
+
+        rotation = _rotation(axis, angle)
+        knee = synthetic_knee("left", posterior_slope_deg=7.0, mldfa_deg=86.0)
+        before = plan_for(knee, target=philosophy, native_slope_deg=7.0)
+        after = plan_for(self._turned(knee, rotation), target=philosophy,
+                         native_slope_deg=7.0)
+        for name, cut in before.resections.items():
+            np.testing.assert_allclose(after.resections[name].normal,
+                                       rotation @ cut.normal, atol=1e-9, err_msg=name)
+            assert after.resections[name].medial_depth_mm == pytest.approx(
+                cut.medial_depth_mm, abs=1e-6)
+            assert after.resections[name].lateral_depth_mm == pytest.approx(
+                cut.lateral_depth_mm, abs=1e-6)
+        for name, pose in before.components.items():
+            np.testing.assert_allclose(after.components[name][:3, :3],
+                                       rotation @ pose[:3, :3], atol=1e-9, err_msg=name)
+
+    def test_the_femoral_cut_is_square_to_the_femoral_axis_in_the_sagittal_plane(self):
+        """Zero flexion means zero against the femur's own axis, however it lay."""
+        from tests.test_frames import _rotation
+
+        knee = self._turned(synthetic_knee("left"), _rotation([1, 0, 0], 12.0))
+        femoral, _ = frames_for(knee)
+        plan = plan_for(knee, target=MECHANICAL)
+        normal = plan.resections["femoral_distal"].normal
+        assert float(np.dot(normal, femoral.x_anterior)) == pytest.approx(0.0, abs=1e-9)
+
+    def test_femoral_flexion_is_measured_from_the_femoral_axis(self):
+        from tka_planner.core.planning import Adjustments
+
+        knee = synthetic_knee("left")
+        femoral, _ = frames_for(knee)
+        plan = plan_for(knee, target=MECHANICAL,
+                        adjustments=Adjustments(femoral_flexion_delta_deg=4.0))
+        normal = plan.resections["femoral_distal"].normal
+        in_sagittal = normal - np.dot(normal, femoral.y_patient_left) \
+            * femoral.y_patient_left
+        flexion = np.degrees(np.arctan2(np.dot(in_sagittal, -femoral.x_anterior),
+                                        np.dot(in_sagittal, femoral.z_proximal)))
+        assert abs(flexion) == pytest.approx(4.0, abs=1e-6)
+
+    def test_the_scanner_reference_is_still_available_for_comparison(self):
+        from tests.test_frames import _rotation
+
+        knee = self._turned(synthetic_knee("left"), _rotation([1, 0, 0], 12.0))
+        plan = plan_for(knee, target=MECHANICAL, femoral_sagittal_reference="scanner")
+        normal = plan.resections["femoral_distal"].normal
+        assert float(normal[1]) == pytest.approx(0.0, abs=1e-9)   # no scanner AP tilt
+        assert plan.diagnostics["femoral_sagittal_reference"] == "scanner"
+
+
 class TestWarnings:
     def test_a_cut_that_misses_a_compartment_is_flagged(self):
         """A cut too shallow below the less worn plateau may never reach the worn one.
