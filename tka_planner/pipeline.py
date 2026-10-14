@@ -29,7 +29,7 @@ from .core.condylar_offset import (
 )
 from .core.frames import AnatomicalFrame, build_femoral_frame, build_tibial_frame
 from .core.landmarks import LandmarkSet, load_landmarks, overlay_landmarks
-from .core.landmarks_auto import estimate_landmarks
+from .core.landmarks_auto import estimate_landmarks, femoral_axes, tibial_axes
 from .core.measure import measure_femoral_ml, measure_tibial_plateau
 from .core.meshio import Mesh, read_stl
 from .core.metrics import compute_all
@@ -50,6 +50,7 @@ from .core.qc import (
     check_landmarks_on_mesh,
     check_laterality,
     check_plausible_bone_scale,
+    check_scan_orientation,
     separate_detached_fragments,
 )
 from .core.sides import Side
@@ -250,12 +251,21 @@ def measure_meshes(
     femur, tibia = bones["femur"], bones["tibia"]
     qc.raise_if_errors()
 
-    femur_coverage, femur_report = assess_femur_coverage(femur)
-    tibia_coverage, tibia_report = assess_tibia_coverage(tibia)
+    # Each bone's own axes, which the landmark searches run in. A knee lying too far
+    # from LPS for them to be trusted is refused here, before anything is built on it.
+    femur_axes, tibia_axes = femoral_axes(femur, side), tibial_axes(tibia)
+    qc.extend(check_scan_orientation(femur_axes, tibia_axes))
+    qc.raise_if_errors()
+
+    femur_coverage, femur_report = assess_femur_coverage(
+        femur, superior=femur_axes.superior)
+    tibia_coverage, tibia_report = assess_tibia_coverage(
+        tibia, superior=tibia_axes.superior)
     qc.extend(_for_bone(femur_report, "femur"))
     qc.extend(_for_bone(tibia_report, "tibia"))
 
-    landmarks = estimate_landmarks(femur, tibia, side, case_id=case_id)
+    landmarks = estimate_landmarks(femur, tibia, side, case_id=case_id,
+                                   femur_axes=femur_axes, tibia_axes=tibia_axes)
     if landmarks_path:
         picks = load_landmarks(landmarks_path, case_id=case_id, side=side,
                                rater=rater, session=session)

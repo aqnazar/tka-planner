@@ -47,6 +47,7 @@ __all__ = [
     "check_plausible_bone_scale",
     "check_landmarks_on_mesh",
     "check_laterality",
+    "check_scan_orientation",
 ]
 
 
@@ -99,6 +100,20 @@ MIN_TIBIA_LENGTH_FOR_ANKLE_MM = 300.0
 # a human reviewing a borderline case, but they are not gates. Anyone tempted to relax
 # the length threshold should re-run the shaft sweep first.
 HEAD_SPHERE_MAX_RMS_MM = 1.0
+
+# How far a scan may lie from LPS before it is refused. The landmark estimators work in
+# each bone's own axes, but take their *signs* from the scanner -- which end is superior,
+# which side patient-left -- and those are unambiguous only while a bone's long axis is
+# within 90 degrees of scanner superior and its mediolateral axis within 90 degrees of
+# scanner left-right. 45 degrees is half that, a margin no supine knee CT approaches: on
+# this cohort the femoral working axis lies 4 to 7 degrees from scanner superior and the
+# posterior condylar line 0 to 10 degrees from scanner left-right.
+ORIENTATION_MAX_TILT_DEG = 45.0
+ORIENTATION_MAX_TURN_DEG = 45.0
+# The posterior condyles stand 22 to 54 mm further behind the femoral shaft than the
+# trochlea stands in front of it on this cohort. A femur whose block reaches this much
+# further forwards than backwards is facing backwards in the scan.
+FACING_MARGIN_MM = 5.0
 
 
 class Severity(Enum):
@@ -678,5 +693,95 @@ def check_landmarks_on_mesh(
             "LANDMARKS_ON_MESH", Severity.INFO,
             f"All {checked} landmarks fall within their bone's bounds.",
             n_checked=checked,
+        )
+    return report
+
+
+def check_scan_orientation(femur_axes, tibia_axes) -> QCReport:
+    """Refuse a knee lying too far from LPS for its landmarks to be found.
+
+    ``femur_axes`` and ``tibia_axes`` are the bones' own axes
+    (:func:`~tka_planner.core.landmarks_auto.femoral_axes` and
+    :func:`~tka_planner.core.landmarks_auto.tibial_axes`), which the estimators then
+    search in. Within the gate the estimators do not depend on how the knee lies; beyond
+    it the signs they take from the scanner may be wrong, and a plan built on them would
+    be confidently mirrored or reversed. Metamorphic testing found exactly that before
+    this gate existed: every knee turned upside down was planned, with rotational errors
+    up to 112 degrees, and at 90 degrees seven of ten failed inside the planner.
+
+    Four ways to fail, each an error:
+
+    * ``SCAN_ORIENTATION_TILTED`` -- a bone's long axis more than
+      :data:`ORIENTATION_MAX_TILT_DEG` from scanner superior;
+    * ``SCAN_ORIENTATION_TURNED`` -- the femur's posterior condylar line more than
+      :data:`ORIENTATION_MAX_TURN_DEG` from scanner left-right (the tibia's is not
+      tested: it may legitimately sit 20 degrees from the femur's);
+    * ``SCAN_UPSIDE_DOWN`` -- the femur below the tibia along the femur's axis;
+    * ``SCAN_FACING_BACKWARDS`` -- the condylar block reaching further in front of the
+      shaft than behind it, by more than :data:`FACING_MARGIN_MM`: what a knee turned
+      half round about its long axis looks like, and the only one of these the first
+      three cannot see.
+    """
+    report = QCReport()
+    tilts = {bone: float(axes.diagnostics.get("superior_tilt_deg", 0.0))
+             for bone, axes in (("femur", femur_axes), ("tibia", tibia_axes))}
+    turn = float(femur_axes.diagnostics.get("mediolateral_turn_deg", 0.0))
+    context = {"femur_tilt_deg": round(tilts["femur"], 1),
+               "tibia_tilt_deg": round(tilts["tibia"], 1),
+               "femur_turn_deg": round(turn, 1)}
+    refused = False
+
+    for bone, tilt in tilts.items():
+        if tilt > ORIENTATION_MAX_TILT_DEG:
+            refused = True
+            report.add(
+                "SCAN_ORIENTATION_TILTED", Severity.ERROR,
+                f"The {bone}'s long axis lies {tilt:.0f} degrees from the scanner's "
+                f"superior axis (limit {ORIENTATION_MAX_TILT_DEG:.0f}). The bone is not "
+                f"in the LPS patient frame the planner expects; check the export's "
+                f"coordinate system and orientation.",
+                bone=bone, **context,
+            )
+    if turn > ORIENTATION_MAX_TURN_DEG:
+        refused = True
+        report.add(
+            "SCAN_ORIENTATION_TURNED", Severity.ERROR,
+            f"The femur's posterior condylar line lies {turn:.0f} degrees from the "
+            f"scanner's left-right axis (limit {ORIENTATION_MAX_TURN_DEG:.0f}), so "
+            f"patient-left cannot be told from patient-right with confidence.",
+            **context,
+        )
+
+    separation = float(np.dot(femur_axes.origin - tibia_axes.origin,
+                              femur_axes.superior))
+    if separation <= 0.0:
+        refused = True
+        report.add(
+            "SCAN_UPSIDE_DOWN", Severity.ERROR,
+            f"The femur lies {abs(separation):.0f} mm below the tibia along its own "
+            f"axis: the scan is upside down, or the two bones are swapped.",
+            separation_mm=round(separation, 1), **context,
+        )
+
+    posterior = femur_axes.diagnostics.get("posterior_reach_mm")
+    anterior = femur_axes.diagnostics.get("anterior_reach_mm")
+    if (posterior is not None and anterior is not None
+            and anterior - posterior > FACING_MARGIN_MM):
+        refused = True
+        report.add(
+            "SCAN_FACING_BACKWARDS", Severity.ERROR,
+            f"The femoral condyles reach {anterior:.0f} mm in front of the shaft and "
+            f"{posterior:.0f} mm behind it, where the posterior condyles always stand "
+            f"further back: the knee faces backwards in the scan.",
+            posterior_reach_mm=posterior, anterior_reach_mm=anterior, **context,
+        )
+
+    if not refused:
+        report.add(
+            "SCAN_ORIENTATION_OK", Severity.INFO,
+            f"The knee lies within the orientation gate: femur {tilts['femur']:.1f} "
+            f"and tibia {tilts['tibia']:.1f} degrees from scanner superior, posterior "
+            f"condylar line {turn:.1f} degrees from scanner left-right.",
+            **context,
         )
     return report

@@ -220,7 +220,7 @@ def synthetic_estimate(monkeypatch):
 
     landmarks = synthetic_knee()
     monkeypatch.setattr(pipeline, "estimate_landmarks",
-                        lambda femur, tibia, side, *, case_id: landmarks)
+                        lambda femur, tibia, side, *, case_id, **axes: landmarks)
     return landmarks
 
 
