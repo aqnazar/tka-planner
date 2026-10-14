@@ -32,3 +32,4 @@ the same refusals.
 | Id | Experiment | Data |
 |---|---|---|
 | E0 | Cohort inventory and acceptance | cohort |
+| E6c | Functional hip centre from camera-tracked pivoting: accuracy vs arc, noise, samples, pelvic motion (synthetic part) | synthetic |
