@@ -1,0 +1,7 @@
+"""Every paper experiment. Importing this package registers them all.
+
+One module per experiment, named ``eNN_<topic>.py``, each with a ``run(ctx)`` decorated
+by :func:`paper.harness.experiment`. Add a module here and to the import list below.
+"""
+
+from . import e00_cohort  # noqa: F401
