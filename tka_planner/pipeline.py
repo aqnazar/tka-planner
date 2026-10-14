@@ -332,7 +332,7 @@ def tray_thickness(measurement: CaseMeasurement, sizing: SizingDecision,
     insert = specs.get("tibial_insert")
     if insert is None:
         return 0.0
-    return float(_cached_stl(insert["path"]).vertices[:, 2].min()) * insert["scale"]
+    return float(_cached_component(insert).vertices[:, 2].min()) * insert["scale"]
 
 
 def _cached_stl(path) -> Mesh:
@@ -341,6 +341,16 @@ def _cached_stl(path) -> Mesh:
     key = str(path)
     if key not in _STL_CACHE:
         _STL_CACHE[key] = read_stl(key)
+    return _STL_CACHE[key]
+
+
+def _cached_component(spec: dict) -> Mesh:
+    """A resolved library part, read once per process, mirrored if the resolver said so."""
+    from .scene.build import read_component
+
+    key = ("part", spec["path"], bool(spec.get("mirror")))
+    if key not in _STL_CACHE:
+        _STL_CACHE[key] = read_component(spec, reader=_cached_stl)
     return _STL_CACHE[key]
 
 
@@ -360,9 +370,9 @@ def insert_display(plan: SurgicalPlan, specs: dict) -> dict | None:
     solved = plan.diagnostics.get("insert_thickness_mm")
     if spec is None or solved is None:
         return None
-    key = ("dish", spec["path"])
+    key = ("dish", spec["path"], bool(spec.get("mirror")))
     if key not in _STL_CACHE:
-        _STL_CACHE[key] = dish_geometry(_cached_stl(spec["path"]))
+        _STL_CACHE[key] = dish_geometry(_cached_component(spec))
     floor, dish = _STL_CACHE[key]
     library_mm = (dish - floor) * spec["scale"]
     factor = max(float(solved), 0.5) / library_mm
@@ -382,9 +392,9 @@ def library_dimensions(spec: dict, group: str) -> dict:
     """
     from .core.implant_spec import section_mask
 
-    key = ("dims", spec["path"])
+    key = ("dims", spec["path"], bool(spec.get("mirror")))
     if key not in _STL_CACHE:
-        mesh = _cached_stl(spec["path"])
+        mesh = _cached_component(spec)
         offset = -1.0 if group == "femoral" else 1.0
         mask, xs, ys = section_mask(mesh, np.eye(4), offset_mm=offset)
         gx, gy = np.meshgrid(xs, ys)
@@ -680,7 +690,7 @@ def fit_case(
             continue
         group = "tibial" if name.startswith("tibial") else "femoral"
         posed = gm.transformed(
-            _cached_stl(spec["path"]),
+            _cached_component(spec),
             place(plan.components[name], scales.get(group, spec["scale"]),
                   shifts.get(group)),
         )
@@ -723,14 +733,14 @@ def _insert_check(plan: SurgicalPlan, specs: dict, m: CaseMeasurement,
     shifts = (transforms or {}).get("shifts", {})
     femoral_spec, insert_spec = specs["femoral_component"], specs["tibial_insert"]
     femoral = gm.transformed(
-        _cached_stl(femoral_spec["path"]),
+        _cached_component(femoral_spec),
         place(plan.components["femoral_component"],
               scales.get("femoral", femoral_spec["scale"]), shifts.get("femoral")),
     )
     insert_pose = (place(plan.components["tibial_component"],
                          scales.get("tibial", insert_spec["scale"]), shifts.get("tibial"))
                    @ insert_stretch_matrix(display))
-    insert = gm.transformed(_cached_stl(insert_spec["path"]), insert_pose)
+    insert = gm.transformed(_cached_component(insert_spec), insert_pose)
     try:
         clearance = solve_insert(
             femoral, insert, normal=plan.resections["tibial_proximal"].normal,
