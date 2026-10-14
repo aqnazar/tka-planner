@@ -927,8 +927,10 @@ def findings_case(
             point = offenders[0].position_mm
             bone = offenders[0].definition.bone
             label = offenders[0].id
-        add(finding.code, finding.severity.value, finding.message, "scan",
-            point, bone, label)
+        message = finding.message
+        if context.get("bone") and finding.code.startswith(("MESH_", "LATERALITY_")):
+            message = f"{context['bone'].capitalize()}: {message}"
+        add(finding.code, finding.severity.value, message, "scan", point, bone, label)
 
     estimated = [lm for lm in m.landmarks if lm.status.value == "estimated"]
     if estimated:
