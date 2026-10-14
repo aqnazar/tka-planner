@@ -66,6 +66,7 @@ __all__ = [
     "PLAN_SCHEMA_VERSION",
     "CaseMeasurement",
     "measure_case",
+    "measure_meshes",
     "measure_from_landmarks",
     "plan_case",
     "discrete_sizing",
@@ -192,12 +193,44 @@ def measure_case(
     The automatic landmark estimate always runs. A landmark file is laid over it, so
     each pick replaces its estimate and everything else stays estimated and says so.
     """
-    side = Side.parse(side)
     femur_path, tibia_path = Path(femur_path), Path(tibia_path)
-    case_id = case_id or femur_path.parent.name
-    femur = read_stl(femur_path)
-    tibia = read_stl(tibia_path)
+    return measure_meshes(
+        read_stl(femur_path), read_stl(tibia_path), side,
+        case_id=case_id or femur_path.parent.name,
+        femur_path=femur_path, tibia_path=tibia_path,
+        landmarks_path=landmarks_path, rater=rater, session=session,
+        size_chart=size_chart,
+    )
 
+
+def measure_meshes(
+    femur: Mesh,
+    tibia: Mesh,
+    side,
+    *,
+    case_id: str,
+    femur_path=None,
+    tibia_path=None,
+    landmarks_path=None,
+    rater: str | None = None,
+    session: str | None = None,
+    size_chart=None,
+    mesh_quality: QCReport | None = None,
+) -> CaseMeasurement:
+    """:func:`measure_case` for meshes already in memory.
+
+    The metamorphic tests of the paper move, mirror, decimate and perturb a bone and
+    measure it again; writing each variant to disk only to read it back would test the
+    STL writer as much as the planner. Everything after reading the files is here, so a
+    variant is measured exactly as the application measures the original.
+
+    ``mesh_quality`` is the mesh-quality findings for both bones when the caller already
+    has them for these exact triangles. Welding and counting edges is most of the cost of
+    measuring a knee, and a rigid motion cannot change the topology it reports on, so a
+    caller re-measuring rigidly moved copies may pass the original's findings. Anything
+    that moves vertices non-rigidly must leave it ``None``.
+    """
+    side = Side.parse(side)
     qc = QCReport()
     # Specks of surface detached from the bone and outside it are set aside first:
     # every estimator reads the bone's extremes, and a speck beyond the bone becomes
@@ -209,8 +242,11 @@ def measure_case(
         bones[bone] = mesh
         qc.extend(_for_bone(check_plausible_bone_scale(mesh, bone), bone))
         qc.extend(_for_bone(check_laterality(mesh, side), bone))
-        _, mesh_report = assess_mesh_quality(welded, already_welded=True)
-        qc.extend(_for_bone(mesh_report, bone))
+        if mesh_quality is None:
+            _, mesh_report = assess_mesh_quality(welded, already_welded=True)
+            qc.extend(_for_bone(mesh_report, bone))
+    if mesh_quality is not None:
+        qc.extend(mesh_quality)
     femur, tibia = bones["femur"], bones["tibia"]
     qc.raise_if_errors()
 
@@ -229,7 +265,9 @@ def measure_case(
 
     return measure_from_landmarks(
         landmarks, femur, tibia,
-        femur_path=femur_path, tibia_path=tibia_path, case_id=case_id, side=side,
+        femur_path=femur_path or femur.source_path or "",
+        tibia_path=tibia_path or tibia.source_path or "",
+        case_id=case_id, side=side,
         qc=qc, coverage={"femur": femur_coverage, "tibia": tibia_coverage},
         size_chart=size_chart,
     )

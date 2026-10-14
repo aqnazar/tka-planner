@@ -9,6 +9,7 @@ front ends gives the same plan.
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from tka_planner.pipeline import (
@@ -164,3 +165,88 @@ def test_the_flexion_search_runs_end_to_end_and_writes_into_the_plan(session, tm
                              flexion=flexion)
     assert read_plan(write_plan(document, tmp_path / "plan.json"))[
         "kinematics"]["flexion"]["method"] == "flexion.impingement_search.v1"
+
+
+# Measuring meshes already in memory
+# ----------------------------------------------------------------------
+
+
+def _boxes_around(landmarks):
+    """A femur and a tibia that are boxes around their bones' landmarks.
+
+    Landmark estimation has its own suite; here it is replaced by the synthetic knee, and
+    the boxes only have to be bone-sized and to contain the landmarks they carry.
+    """
+    from tka_planner.geom.mesh import box
+    from tka_planner.geom.resample import subdivide
+
+    meshes = {}
+    for bone, prefixes in (("femur", ("femur.",)), ("tibia", ("tibia.", "fibula."))):
+        points = np.array([lm.position_mm for lm in landmarks
+                           if lm.position_mm is not None and lm.id.startswith(prefixes)])
+        low, high = points.min(axis=0) - 15.0, points.max(axis=0) + 15.0
+        matrix = np.eye(4)
+        matrix[:3, 3] = (low + high) / 2.0
+        # Subdivided, so the sizing sections below the joint find vertices to measure.
+        mesh = box(high - low, matrix)
+        for _ in range(6):
+            mesh = subdivide(mesh)
+        meshes[bone] = mesh
+    return meshes["femur"], meshes["tibia"]
+
+
+@pytest.fixture
+def synthetic_estimate(monkeypatch):
+    import tka_planner.pipeline as pipeline
+    from tests.synthetic import synthetic_knee
+
+    landmarks = synthetic_knee()
+    monkeypatch.setattr(pipeline, "estimate_landmarks",
+                        lambda femur, tibia, side, *, case_id: landmarks)
+    return landmarks
+
+
+def test_measuring_meshes_is_measuring_the_files(synthetic_estimate, tmp_path):
+    from tka_planner.core.meshio import read_stl
+    from tka_planner.geom.mesh import write_stl
+    from tka_planner.pipeline import measure_case, measure_meshes
+
+    femur, tibia = _boxes_around(synthetic_estimate)
+    write_stl(femur, tmp_path / "FD.stl")
+    write_stl(tibia, tmp_path / "TD.stl")
+    from_files = measure_case(tmp_path / "FD.stl", tmp_path / "TD.stl", "left",
+                              case_id="CASE_TEST")
+    in_memory = measure_meshes(read_stl(tmp_path / "FD.stl"),
+                               read_stl(tmp_path / "TD.stl"), "left",
+                               case_id="CASE_TEST")
+    assert {k: m.value for k, m in in_memory.metrics.items()} == \
+        {k: m.value for k, m in from_files.metrics.items()}
+    assert [f.code for f in in_memory.qc.findings] == \
+        [f.code for f in from_files.qc.findings]
+
+
+def test_supplied_mesh_quality_is_used_instead_of_recomputed(synthetic_estimate,
+                                                             monkeypatch):
+    import tka_planner.pipeline as pipeline
+    from tka_planner.core.qc import QCReport, Severity
+
+    def not_again(mesh):
+        raise AssertionError("mesh quality was recomputed")
+
+    monkeypatch.setattr(pipeline, "assess_mesh_quality", not_again)
+    supplied = QCReport()
+    supplied.add("MESH_WATERTIGHT", Severity.INFO, "from the original")
+    femur, tibia = _boxes_around(synthetic_estimate)
+    measurement = pipeline.measure_meshes(femur, tibia, "left", case_id="CASE_TEST",
+                                          mesh_quality=supplied)
+    assert "MESH_WATERTIGHT" in [f.code for f in measurement.qc.findings]
+
+
+def test_measuring_meshes_still_refuses_an_implausible_bone(synthetic_estimate):
+    from tka_planner.core.qc import QualityControlError
+    from tka_planner.geom.mesh import box
+    from tka_planner.pipeline import measure_meshes
+
+    _, tibia = _boxes_around(synthetic_estimate)
+    with pytest.raises(QualityControlError):
+        measure_meshes(box(2.0), tibia, "left", case_id="CASE_TEST")
