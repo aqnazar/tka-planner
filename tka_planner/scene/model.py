@@ -21,10 +21,13 @@ import numpy as np
 
 from tka_planner.core.meshio import Mesh
 
-__all__ = ["FEMORAL", "TIBIAL", "Node", "Scene", "SceneDelta", "mesh_id"]
+__all__ = ["FEMORAL", "TIBIAL", "Node", "Scene", "SceneDelta", "mesh_id",
+           "VERTEX_ATTRIBUTES"]
 
 FEMORAL = "femoral"
 TIBIAL = "tibial"
+# Per-vertex values a mesh may carry in its metadata, for the viewer to draw.
+VERTEX_ATTRIBUTES = ("vertex_colours", "vertex_values_mm")
 
 
 def _identity() -> np.ndarray:
@@ -142,4 +145,12 @@ def mesh_id(mesh: Mesh) -> str:
     digest = hashlib.sha256()
     digest.update(np.ascontiguousarray(mesh.vertices, dtype=np.float64).tobytes())
     digest.update(np.ascontiguousarray(mesh.faces, dtype=np.int64).tobytes())
+    # A colour map is the same triangles with different colours after a re-plan, and
+    # the viewer caches a mesh for ever under its id, so what it carries per vertex
+    # must be part of the id too.
+    for key in VERTEX_ATTRIBUTES:
+        values = (mesh.metadata or {}).get(key)
+        if values is not None:
+            digest.update(key.encode("ascii"))
+            digest.update(np.ascontiguousarray(values, dtype=np.float32).tobytes())
     return digest.hexdigest()[:16]

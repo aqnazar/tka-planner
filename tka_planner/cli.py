@@ -23,12 +23,14 @@ from .core.qc import QCReport, QualityControlError, check_landmarks_on_mesh
 from .core.sides import Side
 from .pipeline import (
     discrete_sizing,
-    fit_case,
+    findings_case,
+    fit_case_with_grids,
     implant_spec_case,
     measure_case,
     plan_case,
     plan_document,
     render_case_report,
+    resection_table_case,
     write_implant_spec,
     write_plan,
 )
@@ -91,7 +93,10 @@ def _measure(args: argparse.Namespace) -> int:
     )
     discrete = discrete_sizing(m)
     spec = implant_spec_case(m, surgical, sizing, args.library)
-    fit = fit_case(m, surgical, sizing, args.library, args.implant_mode)
+    fit, grids = fit_case_with_grids(m, surgical, sizing, args.library, args.implant_mode)
+    box = spec["femoral_component"].get("cut_box")
+    table = resection_table_case(m, surgical, args.library, box)
+    findings = findings_case(m, surgical, sizing, box=box, fit=fit)
     controls = {
         "philosophy": args.philosophy,
         "size_override": args.size or "",
@@ -102,11 +107,14 @@ def _measure(args: argparse.Namespace) -> int:
         "implant_mode": args.implant_mode,
     }
 
-    report_path = write_report(render_case_report(m, surgical, sizing),
-                               output / "report.html")
+    report_path = write_report(
+        render_case_report(m, surgical, sizing, fit=fit, fit_grids=grids,
+                           implant_spec=spec, resection_table=table,
+                           findings=findings),
+        output / "report.html")
     plan_path = write_plan(
         plan_document(m, surgical, sizing, fit=fit, implant_spec=spec,
-                      controls=controls),
+                      controls=controls, resection_table=table, findings=findings),
         output / "plan.json",
     )
     spec_path = write_implant_spec(spec, output / "implant_spec.json")
@@ -136,6 +144,8 @@ def _measure(args: argparse.Namespace) -> int:
               f"{diagnostics['tray_thickness_mm']:.1f} mm); extension gap medial "
               f"{diagnostics['extension_gap_medial_mm']:4.1f} / lateral "
               f"{diagnostics['extension_gap_lateral_mm']:4.1f} mm")
+    print()
+    print(_resection_table_text(table))
     print(f"  plateau AP       {m.tibial_measure.ap_mm:5.1f} mm  "
           f"(naive bbox would say "
           f"{m.tibial_measure.diagnostics['naive_proximal_bbox_ap_mm']:.1f})")
@@ -171,6 +181,27 @@ def _measure(args: argparse.Namespace) -> int:
     print(f"  -> {spec_path}")
     print(f"  -> {report_path}")
     return 0
+
+
+def _resection_table_text(table: dict) -> str:
+    """The resection table for the console, one row per cut."""
+    from .core.resection_table import ROW_LABELS, angle_text
+
+    def mm(value):
+        return "    -" if value is None else f"{value:5.1f}"
+
+    lines = ["  resection table (mm off the bone; medial / lateral)"]
+    for row in table.get("rows", []):
+        line = (f"    {ROW_LABELS.get(row['cut'], row['cut']):18s} "
+                f"{mm(row['medial_mm'])} / {mm(row['lateral_mm'])}")
+        if row.get("angle_deg"):
+            line += f"   {angle_text(row['angle_deg'])} deg"
+        lines.append(line)
+        if row.get("highest_mm"):
+            lines.append(f"    {'  highest bone':18s} {mm(row['highest_mm']['medial'])}"
+                         f" / {mm(row['highest_mm']['lateral'])}")
+    lines += [f"    note: {note}" for note in table.get("notes", [])]
+    return "\n".join(lines)
 
 
 def _landmark_template(args: argparse.Namespace) -> int:

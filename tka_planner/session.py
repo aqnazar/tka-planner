@@ -64,7 +64,7 @@ BOTH_BONES = frozenset({
 # Controls that move nothing a boolean depends on, in any mode.
 NO_BONES = frozenset({
     "insert_thickness_delta_mm", "show_planes", "show_axes",
-    "show_landmarks", "isolate_landmarks", "show_cutting_blocks",
+    "show_landmarks", "isolate_landmarks", "show_cutting_blocks", "show_fit_map",
 })
 # Controls that move a component without moving a resection plane.
 COMPONENT_ONLY = ("_shift_", "_rotation_")
@@ -106,6 +106,8 @@ class Controls:
     # of the bone they are cutting. Off by default: the first thing a plan should show
     # is the anatomy and where the implant sits on it.
     show_cutting_blocks: bool = False
+    # The fit on each cut as a colour map, drawn once Commit has measured it.
+    show_fit_map: bool = True
 
 
 @dataclass
@@ -150,6 +152,13 @@ class PlanningSession:
     plan = None
     sizing = None
     stale: bool = False
+    # The fit and its maps, measured at the last commit, and the plan they were
+    # measured for: a re-plan that moves a component makes them out of date.
+    fit = None
+    fit_grids = None
+    fit_key = None
+    fit_seconds = None
+    fit_note = None
 
     # ------------------------------------------------------------------
     # Opening
@@ -301,6 +310,8 @@ class PlanningSession:
 
         if self.bones_affected_by(tuple(changes)):
             self.stale = True
+        if not self.controls.isolate_landmarks:
+            delta = delta.merge(self._fit_map_visibility())
 
         delta.scalars.update(self._scalars())
         return delta
@@ -405,7 +416,7 @@ class PlanningSession:
             f"Cuts share ML slope|"
             f"{'yes' if diagnostics['cut_ml_slope_shared'] else 'no'}",
             "",
-            "HEAD|Resection depths",
+            "HEAD|Cut depths at the datum landmarks",
             f"Femoral medial|{femoral.medial_depth_mm:.1f} mm",
             f"Femoral lateral|{femoral.lateral_depth_mm:.1f} mm",
             f"Tibial medial|{tibial.medial_depth_mm:.1f} mm",
@@ -424,6 +435,9 @@ class PlanningSession:
             ]
         elif box is not None:
             lines.append(f"Femoral box|not placed: {box['reason']}")
+
+        lines += self._table_lines()
+        lines += self._fit_lines()
 
         if diagnostics.get("insert_thickness_mm") is not None:
             lines += [
@@ -486,6 +500,246 @@ class PlanningSession:
         if self.stale:
             lines.append("WARN|Geometry does not match the plan: press Commit")
         return lines
+
+    def _table_lines(self) -> list:
+        """The resection table in the sidebar: medial / lateral, then the angles."""
+        from tka_planner.core.resection_table import ROW_LABELS
+
+        table = self.resection_table
+        if table is None or not table.get("rows"):
+            return []
+
+        def pair(medial, lateral):
+            def one(value):
+                return "-" if value is None else f"{value:.1f}"
+            return f"{one(medial)} / {one(lateral)} mm"
+
+        lines = ["", "HEAD|Resection table (medial / lateral)"]
+        angles = ["", "HEAD|Cut angles"]
+        for row in table["rows"]:
+            label = ROW_LABELS.get(row["cut"], row["cut"])
+            if row["cut"] == "tibial":
+                label = "Tibia at stylus point"
+            lines.append(f"{label}|{pair(row['medial_mm'], row['lateral_mm'])}")
+            if row.get("highest_mm"):
+                highest = row["highest_mm"]
+                lines.append(f"Tibia highest bone|"
+                             f"{pair(highest['medial'], highest['lateral'])}")
+            a = row.get("angle_deg") or {}
+            if row["cut"] == "distal":
+                angles.append(f"Distal|varus {a.get('varus_from_mechanical_axis', 0):+.1f}"
+                              f", flexion {a.get('flexion', 0):+.1f} deg")
+            elif row["cut"] == "posterior" and a:
+                angles.append(f"Posterior, ER from PCA|"
+                              f"{a['external_rotation_from_posterior_condylar_axis']:+.1f}"
+                              f" deg")
+            elif row["cut"] == "anterior" and a:
+                angles.append(f"Anterior flare|{a['flare_from_component_axis']:.1f} deg")
+            elif row["cut"] == "tibial":
+                angles.append(f"Tibial|varus {a.get('varus_from_mechanical_axis', 0):+.1f}"
+                              f", slope {a.get('posterior_slope', 0):.1f} deg")
+        return lines + angles
+
+    def _fit_lines(self) -> list:
+        """The fit at the last commit, and whether it still describes this plan."""
+        if self.fit is None:
+            if self.fit_note:
+                return ["", "HEAD|Fit on the cuts", f"WARN|{self.fit_note}"]
+            return []
+        current = self.fit_is_current
+        lines = ["", "HEAD|Fit on the cuts" + ("" if current else " (out of date)")]
+        for name, label in (("tibial_component", "Tray"),
+                            ("femoral_component", "Femoral")):
+            record = self.fit.get(name)
+            if not record:
+                continue
+            lines += [
+                f"{label} coverage|{100 * record['coverage_fraction']:.1f}%",
+                f"{label} overhang max|{record['max_overhang_mm']:.1f} mm",
+                f"{label} bone uncovered max|{record['max_underhang_mm']:.1f} mm",
+            ]
+        if not current:
+            lines.append("WARN|The fit is of the last committed plan: press Commit")
+        return lines
+
+    # ------------------------------------------------------------------
+    # The fit, the resection table and the findings
+    # ------------------------------------------------------------------
+
+    @property
+    def resection_table(self) -> dict | None:
+        """The resection table on the current plan, measured on the bone.
+
+        Kept until the femoral component or the tibial cut moves: a display toggle or an
+        insert change re-plans without moving either.
+        """
+        import numpy as np
+
+        from tka_planner import pipeline
+
+        if self.plan is None:
+            return None
+        tibial = self.plan.resections["tibial_proximal"]
+        box = self.femoral_cut_box
+        key = (id(self.measurement), id(box),
+               np.asarray(self.plan.components["femoral_component"], float).tobytes(),
+               np.asarray(tibial.point, float).tobytes(),
+               np.asarray(tibial.normal, float).tobytes())
+        cached = getattr(self, "_table_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, pipeline.resection_table_case(
+                self.measurement, self.plan, self.library, box))
+            self._table_cache = cached
+        return cached[1]
+
+    def refresh_fit(self) -> SceneDelta:
+        """Measure the fit on the current plan and draw it as a colour map on each cut.
+
+        Run on Commit rather than on every change of a control: it slices both bones and
+        both components, a second or two on a real knee. The maps are the fit's own
+        grids, so what is drawn is exactly what the numbers were read from.
+        """
+        import time
+
+        from tka_planner.pipeline import fit_case_with_grids
+        from tka_planner.scene.fitmap import FIT_MAP_NODES, fit_map_mesh
+        from tka_planner.scene.model import Node
+
+        delta = SceneDelta()
+        if self.library is None or self.plan is None:
+            return delta
+        start = time.perf_counter()
+        try:
+            fit, grids = fit_case_with_grids(self.measurement, self.plan, self.sizing,
+                                             self.library, self.controls.implant_mode,
+                                             transforms=self.component_scales)
+        except ValueError as error:
+            fit, grids = None, {}
+            self.fit_note = f"The fit could not be measured: {error}"
+        self.fit, self.fit_grids, self.fit_key = fit, grids, self._fit_key()
+        if fit is not None:
+            self.fit_note = None
+
+        for component, (name, set_id) in FIT_MAP_NODES.items():
+            grid = grids.get(component)
+            mesh = fit_map_mesh(grid) if grid is not None else None
+            node = self.scene.nodes.get(name)
+            if mesh is None:
+                if node is not None and node.visible:
+                    node.visible = False
+                    delta.visibility[name] = False
+                continue
+            if node is None:
+                node = Node(name=name, set_id=set_id, colour=(1.0, 1.0, 1.0),
+                            visible=False,
+                            tags={"fit_map": True, "group": set_id,
+                                  "resolution_mm": mesh.metadata["resolution_mm"]})
+                self.scene.add(node, mesh)
+                delta.meshes[name] = node.mesh_id
+            else:
+                delta.meshes[name] = self.scene.replace_mesh(name, mesh)
+        self.fit_seconds = time.perf_counter() - start
+        return delta.merge(self._fit_map_visibility(force=True))
+
+    def _fit_key(self) -> str:
+        """What the fit depends on: the components' poses, the cuts, the implant."""
+        import hashlib
+
+        import numpy as np
+
+        digest = hashlib.sha256()
+        for name in sorted(self.plan.components):
+            digest.update(np.asarray(self.plan.components[name], float).tobytes())
+        for name in sorted(self.plan.resections):
+            resection = self.plan.resections[name]
+            digest.update(np.asarray(resection.point, float).tobytes())
+            digest.update(np.asarray(resection.normal, float).tobytes())
+        digest.update(f"{self.controls.implant_mode}|{self.sizing.size_parameter!r}|"
+                      f"{self.plan.diagnostics.get('insert_thickness_mm')!r}"
+                      .encode("utf-8"))
+        return digest.hexdigest()
+
+    @property
+    def fit_is_current(self) -> bool:
+        """Whether the last measured fit is of the plan as it stands."""
+        return (self.fit is not None and self.plan is not None
+                and self.fit_key == self._fit_key())
+
+    def _fit_map_visibility(self, force: bool = False) -> SceneDelta:
+        """Show the maps when asked for and still true of the plan; hide them otherwise."""
+        from tka_planner.scene.fitmap import FIT_MAP_NODES
+
+        delta = SceneDelta()
+        if self.scene is None:
+            return delta
+        show = bool(self.controls.show_fit_map) and self.fit_is_current
+        for name, _ in FIT_MAP_NODES.values():
+            node = self.scene.nodes.get(name)
+            if node is not None and (node.visible != show or force):
+                node.visible = show
+                delta.visibility[name] = show
+        return delta
+
+    def fit_map_state(self) -> dict:
+        """What the viewer needs beside the maps themselves: the legend and its status."""
+        from tka_planner.core.fit import OVERHANG_FLAG_MM
+        from tka_planner.scene.fitmap import FIT_MAP_NODES, legend
+
+        drawn = [name for name, _ in FIT_MAP_NODES.values()
+                 if self.scene is not None and name in self.scene.nodes]
+        record = legend(OVERHANG_FLAG_MM)
+        if drawn:
+            record["resolution_mm"] = self.scene.nodes[drawn[0]].tags.get(
+                "resolution_mm")
+        return {
+            "available": bool(drawn) and self.fit is not None,
+            "current": self.fit_is_current,
+            "visible": any(self.scene.nodes[name].visible for name in drawn),
+            "nodes": drawn,
+            "legend": record,
+            "seconds": None if self.fit_seconds is None else round(self.fit_seconds, 2),
+            "note": self.fit_note,
+        }
+
+    def findings(self, fit=None) -> list:
+        """Every finding on the current plan, each with its place where it has one.
+
+        The fit's findings come from ``fit`` when given, and otherwise from the last
+        commit's fit while it still describes this plan.
+        """
+        from tka_planner.pipeline import findings_case
+
+        if self.plan is None:
+            return []
+        if fit is None and self.fit_is_current:
+            fit = self.fit
+        return findings_case(self.measurement, self.plan, self.sizing,
+                             box=self.femoral_cut_box, fit=fit)
+
+    def report_html(self) -> str:
+        """The HTML report on the current plan, with the fit measured if it is not."""
+        from tka_planner.pipeline import (
+            fit_case_with_grids,
+            implant_spec_case,
+            render_case_report,
+        )
+
+        fit, grids = (self.fit, self.fit_grids) if self.fit_is_current else (None, None)
+        if fit is None and self.library is not None:
+            try:
+                fit, grids = fit_case_with_grids(self.measurement, self.plan,
+                                                 self.sizing, self.library,
+                                                 self.controls.implant_mode,
+                                                 transforms=self.component_scales)
+            except ValueError:
+                fit, grids = None, None
+        return render_case_report(
+            self.measurement, self.plan, self.sizing, fit=fit, fit_grids=grids,
+            implant_spec=implant_spec_case(self.measurement, self.plan, self.sizing,
+                                           self.library),
+            resection_table=self.resection_table,
+            findings=self.findings(fit),
+        )
 
     # ------------------------------------------------------------------
     # Internals

@@ -131,6 +131,11 @@ CONTROL_SCHEMA = (
              "help": "Show the instrument that would realise the cut. It is the size "
                      "of the block rather than of the resection, so it stands in "
                      "front of the bone."},
+            {"name": "show_fit_map", "label": "Fit map", "kind": "bool",
+             "help": "Colour each cut by how the component fits it: red where the "
+                     "component overhangs the bone, blue where bone is left "
+                     "uncovered. Measured on Commit; hidden while the plan has moved "
+                     "since."},
             {"name": "isolate_landmarks", "label": "Isolate landmarks", "kind": "bool",
              "help": "Hide everything but the landmarks, for watching how they move "
                      "relative to each other through a trial pose."},

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tka_planner.pipeline import (
+    DOCUMENT_KEYS,
     PLAN_SCHEMA,
     PLAN_SCHEMA_VERSION,
     REQUIRED_KEYS,
@@ -42,7 +43,8 @@ def test_the_application_export_has_the_command_line_shape(session, tmp_path):
     written = export_session(session, tmp_path, write_meshes=False)
     exported = json.loads(Path(written["plan"]).read_text())
 
-    assert set(exported) == set(cli_style(session)) == set(REQUIRED_KEYS)
+    assert set(exported) == set(cli_style(session)) == set(DOCUMENT_KEYS)
+    assert set(REQUIRED_KEYS) <= set(DOCUMENT_KEYS)
     assert set(exported["sizing"]) == set(cli_style(session)["sizing"])
     assert exported["controls"]["philosophy"] == "mechanical"
 

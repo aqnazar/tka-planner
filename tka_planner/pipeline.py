@@ -72,6 +72,9 @@ __all__ = [
     "render_case_report",
     "find_size_chart",
     "fit_case",
+    "fit_case_with_grids",
+    "findings_case",
+    "resection_table_case",
     "box_design",
     "femoral_cut_box_case",
     "implant_spec_case",
@@ -98,6 +101,10 @@ REQUIRED_KEYS = (
     "geometry",
     "geometry_matches_plan", "intended_use",
 )
+# Written into every document since they were added within version 2, but not required
+# of one, so a version-2 file written before them still reads.
+ADDED_KEYS = ("findings", "resection_table")
+DOCUMENT_KEYS = REQUIRED_KEYS + ADDED_KEYS
 REQUIRED_SIZING_KEYS = (
     "parametric", "discrete", "femoral_measurement", "tibial_measurement",
 )
@@ -189,19 +196,19 @@ def measure_case(
     bones = {}
     for mesh, bone in ((femur, "femur"), (tibia, "tibia")):
         mesh, welded, fragment_report = separate_detached_fragments(mesh, bone)
-        qc.extend(fragment_report)
+        qc.extend(_for_bone(fragment_report, bone))
         bones[bone] = mesh
-        qc.extend(check_plausible_bone_scale(mesh, bone))
-        qc.extend(check_laterality(mesh, side))
+        qc.extend(_for_bone(check_plausible_bone_scale(mesh, bone), bone))
+        qc.extend(_for_bone(check_laterality(mesh, side), bone))
         _, mesh_report = assess_mesh_quality(welded, already_welded=True)
-        qc.extend(mesh_report)
+        qc.extend(_for_bone(mesh_report, bone))
     femur, tibia = bones["femur"], bones["tibia"]
     qc.raise_if_errors()
 
     femur_coverage, femur_report = assess_femur_coverage(femur)
     tibia_coverage, tibia_report = assess_tibia_coverage(tibia)
-    qc.extend(femur_report)
-    qc.extend(tibia_report)
+    qc.extend(_for_bone(femur_report, "femur"))
+    qc.extend(_for_bone(tibia_report, "tibia"))
 
     landmarks = estimate_landmarks(femur, tibia, side, case_id=case_id)
     if landmarks_path:
@@ -217,6 +224,21 @@ def measure_case(
         qc=qc, coverage={"femur": femur_coverage, "tibia": tibia_coverage},
         size_chart=size_chart,
     )
+
+
+def _for_bone(report: QCReport, bone: str) -> QCReport:
+    """The same findings, each saying which bone it is about.
+
+    A mesh check does not know which bone it was handed; without this a reader of the
+    plan, or a viewer asked to show the finding, could not tell the femur's open edge
+    from the tibia's.
+    """
+    from dataclasses import replace
+
+    tagged = QCReport()
+    tagged.findings = [replace(finding, context={"bone": bone, **finding.context})
+                       for finding in report.findings]
+    return tagged
 
 
 def measure_from_landmarks(
@@ -479,6 +501,73 @@ def _femur_samples(femur: Mesh) -> np.ndarray:
 _SAMPLES: dict = {}
 
 
+def resection_table_case(measurement: CaseMeasurement, plan: SurgicalPlan,
+                         library=None, box: dict | None = None) -> dict:
+    """The resection table in the standard layout, measured on this patient's bone.
+
+    How each value is measured is in :mod:`tka_planner.core.resection_table`. ``box`` is
+    :func:`femoral_cut_box_case`'s result, passed in by a caller that already has it;
+    it is placed here otherwise. Without a placed box only the distal and tibial rows
+    are measured.
+    """
+    from .core.resection_table import BoxProfile, ResectionTable
+
+    m = measurement
+    if box is None:
+        box = femoral_cut_box_case(m, plan, library)
+    profile = None
+    if box is not None and box.get("available"):
+        design = box_design(library)
+        try:
+            profile = BoxProfile.from_box(box, design.chamfer_deg) if design else None
+        except KeyError:
+            profile = None
+
+    femoral_cut = plan.resections["femoral_distal"]
+    tibial_cut = plan.resections["tibial_proximal"]
+    frame = m.femoral_frame
+    try:
+        rows = _resection_rows(m, plan, profile, femoral_cut, tibial_cut, frame)
+    except ValueError as error:
+        return ResectionTable(rows=(), notes=(f"Not measured: {error}",)).to_dict()
+    notes = []
+    if profile is None:
+        notes.append(box["reason"] if box and not box.get("available") else
+                     "No implant library with a box design, so only the distal and "
+                     "tibial cuts are planned.")
+    return ResectionTable(rows=tuple(rows), notes=tuple(notes)).to_dict()
+
+
+def _resection_rows(m, plan, profile, femoral_cut, tibial_cut, frame) -> list:
+    from .core.resection_table import (
+        coronal_angle_deg,
+        femoral_resection_rows,
+        tibial_resection_rows,
+    )
+
+    rows = femoral_resection_rows(
+        m.femur, plan.components["femoral_component"],
+        medial_sign=m.side.medial_sign, samples=_femur_samples(m.femur),
+        profile=profile,
+        distal_angles={
+            "varus_from_mechanical_axis": round(coronal_angle_deg(
+                femoral_cut.normal, frame.z_proximal, frame.medial), 2),
+            "valgus_from_anatomical_axis": round(
+                float(plan.distal_femoral_valgus_cut_deg), 2),
+            "flexion": round(float(plan.diagnostics.get("femoral_flexion_deg", 0.0)), 2),
+        },
+    )
+    tibial = m.tibial_frame
+    rows += tibial_resection_rows(
+        m.tibia, tibial_cut.point, tibial_cut.normal,
+        medial=tibial.medial, anterior=tibial.x_anterior, axis=tibial.z_proximal,
+        plateau_points=dict(zip(("medial", "lateral"), m.landmarks.require(
+            "tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"))),
+        slope_deg=plan.tibial_slope_deg,
+    )
+    return rows
+
+
 def implant_spec_case(
     measurement: CaseMeasurement,
     plan: SurgicalPlan,
@@ -665,17 +754,42 @@ def fit_case(
     ``None`` with no library, and names any component the library lacks rather than
     guessing its shape.
     """
+    result, _ = fit_case_with_grids(measurement, plan, sizing, library, mode)
+    return result
+
+
+def fit_case_with_grids(
+    measurement: CaseMeasurement,
+    plan: SurgicalPlan,
+    sizing: SizingDecision,
+    library,
+    mode: str = "patient_specific",
+    *,
+    transforms=None,
+) -> tuple[dict | None, dict]:
+    """:func:`fit_case`, and the signed-distance grid of each component's fit.
+
+    ``transforms`` is :func:`component_scales`' result for this plan and mode, for a
+    caller that already has it (the application keeps it per plan); measuring the cuts
+    again for it costs over half a second on a real knee.
+
+    The grids are :class:`~tka_planner.core.fit.FitField` objects by component name,
+    the fields the fit's maxima were read from, for drawing the fit as a colour map.
+    """
     from .core.fit import section_fit
     from .geom import mesh as gm
     from .scene.build import place, resolve_component_meshes
 
+    grids: dict = {}
     if library is None:
-        return None
+        return None, grids
     m = measurement
     specs = resolve_component_meshes(
         library, chart=m.chart, sizing=sizing, side=str(m.side)
     )
-    transforms = component_scales(m, plan, sizing, library, mode) or {}
+    if transforms is None:
+        transforms = component_scales(m, plan, sizing, library, mode)
+    transforms = transforms or {}
     scales = transforms.get("scales", {})
     shifts = transforms.get("shifts", {})
     result = {"implant_mode": mode if scales else "catalogue",
@@ -699,9 +813,10 @@ def fit_case(
             cut=cut, bone=bone, component=posed,
             point=resection.point, normal=resection.normal,
             component_side=side_of_cut,
-            lateral=frame.lateral, anterior=frame.x_anterior,
+            lateral=frame.lateral, anterior=frame.x_anterior, keep_grid=True,
         )
         result[name] = fit.to_dict()
+        grids[name] = fit.grid
         result["library_sizes"][name] = {
             "source_size": spec["source_size"], "scale": round(spec["scale"], 6),
         }
@@ -711,7 +826,7 @@ def fit_case(
             result["library_sizes"][name]["shift_mm"] = [
                 round(float(v), 3) for v in shifts[group]]
     result["insert"] = _insert_check(plan, specs, m, transforms)
-    return result
+    return result, grids
 
 
 def _insert_check(plan: SurgicalPlan, specs: dict, m: CaseMeasurement,
@@ -771,6 +886,96 @@ def _insert_check(plan: SurgicalPlan, specs: dict, m: CaseMeasurement,
     }
 
 
+_SET_FOR_BONE = {"femur": "femoral", "tibia": "tibial", "fibula": "tibial"}
+
+
+def findings_case(
+    measurement: CaseMeasurement,
+    plan: SurgicalPlan,
+    sizing: SizingDecision,
+    *,
+    box: dict | None = None,
+    fit: dict | None = None,
+) -> list:
+    """Every finding about this plan, in one list, each with where it is if it has a
+    place.
+
+    The scan's quality control comes first, then what the plan, the sizing, the femoral
+    box and the fit found. Each entry is ``{code, severity, message, source, location}``;
+    ``location`` is ``None`` or ``{"point_mm", "set", "label"}``, a point in scan
+    millimetres and the bone set it moves with, so a viewer can turn to it. The viewer
+    shows this list as it comes; nothing in it is worked out there.
+    """
+    m = measurement
+    by_id = {landmark.id: landmark for landmark in m.landmarks}
+    findings = []
+
+    def add(code, severity, message, source, point=None, bone=None, label=None):
+        location = None
+        if point is not None:
+            location = {"point_mm": [round(float(v), 2) for v in point],
+                        "set": _SET_FOR_BONE.get(bone, bone or "femoral"),
+                        "label": label or code}
+        findings.append({"code": code, "severity": severity, "message": message,
+                         "source": source, "location": location})
+
+    for finding in m.qc.findings:
+        context = finding.context
+        point, bone, label = context.get("location_mm"), context.get("bone"), None
+        offenders = [by_id[i] for i in context.get("offenders", []) if i in by_id]
+        if point is None and offenders:
+            point = offenders[0].position_mm
+            bone = offenders[0].definition.bone
+            label = offenders[0].id
+        add(finding.code, finding.severity.value, finding.message, "scan",
+            point, bone, label)
+
+    estimated = [lm for lm in m.landmarks if lm.status.value == "estimated"]
+    if estimated:
+        add("LANDMARKS_ESTIMATED", "info",
+            f"{len(estimated)} landmarks are machine estimates awaiting review, not "
+            f"picks.", "landmarks")
+    for warning in plan.warnings:
+        add("PLAN_WARNING", "warning", warning, "plan")
+    for flag in sizing.flags:
+        add(f"SIZING_{str(flag).upper()}", "warning", f"Sizing: {flag}.", "sizing")
+
+    if box is not None and not box.get("available"):
+        add("FEMORAL_BOX_NOT_PLACED", "warning",
+            f"The femoral cut box was not placed: {box.get('reason')}", "plan")
+    elif box is not None:
+        for warning in box.get("warnings", []):
+            add("FEMORAL_BOX_WARNING", "warning", warning, "plan")
+        if box.get("anterior_notch_mm", 0.0) > 0.5:
+            add("ANTERIOR_NOTCH", "warning",
+                f"The anterior femoral cut notches the cortex by "
+                f"{box['anterior_notch_mm']:.1f} mm.", "plan")
+
+    for name, set_id, words in (("tibial_component", "tibial", "tibial tray"),
+                                ("femoral_component", "femoral", "femoral component")):
+        record = (fit or {}).get(name)
+        if not record:
+            continue
+        for flag in record.get("flags", []):
+            zone = flag.removeprefix("OVERHANG_").lower()
+            over = record["zones"].get(zone, {}).get("max_overhang_mm")
+            add(flag, "warning",
+                f"The {words} overhangs the bone by up to {over:.1f} mm in the {zone} "
+                f"zone (flagged above {record['diagnostics']['overhang_flag_mm']:g} mm).",
+                "fit", record.get("extreme_points_mm", {}).get(f"overhang_{zone}"),
+                set_id, f"{words} {zone} overhang")
+    insert = (fit or {}).get("insert") or {}
+    if "COMPONENT_COLLISION" in insert.get("flags", []):
+        add("COMPONENT_COLLISION", "warning", insert["note"], "fit",
+            (insert.get("clearance") or {}).get("contact_point_mm"), "tibia",
+            "insert contact")
+    for name in (fit or {}).get("missing", []):
+        add("COMPONENT_NOT_IN_LIBRARY", "warning",
+            f"The implant library has no {name.replace('_', ' ')}, so its fit is not "
+            f"checked.", "fit")
+    return findings
+
+
 def discrete_sizing(measurement: CaseMeasurement) -> SizingDecision:
     """The legacy round-down chart size, kept beside every plan for comparison."""
     return select_discrete_size(
@@ -791,6 +996,8 @@ def plan_document(
     trial: dict | None = None,
     geometry: dict | None = None,
     geometry_matches_plan: bool | None = None,
+    resection_table: dict | None = None,
+    findings: list | None = None,
 ) -> dict:
     """The one ``plan.json`` shape.
 
@@ -801,8 +1008,18 @@ def plan_document(
     ``controls`` and ``trial`` are the application's settings, and ``geometry`` its
     last commit. The command line has none of them and writes ``None``, so the keys are
     always present and a reader never has to ask which front end wrote the file.
+
+    ``resection_table`` (:func:`resection_table_case`) and ``findings``
+    (:func:`findings_case`) are measured here when not given. Both were added within
+    schema version 2: they are new keys beside the old ones, so a reader of an earlier
+    version-2 file loses nothing and :func:`validate_plan_document` does not require
+    them.
     """
     m = measurement
+    if resection_table is None:
+        resection_table = resection_table_case(m, plan)
+    if findings is None:
+        findings = findings_case(m, plan, sizing, fit=fit)
     return {
         "schema": PLAN_SCHEMA,
         "schema_version": PLAN_SCHEMA_VERSION,
@@ -829,6 +1046,8 @@ def plan_document(
             "tibial_measurement": m.tibial_measure.to_dict(),
         },
         "quality_control": m.qc.to_dict(),
+        "findings": findings,
+        "resection_table": resection_table,
         "landmarks": {
             "counts": m.landmark_counts(),
             "source": _plain(m.landmarks.source),
@@ -904,12 +1123,29 @@ def read_plan(path) -> dict:
 
 
 def render_case_report(
-    measurement: CaseMeasurement, plan: SurgicalPlan, sizing: SizingDecision
+    measurement: CaseMeasurement,
+    plan: SurgicalPlan,
+    sizing: SizingDecision,
+    *,
+    fit: dict | None = None,
+    fit_grids: dict | None = None,
+    implant_spec: dict | None = None,
+    resection_table: dict | None = None,
+    findings: list | None = None,
 ) -> str:
-    """The one HTML report, with the same sections whichever front end asks."""
+    """The one HTML report, with the same sections whichever front end asks.
+
+    The resection table and the findings are measured here when not given, so even a
+    report written without an implant library carries them. The fit, its map and the
+    implant's dimensions need the library, and a caller with one passes them in.
+    """
     from .report.html import render_report
 
     m = measurement
+    if resection_table is None:
+        resection_table = resection_table_case(m, plan)
+    if findings is None:
+        findings = findings_case(m, plan, sizing, fit=fit)
     return render_report(
         case_id=m.case_id,
         side=str(m.side),
@@ -930,6 +1166,11 @@ def render_case_report(
         ],
         landmark_summary=m.landmark_counts(),
         tool_version=__version__,
+        resection_table=resection_table,
+        implant_spec=implant_spec,
+        fit=fit,
+        fit_grids=fit_grids,
+        findings=findings,
     )
 
 

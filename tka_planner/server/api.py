@@ -112,6 +112,8 @@ class Api:
             return self.export(entry, body)
         elif len(tail) == 2 and tail[0] == "meshes" and method == "GET":
             return self.mesh(entry, tail[1])
+        elif tail == ["report"] and method == "GET":
+            return self.report(entry)
 
         raise ApiError(404, f"No route for {method} on session {session_id}")
 
@@ -202,6 +204,14 @@ class Api:
         )
         return {"written": written, "out": str(Path(out).resolve())}
 
+    def report(self, entry) -> Binary:
+        """The HTML report on the current plan, to read in the browser beside the plan.
+
+        The same document Export writes, so what is read here is what is kept.
+        """
+        return Binary("text/html; charset=utf-8",
+                      entry.session.report_html().encode("utf-8"))
+
     def mesh(self, entry, filename: str) -> Binary:
         """One mesh as binary glTF, addressed by content hash.
 
@@ -229,6 +239,10 @@ def _envelope(entry, delta=None, **extra) -> dict:
         "delta": _delta_payload(entry, delta or SceneDelta()),
         "clip": clip_planes(session.plan),
         "report": session.report_lines(),
+        # Every finding with its place, and the fit map's legend and status: the viewer
+        # lists the one and draws the other, and works out neither.
+        "findings": session.findings(),
+        "fit_map": session.fit_map_state(),
         "controls": asdict(session.controls),
         "trial": asdict(session.trial),
         "stale": bool(session.stale),

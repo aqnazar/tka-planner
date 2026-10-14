@@ -182,6 +182,14 @@ class SessionManager:
         # Every bone is now either freshly cut, restored from the store or already
         # correct, so the scene matches the plan whatever route each bone took.
         session.stale = False
+        # The fit is measured on the plan rather than on the cut geometry, so it is
+        # refreshed whenever the plan moved since it was last measured, whether or not
+        # any bone needed cutting: a component slide in plane mode cuts nothing but
+        # changes the fit.
+        if not session.fit_is_current:
+            outcome.delta = outcome.delta.merge(session.refresh_fit())
+            if session.fit_seconds is not None and session.library is not None:
+                outcome.notes.append(f"Fit measured in {session.fit_seconds:.2f} s")
         self._record_plan(session)
         outcome.delta.notes.extend(outcome.notes)
         return outcome

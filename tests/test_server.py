@@ -503,6 +503,98 @@ def test_exporting_without_a_folder_is_refused(api, session_id):
 
 
 # ----------------------------------------------------------------------
+# The fit map, the findings and the report
+# ----------------------------------------------------------------------
+
+
+def test_there_is_no_fit_map_before_the_first_commit(opened):
+    assert opened["fit_map"]["available"] is False
+    assert opened["fit_map"]["visible"] is False
+
+
+def test_committing_draws_the_fit_on_each_cut(api, session_id):
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+    state = payload["fit_map"]
+
+    assert state["available"] and state["current"] and state["visible"]
+    assert set(state["nodes"]) == {"FitMap.tibial", "FitMap.femoral"}
+    assert state["legend"]["unit"] == "mm"
+    assert state["legend"]["stops"][0][0] < 0 < state["legend"]["stops"][-1][0]
+    assert state["seconds"] is not None
+    for name in state["nodes"]:
+        # Sent as a new node, with its mesh, so the viewer adds it.
+        assert payload["delta"]["nodes"][name]["tags"]["fit_map"] is True
+        assert payload["delta"]["visibility"][name] is True
+
+
+def test_the_fit_map_downloads_with_its_colours(api, session_id):
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+    digest = payload["delta"]["meshes"]["FitMap.tibial"]
+
+    status, served = api.dispatch("GET", f"/api/sessions/{session_id}/meshes/{digest}.glb")
+
+    assert status == 200
+    assert b"COLOR_0" in served.data and b"_VALUE_MM" in served.data
+
+
+def test_a_moved_plan_hides_the_map_until_the_next_commit(api, session_id):
+    post(api, f"/api/sessions/{session_id}/commit")
+    moved = post(api, f"/api/sessions/{session_id}/controls",
+                 {"changes": {"tibial_shift_ap_mm": 2.0}})
+
+    assert moved["fit_map"]["current"] is False
+    assert moved["delta"]["visibility"]["FitMap.tibial"] is False
+    assert any("press Commit" in line for line in moved["report"])
+
+    again = post(api, f"/api/sessions/{session_id}/commit")
+    assert again["fit_map"]["current"] and again["fit_map"]["visible"]
+
+
+def test_the_map_is_toggled_from_the_panel(api, session_id):
+    post(api, f"/api/sessions/{session_id}/commit")
+    off = post(api, f"/api/sessions/{session_id}/controls",
+               {"changes": {"show_fit_map": False}})
+
+    assert off["fit_map"]["visible"] is False
+    assert off["stale"] is False  # a display toggle cuts nothing
+    on = post(api, f"/api/sessions/{session_id}/controls",
+              {"changes": {"show_fit_map": True}})
+    assert on["fit_map"]["visible"] is True
+
+
+def test_every_envelope_carries_the_findings(api, session_id, opened):
+    for finding in opened["findings"]:
+        assert {"code", "severity", "message", "source", "location"} <= set(finding)
+        assert finding["severity"] in ("error", "warning", "info")
+    codes = {finding["code"] for finding in opened["findings"]}
+    # The synthetic femur is an ellipsoid, with no trochlea to place the box against.
+    assert "FEMORAL_BOX_NOT_PLACED" in codes
+
+
+def test_a_fit_finding_says_where_it_is(api, session_id):
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+    located = [f for f in payload["findings"] if f["code"].startswith("OVERHANG_")]
+
+    assert located, "the synthetic tray overhangs its block of bone"
+    for finding in located:
+        assert len(finding["location"]["point_mm"]) == 3
+        assert finding["location"]["set"] in ("femoral", "tibial")
+
+
+def test_the_report_is_served_with_every_section(api, session_id):
+    post(api, f"/api/sessions/{session_id}/commit")
+    status, payload = api.dispatch("GET", f"/api/sessions/{session_id}/report")
+
+    assert status == 200
+    assert payload.content_type.startswith("text/html")
+    page = payload.data.decode("utf-8")
+    for section in ("Resection table", "Fit on the cuts", "Fit map", "Component register",
+                    "Implant sizing", "Quality control and findings",
+                    "Deformity measurements", "data:image/png;base64,"):
+        assert section in page, section
+
+
+# ----------------------------------------------------------------------
 # Over a real socket
 # ----------------------------------------------------------------------
 

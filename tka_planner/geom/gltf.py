@@ -11,7 +11,9 @@ The encoder writes exactly what our meshes are: one buffer, one mesh, one primit
 positions and indices, no materials and no normals. Colour is a scene property here and
 belongs to the node, not the geometry, and the viewer computes flat normals for free.
 Leaving both out roughly halves what crosses the wire for a bone of two million
-triangles.
+triangles. The one exception is a fit map, whose colours are per vertex: a mesh that
+carries ``vertex_colours`` and ``vertex_values_mm`` in its metadata is written with a
+``COLOR_0`` attribute and an application-specific ``_VALUE_MM`` beside it.
 """
 
 from __future__ import annotations
@@ -49,16 +51,64 @@ def write_glb(mesh, *, name: str = "mesh") -> bytes:
     if positions.size and indices.size and indices.max() >= positions.shape[0]:
         raise ValueError("A face index points past the end of the vertex array.")
 
-    position_bytes = positions.tobytes()
-    index_bytes = indices.tobytes()
-    # Every accessor must start on a multiple of its component size. Positions come
-    # first and are already four-byte aligned, so only the join needs padding.
-    padding = (-len(position_bytes)) % 4
-    binary = position_bytes + b"\0" * padding + index_bytes
-    index_offset = len(position_bytes) + padding
+    # Optional per-vertex attributes: a colour map's colours, and the value each colour
+    # stands for, so the viewer can read a number back without computing one. The
+    # value travels as an application-specific attribute, which glTF names with a
+    # leading underscore.
+    metadata = getattr(mesh, "metadata", None) or {}
+    extras = []
+    colours = metadata.get("vertex_colours")
+    if colours is not None:
+        extras.append(("COLOR_0", "VEC3", np.ascontiguousarray(colours, dtype=np.float32)))
+    values = metadata.get("vertex_values_mm")
+    if values is not None:
+        extras.append(("_VALUE_MM", "SCALAR",
+                       np.ascontiguousarray(values, dtype=np.float32).reshape(-1)))
+    for attribute, _, array in extras:
+        if array.shape[0] != positions.shape[0]:
+            raise ValueError(f"{attribute} has {array.shape[0]} entries for "
+                             f"{positions.shape[0]} vertices.")
+
+    # Every accessor must start on a multiple of its component size. Every part here is
+    # four bytes wide, so the parts join with no padding between them.
+    chunks = [positions.tobytes(), indices.tobytes()] + [a.tobytes() for *_, a in extras]
+    offsets = np.cumsum([0] + [len(chunk) for chunk in chunks[:-1]]).tolist()
+    binary = b"".join(chunks)
 
     low = positions.min(axis=0).tolist() if positions.size else [0.0, 0.0, 0.0]
     high = positions.max(axis=0).tolist() if positions.size else [0.0, 0.0, 0.0]
+
+    attributes = {"POSITION": 0}
+    accessors = [
+        {
+            "bufferView": 0,
+            "componentType": _FLOAT,
+            "count": int(positions.shape[0]),
+            "type": "VEC3",
+            # Required on POSITION by the specification, and the viewer uses them to
+            # frame the camera without walking the vertices itself.
+            "min": [float(v) for v in low],
+            "max": [float(v) for v in high],
+        },
+        {
+            "bufferView": 1,
+            "componentType": _UNSIGNED_INT,
+            "count": int(indices.shape[0]),
+            "type": "SCALAR",
+        },
+    ]
+    views = [
+        {"buffer": 0, "byteOffset": int(offsets[0]), "byteLength": len(chunks[0]),
+         "target": _ARRAY_BUFFER},
+        {"buffer": 0, "byteOffset": int(offsets[1]), "byteLength": len(chunks[1]),
+         "target": _ELEMENT_ARRAY_BUFFER},
+    ]
+    for k, (attribute, kind, array) in enumerate(extras, start=2):
+        attributes[attribute] = len(accessors)
+        accessors.append({"bufferView": k, "componentType": _FLOAT,
+                          "count": int(array.shape[0]), "type": kind})
+        views.append({"buffer": 0, "byteOffset": int(offsets[k]),
+                      "byteLength": len(chunks[k]), "target": _ARRAY_BUFFER})
 
     document = {
         "asset": {"version": "2.0", "generator": "tka-planner"},
@@ -68,43 +118,13 @@ def write_glb(mesh, *, name: str = "mesh") -> bytes:
         "meshes": [{
             "name": name,
             "primitives": [{
-                "attributes": {"POSITION": 0},
+                "attributes": attributes,
                 "indices": 1,
                 "mode": _TRIANGLES,
             }],
         }],
-        "accessors": [
-            {
-                "bufferView": 0,
-                "componentType": _FLOAT,
-                "count": int(positions.shape[0]),
-                "type": "VEC3",
-                # Required on POSITION by the specification, and the viewer uses them
-                # to frame the camera without walking the vertices itself.
-                "min": [float(v) for v in low],
-                "max": [float(v) for v in high],
-            },
-            {
-                "bufferView": 1,
-                "componentType": _UNSIGNED_INT,
-                "count": int(indices.shape[0]),
-                "type": "SCALAR",
-            },
-        ],
-        "bufferViews": [
-            {
-                "buffer": 0,
-                "byteOffset": 0,
-                "byteLength": len(position_bytes),
-                "target": _ARRAY_BUFFER,
-            },
-            {
-                "buffer": 0,
-                "byteOffset": index_offset,
-                "byteLength": len(index_bytes),
-                "target": _ELEMENT_ARRAY_BUFFER,
-            },
-        ],
+        "accessors": accessors,
+        "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
     }
 

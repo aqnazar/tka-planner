@@ -244,10 +244,16 @@ def assess_mesh_quality(
         valid_faces[:, [2, 0]],
     ])
     edges = np.sort(edges, axis=1)
-    _, counts = np.unique(edges, axis=0, return_counts=True)
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
 
     n_boundary = int(np.sum(counts == 1))
     n_nonmanifold = int(np.sum(counts > 2))
+
+    def first_edge_at(mask):
+        """One offending edge's midpoint, so a viewer can show where the fault is."""
+        edge = unique_edges[np.flatnonzero(mask)[0]]
+        midpoint = welded.vertices[edge].mean(axis=0)
+        return [round(float(v), 2) for v in midpoint]
 
     sorted_faces = np.sort(valid_faces, axis=1)
     n_unique_faces = len(np.unique(sorted_faces, axis=0))
@@ -270,6 +276,7 @@ def assess_mesh_quality(
             f"{n_nonmanifold} non-manifold edges. Exact boolean cutting may fail and "
             f"fall back to the fast solver, which changes the resulting geometry.",
             n_nonmanifold_edges=n_nonmanifold,
+            location_mm=first_edge_at(counts > 2),
         )
     if n_boundary:
         report.add(
@@ -277,6 +284,7 @@ def assess_mesh_quality(
             f"{n_boundary} boundary edges: the surface is not closed. Cut volumes are "
             f"ill-defined against an open surface.",
             n_boundary_edges=n_boundary,
+            location_mm=first_edge_at(counts == 1),
         )
     if n_degenerate:
         report.add(
