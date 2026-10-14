@@ -50,6 +50,7 @@ packages = [
 [tool.setuptools.package-data]
 "tka_planner.web" = ["*.html", "*.js", "*.css", "vendor/*"]
 "tka_planner.data" = ["SizeChart.csv"]
+"tka_planner.validation" = ["dispersion/*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
