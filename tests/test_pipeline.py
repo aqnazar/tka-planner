@@ -96,6 +96,24 @@ def test_a_written_plan_reads_back(session, tmp_path):
     assert read_plan(path)["case_id"] == session.case_id
 
 
+def test_a_written_plan_has_the_same_bytes_on_every_platform(session, tmp_path):
+    """LF line endings, never the platform's own: Windows text mode would write CRLF."""
+    from tka_planner.pipeline import _jsonable
+
+    document = cli_style(session)
+    raw = write_plan(document, tmp_path / "plan.json").read_bytes()
+
+    assert b"\r" not in raw
+    assert raw == (json.dumps(document, indent=2, default=_jsonable) + "\n").encode()
+
+
+def test_a_written_implant_spec_has_lf_line_endings(session, tmp_path):
+    from tka_planner.pipeline import write_implant_spec
+
+    spec = cli_style(session)["implant_spec"]
+    assert b"\r" not in write_implant_spec(spec, tmp_path / "spec.json").read_bytes()
+
+
 @pytest.mark.skipif(not (REAL_CASE / "FD1Left.stl").is_file(),
                     reason="patient data is not in the repository")
 def test_the_command_line_and_the_application_plan_a_real_case_identically(tmp_path):

@@ -1558,14 +1558,19 @@ def validate_plan_document(document: dict) -> list[str]:
 
 
 def write_plan(document: dict, path) -> Path:
-    """Validate and write a plan document. Refuses to write an invalid one."""
+    """Validate and write a plan document. Refuses to write an invalid one.
+
+    Line endings are LF on every platform. Text mode would write CRLF on Windows, and
+    the same plan would then hash differently there than on Linux, which is exactly
+    the cross-platform byte identity the plan file is meant to have.
+    """
     problems = validate_plan_document(document)
     if problems:
         raise ValueError("Refusing to write an invalid plan: " + " ".join(problems))
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(document, indent=2, default=_jsonable) + "\n",
-                    encoding="utf-8")
+                    encoding="utf-8", newline="\n")
     return path
 
 
@@ -1575,8 +1580,9 @@ def write_implant_spec(spec: dict, path) -> Path:
         raise ValueError("Not an implant specification.")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # LF everywhere, for the same reason as the plan: one specification, one hash.
     path.write_text(json.dumps(spec, indent=2, default=_jsonable) + "\n",
-                    encoding="utf-8")
+                    encoding="utf-8", newline="\n")
     return path
 
 
