@@ -24,6 +24,16 @@ patient-specific parts, read-only and only when `TKA_PATIENT_BUILDS` names their
 (one `<knee>/` per build with `job.json`, `femoral.stl`, `plate.stl`). Experiments that need no cohort (synthetic knees, the
 kernel checks) run from a plain checkout.
 
+**The Paper 1 baseline (E12).** `python -m paper.legacy_runner P009L` runs the frozen
+`legacy/TKA_Script_v3.py` on one knee in headless Blender (5.1 by default, the version
+Paper 1 used; `--blender 4.4` for the other), changing only its path and side globals
+and checking by hash that nothing else changed. The knee's bones are copied to a scratch
+folder first, because the script writes `Output/` beside its inputs. It reads the implant
+parts from `TKA_LEGACY_LIBRARY` (with `TKA_LEGACY_SIZE_CHART` when the chart lives
+elsewhere), else from the catalogue. The catalogue cannot run every knee: it has no
+right femoral components outside L4 and no L4 cutting blocks, under the names the script
+expects. Paper 1's runs used the twelve-size CAD export with the catalogue's chart.
+
 **Adding an experiment.** A module `paper/experiments/eNN_<topic>.py` with a
 `run(ctx)` decorated by `@experiment("ENN", "title", needs_cohort=...)`, imported in
 `paper/experiments/__init__.py`. Use `ctx.table(...)` for tables, `ctx.note(...)` for the
@@ -44,3 +54,4 @@ the same refusals.
 | E10a | Impingement-limited maximum flexion per knee, MA and KA plans, trajectories S1-S3, and the envelope | cohort + implant library |
 | E10b | Posterior condylar offset per compartment: preoperative, planned (patient-specific and catalogue), change | cohort + implant library |
 | E10c | Slope of modelled flexion against offset (component moved -3 to +3 mm) and against posterior femoral translation, against Bellemans 2002 and Banks 2003 | cohort + implant library |
+| E12 | Paper 1 pipeline (frozen legacy script, headless Blender) vs the current planner; reproduction of the archived Paper 1 runs | cohort, Blender, legacy library |

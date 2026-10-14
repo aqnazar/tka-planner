@@ -13,3 +13,4 @@ from . import e07b_fit  # noqa: F401
 from . import e01_synthetic_accuracy  # noqa: F401
 from . import e05_montecarlo  # noqa: F401
 from . import e10_flexion  # noqa: F401
+from . import e12_legacy_baseline  # noqa: F401
