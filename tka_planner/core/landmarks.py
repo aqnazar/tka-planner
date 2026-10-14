@@ -126,7 +126,9 @@ class LandmarkStatus(Enum):
     be honest about its own limitations.
     """
 
-    PRESENT = "present"          # picked by a human on visible anatomy
+    PRESENT = "present"          # picked by a human on visible anatomy, or measured on
+                                 # the patient outside the scan (a functional hip centre;
+                                 # its origin and metadata say which)
     DERIVED = "derived"          # computed from other landmarks or mesh geometry
     ESTIMATED = "estimated"      # produced by an automatic estimator, needs review
     OUT_OF_SCAN = "out_of_scan"  # the anatomy is outside the imaged volume

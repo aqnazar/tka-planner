@@ -201,6 +201,12 @@ class Metric:
     ``definition`` and ``sign_convention`` are prose because they are reproduced in the
     report. A reader of the paper should not have to read the source to learn whether a
     smaller mLDFA means more valgus or less.
+
+    ``sources`` says where each input landmark came from -- its status and origin, and
+    for a landmark measured outside the CT its stated source and fit residual. The
+    tier alone cannot carry that: a femoral head centre fitted to a full-length CT and
+    one measured by pivoting under a camera are both ``measured``, with different
+    uncertainties, and the report has to tell them apart.
     """
 
     name: str
@@ -217,6 +223,13 @@ class Metric:
     reason: str = ""
     would_require: str = ""
     diagnostics: dict = field(default_factory=dict)
+    sources: dict = field(default_factory=dict)
+
+    @property
+    def external_sources(self) -> dict:
+        """The input landmarks measured outside the CT, which the report spells out."""
+        return {landmark_id: record for landmark_id, record in self.sources.items()
+                if record.get("source")}
 
     def __post_init__(self):
         if self.quality is Quality.NOT_COMPUTABLE and self.value is not None:
@@ -299,4 +312,6 @@ class Metric:
             record["would_require"] = self.would_require
         if self.diagnostics:
             record["diagnostics"] = self.diagnostics
+        if self.sources:
+            record["sources"] = self.sources
         return record

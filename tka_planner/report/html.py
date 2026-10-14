@@ -102,6 +102,20 @@ def _metric_rows(metrics: dict) -> str:
                     f'<div class="note"><strong>Assumes:</strong> '
                     f'{_escape(assumption.description)}</div>'
                 )
+        # A landmark measured outside the CT is ``measured`` like a CT pick, but its
+        # uncertainty is not; name the source and residual next to the value.
+        for landmark_id, record in metric.external_sources.items():
+            detail = [str(record["source"])]
+            if "rms_residual_mm" in record:
+                detail.append(f'RMS {record["rms_residual_mm"]:g} mm')
+            if "centre_sd_mm" in record:
+                detail.append(f'predicted SD {record["centre_sd_mm"]:g} mm')
+            if "registration" in record:
+                detail.append(f'registered by {record["registration"]}')
+            notes.append(
+                f'<div class="note"><strong>Source:</strong> '
+                f'<code>{_escape(landmark_id)}</code> {_escape(", ".join(detail))}</div>'
+            )
         if metric.missing:
             notes.append(
                 f'<div class="note"><strong>Missing:</strong> '
