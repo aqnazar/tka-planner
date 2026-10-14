@@ -149,10 +149,16 @@ def one_pass(case, library) -> tuple[dict, dict, str]:
     for bone in ("Femur", "Tibia"):
         # The repair every boolean of the commit runs on the uncut bone first: timed
         # alone, because it is paid once per boolean, twice per bone in block mode.
-        _clock(times, f"repair_{bone.lower()}", ManifoldKernel._prepare,
-               session.scene.mesh_for(bone), "target")
-        kernel = TimedKernel()
-        _clock(times, f"commit_{bone.lower()}", session.commit, kernel, bones=(bone,))
+        try:
+            _clock(times, f"repair_{bone.lower()}", ManifoldKernel._prepare,
+                   session.scene.mesh_for(bone), "target")
+            kernel = TimedKernel()
+            _clock(times, f"commit_{bone.lower()}", session.commit, kernel,
+                   bones=(bone,))
+        except ValueError:
+            # The kernel refused the bone (E8 says why); there is no commit to time.
+            hashes[f"geometry/{bone}"] = "refused"
+            continue
         for operation, seconds in kernel.log:
             part = "shell" if operation == "intersect" else "cut"
             times[f"commit_{bone.lower()}_{part}"] = seconds
@@ -250,7 +256,10 @@ def run(ctx: Context) -> None:
             times, table, refusal = one_pass(case, library)
             passes.append(times)
             hashes.append(table)
-        row = {"case": case.case_id, "refused": refusal or None}
+        row = {"case": case.case_id, "refused": refusal or None,
+               "kernel_refused": " ".join(
+                   bone for bone in ("Femur", "Tibia")
+                   if hashes[0].get(f"geometry/{bone}") == "refused") or None}
         femur, tibia = read_stl(case.femur, compute_hash=False), read_stl(
             case.tibia, compute_hash=False)
         row["femur_triangles"], row["tibia_triangles"] = femur.n_triangles, tibia.n_triangles
@@ -274,7 +283,7 @@ def run(ctx: Context) -> None:
 
     ctx.record["cpu_busy_percent_after"] = cpu_busy_percent(1.0)
     ctx.table("determinism", determinism_rows)
-    columns = ["case", "refused", "femur_triangles", "tibia_triangles", *STAGES[:4],
+    columns = ["case", "refused", "kernel_refused", "femur_triangles", "tibia_triangles", *STAGES[:4],
                "measure_total", *STAGES[4:]]
     if rows:
         ctx.table("stages", rows, columns, digits=4)
@@ -299,10 +308,20 @@ def run(ctx: Context) -> None:
                 ctx.note(f"- {stage}: median {statistics.median(values):.4f} s "
                          f"(range {min(values):.4f}-{max(values):.4f}) over "
                          f"{len(values)} knees")
+        shares = [(r[f"repair_{b}"] * 2) / r[f"commit_{b}"] for r in timed
+                  for b in ("femur", "tibia")
+                  if r.get(f"commit_{b}") and r.get(f"repair_{b}") is not None]
+        if shares:
+            ctx.note(f"- Each block-mode boolean repairs the uncut bone again (weld and "
+                     f"checks); twice that repair is a median "
+                     f"{100 * statistics.median(shares):.0f}% of a bone's commit time.")
         ctx.note(_figure(ctx, timed))
     for r in rows:
         if r["refused"]:
             ctx.note(f"- {r['case']} refused ({r['refused']}): timed up to the refusal.")
+        if r["kernel_refused"]:
+            ctx.note(f"- {r['case']}: the kernel refused to cut {r['kernel_refused']} "
+                     f"(see E8); no commit time for it.")
 
     plan_rows = [r for r in determinism_rows if r["item"] == "plan.json"]
     ctx.note(f"plan.json identical within a process for "

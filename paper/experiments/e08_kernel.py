@@ -153,6 +153,22 @@ def compare(ours: Mesh, theirs: Mesh) -> dict:
     }
 
 
+def float32_agreement(operation: str, target: Mesh, tool: Mesh, theirs: Mesh) -> float:
+    """Hausdorff from Blender's result to manifold3d's on the same input rounded to
+    single precision, as Blender stores it.
+
+    Separates the two possible causes of a disagreement: if this is much smaller than
+    the plain comparison, the difference came from Blender rounding its input, not
+    from either solver.
+    """
+    def rounded(mesh):
+        return Mesh(vertices=mesh.vertices.astype(np.float32).astype(np.float64),
+                    faces=mesh.faces)
+
+    ours = getattr(ManifoldKernel(), operation)(rounded(target), rounded(tool)).mesh
+    return hausdorff(ours, theirs)["hausdorff_mm"]
+
+
 def _prepared(mesh: Mesh) -> Mesh:
     """The mesh exactly as manifold3d is handed it, so Blender is handed the same."""
     return mesh if is_manifold(mesh) else repair(mesh)[0]
@@ -216,6 +232,8 @@ def reference_cases(ctx: Context, blenders: dict) -> list[dict]:
                     "blender_s": entry["seconds"],
                     # In double precision, before STL rounds Blender's output.
                     **compare(ours, theirs),
+                    "hausdorff_float32_inputs_mm": float32_agreement(
+                        operation, target, tool, theirs),
                 })
     ctx.table("regenerated", regenerated, digits=9)
     return rows + regenerated
@@ -348,7 +366,7 @@ def cohort_agreement(case, session, blender: Path | None,
             for row in rows:
                 row["blender_error"] = str(error)[:140]
             return rows
-        for row, entry in zip(rows, result["jobs"]):
+        for row, job, entry in zip(rows, jobs, result["jobs"]):
             key = entry["name"]
             if "error" in entry:
                 row["blender_error"] = entry["error"][:140]
@@ -356,7 +374,10 @@ def cohort_agreement(case, session, blender: Path | None,
             row["blender_s"] = entry["seconds"]
             row["blender"] = result["blender"]
             if key in ours:
-                row.update(compare(ours[key], _load(folder / f"{key}_out.npz")))
+                theirs = _load(folder / f"{key}_out.npz")
+                row.update(compare(ours.pop(key), theirs))
+                row["hausdorff_float32_inputs_mm"] = float32_agreement(
+                    job["operation"], _load(job["target"]), _load(job["tool"]), theirs)
     return rows
 
 
@@ -454,8 +475,13 @@ def run(ctx: Context) -> None:
                  f"{sum(r['agree'] for r in compared)} within {TOLERANCE_MM} mm; worst "
                  f"Hausdorff {max(r['hausdorff_in_spacings'] for r in compared):.2f} "
                  f"float32 spacings at the mesh's largest coordinate (Blender stores "
-                 f"single precision).")
+                 f"single precision). With manifold3d given the same input rounded to "
+                 f"single precision, the worst Hausdorff is "
+                 f"{max(r['hausdorff_float32_inputs_mm'] for r in compared):.2e} mm.")
     failed = [r for r in agreement if "blender_error" in r or "manifold_refused" in r]
     for r in failed:
+        blender_did = (" Blender cut it regardless."
+                       if "manifold_refused" in r and "blender_s" in r else "")
         ctx.note(f"- {r['case']} {r['bone']} {r['boolean']}: "
-                 f"{r.get('manifold_refused') or r.get('blender_error')}")
+                 f"{(r.get('manifold_refused') or r.get('blender_error')).split('. ')[0]}."
+                 f"{blender_did}")

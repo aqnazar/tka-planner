@@ -138,14 +138,25 @@ def section_hashes(document: dict) -> dict:
 
 
 def geometry_hashes(case: Case, measurement, library) -> dict:
-    """Commit in block mode, as the application does, and hash every cut mesh."""
+    """Commit in block mode, as the application does, and hash every cut mesh.
+
+    One bone at a time, so a bone the kernel refuses is recorded as refused -- itself a
+    result that must reproduce -- without losing the other bone's hash.
+    """
     from .planned import planned_session
 
     session = planned_session(case, measurement, library)
-    session.commit()
-    names = ("Femur", "Femur.Shell", "Tibia", "Tibia.Shell")
-    return {f"geometry/{name}": mesh_hash(session.scene.mesh_for(name))
-            for name in names if session.scene.mesh_for(name) is not None}
+    table = {}
+    for bone in ("Femur", "Tibia"):
+        try:
+            session.commit(bones=(bone,))
+        except ValueError:
+            table[f"geometry/{bone}"] = "refused"
+            continue
+        for name in (bone, f"{bone}.Shell"):
+            if session.scene.mesh_for(name) is not None:
+                table[f"geometry/{name}"] = mesh_hash(session.scene.mesh_for(name))
+    return table
 
 
 def hash_table(case: Case, measurement, library, *, commit: bool = True) -> dict:
