@@ -4,7 +4,8 @@
 // with one primitive, positions and indices, and nothing else: no materials, no
 // animations, no textures, no scene graph. Parsing exactly that is forty lines, against
 // vendoring a loader that handles a format we deliberately do not use. Colour lives on
-// the node in our scene model, not on the geometry.
+// the node in our scene model, not on the geometry -- except on a fit map, whose
+// per-vertex colours and values are the server's and come with the mesh.
 
 const MAGIC = 0x46546c67; // "glTF"
 const JSON_CHUNK = 0x4e4f534a;
@@ -41,7 +42,14 @@ export function parseGlb(buffer) {
   const positions = readAccessor(document, buffer, binary, primitive.attributes.POSITION, Float32Array);
   const indices = readAccessor(document, buffer, binary, primitive.indices, Uint32Array);
   const accessor = document.accessors[primitive.attributes.POSITION];
-  return { positions, indices, min: accessor.min, max: accessor.max };
+  // A colour map also carries a colour and the value it stands for at every vertex,
+  // both decided by the server. They are read here and drawn as they come.
+  const { COLOR_0: colour, _VALUE_MM: value } = primitive.attributes;
+  const colours = colour === undefined
+    ? null : readAccessor(document, buffer, binary, colour, Float32Array);
+  const values = value === undefined
+    ? null : readAccessor(document, buffer, binary, value, Float32Array);
+  return { positions, indices, colours, values, min: accessor.min, max: accessor.max };
 }
 
 function readAccessor(document, buffer, binary, index, ArrayType) {

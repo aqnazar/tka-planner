@@ -60,15 +60,19 @@
     <section class="actions export">
       <label>Export to <input id="export-path" type="text" placeholder="output folder" size="22"></label>
       <button type="button" id="export">Export plan</button>
+      <button type="button" id="open-report">Open report</button>
     </section>
 
     <label class="clean"><input id="clean" type="checkbox"> Clean viewport</label>
   </aside>
 
-  <div id="view"></div>
+  <div id="view">
+    <div id="legend" hidden></div>
+  </div>
 
   <aside id="readout">
     <div id="banner" hidden></div>
+    <section id="findings"></section>
     <div id="report"></div>
     <div id="notes"></div>
   </aside>

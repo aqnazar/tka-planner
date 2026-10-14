@@ -104,6 +104,7 @@ export class Viewer {
       this.setPose(setId, matrix);
     }
     await Promise.all(snapshot.nodes.map((node) => this.addNode(node)));
+    this.updateXray();
     this.frame();
   }
 
@@ -128,7 +129,7 @@ export class Viewer {
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(toMatrix(node.rest));
     mesh.visible = node.visible;
-    mesh.renderOrder = node.tags?.landmark ? 2 : 0;
+    mesh.renderOrder = node.tags?.landmark ? 2 : node.tags?.fit_map ? 3 : 0;
 
     const group = this.groups.get(node.set) || this.groups.get("world");
     group.add(mesh);
@@ -156,6 +157,19 @@ export class Viewer {
   }
 
   material(node) {
+    // A fit map is drawn unlit, in exactly the colours the server chose, so a colour
+    // on the screen matches the legend rather than the lighting. The server lifts it a
+    // fraction of a millimetre off the cut; a small depth offset settles the rest. A
+    // large one would push it through the bone when the cut is seen edge-on.
+    if (node.tags?.fit_map) {
+      return new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -0.5,
+        polygonOffsetUnits: -1,
+      });
+    }
     const colour = new THREE.Color(...(node.colour || [0.6, 0.6, 0.6]));
     const transparent = (node.alpha ?? 1) < 1;
     return new THREE.MeshLambertMaterial({
@@ -176,10 +190,13 @@ export class Viewer {
         return response.arrayBuffer();
       })
       .then((buffer) => {
-        const { positions, indices } = parseGlb(buffer);
+        const { positions, indices, colours, values } = parseGlb(buffer);
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        if (colours) geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+        // The value each vertex stands for, kept to be read back under the pointer.
+        if (values) geometry.userData.values = values;
         // The server sends no normals: for flat-shaded bone they are cheaper to derive
         // here than to transfer, and it halves what crosses the wire.
         geometry.computeVertexNormals();
@@ -214,6 +231,7 @@ export class Viewer {
       const entry = this.nodes.get(name);
       if (!entry) continue;
       entry.mesh.visible = visible;
+      entry.node.visible = visible;
       if (entry.cap) entry.cap.visible = visible && this.clipping;
     }
 
@@ -224,6 +242,90 @@ export class Viewer {
         this.replaceMesh(name, meshId, delta.nodes?.[name])
       )
     );
+    this.updateXray();
+  }
+
+  // While a fit map is shown, the components and the bone shells are drawn see-through:
+  // a tray sits on the very surface its map colours, and would otherwise hide it.
+  updateXray() {
+    const mapShown = [...this.nodes.values()].some(
+      ({ mesh, node }) => node.tags?.fit_map && mesh.visible
+    );
+    for (const { mesh, node } of this.nodes.values()) {
+      if (!node.tags?.component && !node.tags?.shell) continue;
+      const alpha = node.alpha ?? 1;
+      const opacity = mapShown ? Math.min(alpha, 0.28) : alpha;
+      mesh.material.transparent = opacity < 1;
+      mesh.material.opacity = opacity;
+      mesh.material.depthWrite = opacity >= 1;
+      mesh.material.needsUpdate = true;
+    }
+  }
+
+  // --------------------------------------------------------------
+  // Findings and readback
+  // --------------------------------------------------------------
+
+  // Turn to a point the server named, in scan millimetres in a set's frame. The marker
+  // is drawn over everything, so a fault inside a bone can still be seen.
+  focus(location) {
+    if (!location?.point_mm) return;
+    const group = this.groups.get(location.set) || this.groups.get("world");
+    group.updateMatrixWorld(true);
+    const point = new THREE.Vector3(...location.point_mm.map((v) => v / MM_PER_M))
+      .applyMatrix4(group.matrixWorld);
+
+    if (!this.marker) {
+      this.marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.0035, 24, 16),
+        new THREE.MeshBasicMaterial({
+          color: 0xff2bd6, depthTest: false, transparent: true, opacity: 0.9,
+        })
+      );
+      this.marker.renderOrder = 10;
+      this.scene.add(this.marker);
+    }
+    this.marker.position.copy(point);
+    this.marker.visible = true;
+
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    offset.setLength(0.16);
+    this.controls.target.copy(point);
+    this.camera.position.copy(point).add(offset);
+    this.controls.update();
+  }
+
+  clearFocus() {
+    if (this.marker) this.marker.visible = false;
+  }
+
+  // The fit value under the pointer, read from the vertex nearest the hit. Nothing is
+  // computed: the value is the one the server attached to that vertex.
+  valueAt(clientX, clientY) {
+    const maps = [...this.nodes.values()]
+      .filter(({ mesh, node }) => node.tags?.fit_map && mesh.visible)
+      .map(({ mesh }) => mesh);
+    if (!maps.length) return null;
+    const box = this.renderer.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((clientX - box.left) / box.width) * 2 - 1,
+      -((clientY - box.top) / box.height) * 2 + 1
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(pointer, this.camera);
+    const hit = ray.intersectObjects(maps, false)[0];
+    const values = hit?.object.geometry.userData.values;
+    if (!hit || !values) return null;
+    const local = hit.object.worldToLocal(hit.point.clone());
+    const position = hit.object.geometry.attributes.position;
+    let best = hit.face.a;
+    let bestDistance = Infinity;
+    for (const index of [hit.face.a, hit.face.b, hit.face.c]) {
+      const corner = new THREE.Vector3().fromBufferAttribute(position, index);
+      const d = local.distanceToSquared(corner);
+      if (d < bestDistance) { bestDistance = d; best = index; }
+    }
+    return { name: hit.object.name, value: values[best] };
   }
 
   async replaceMesh(name, meshId, description) {

@@ -126,6 +126,49 @@ legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-s
 }
 #banner button { margin-top: 6px; width: 100%; }
 
+#findings { margin-bottom: 10px; }
+#findings .head {
+  color: var(--dim);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  margin: 0 0 4px;
+}
+.finding { border-left: 3px solid var(--edge); padding: 2px 0 2px 6px; margin: 3px 0; }
+.finding.error { border-color: #ff5d5d; }
+.finding.warning { border-color: var(--warn); }
+.finding summary { cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.finding .badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 0 5px; border-radius: 8px; background: #2a3038; color: var(--dim);
+}
+.finding.error .badge { background: #5a1f1f; color: #ffb3b3; }
+.finding.warning .badge { background: #4a3714; color: var(--warn); }
+.finding code { font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.finding .show { margin-left: auto; padding: 0 6px; font-size: 11px; }
+.finding .message { color: var(--dim); font-size: 11px; margin: 2px 0 2px; }
+
+#legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 300px;
+  padding: 8px 10px 9px;
+  background: rgba(20, 23, 26, 0.86);
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  font-size: 11px;
+  z-index: 2;
+}
+#legend .title { color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+#legend .bar { height: 12px; border-radius: 3px; }
+#legend .ticks { position: relative; height: 14px; color: var(--dim); }
+#legend .ticks span { position: absolute; transform: translateX(-50%); top: 1px; }
+#legend .ticks span:first-child { transform: none; }
+#legend .ticks span:last-child { transform: translateX(-100%); }
+#legend .words { display: flex; justify-content: space-between; color: var(--ink); }
+#legend .foot { color: var(--dim); margin-top: 4px; }
+
 #notes { color: var(--dim); font-size: 11px; margin-top: 14px; }
 #notes div { margin-bottom: 3px; }
 
