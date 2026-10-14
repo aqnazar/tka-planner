@@ -35,6 +35,7 @@ import numpy as np
 
 from .frames import AnatomicalFrame
 from .geometry import regional_mask
+from .landmarks_auto import DISTAL_WINDOW_CONDYLAR_WIDTHS, condylar_width_mm
 from .meshio import Mesh
 
 __all__ = [
@@ -78,11 +79,23 @@ def measure_femoral_ml(
     A bounding box of the distal block, taken in the frame's own axes. Both dimensions
     come from the same region, so they describe one anatomical structure rather than two
     unrelated extremes of the segmentation.
+
+    The block is ``distal_fraction`` of the segment, but of no more of it than the
+    distal window the landmark search uses
+    (:data:`~tka_planner.core.landmarks_auto.DISTAL_WINDOW_CONDYLAR_WIDTHS` condylar
+    widths). A quarter of a full-length femur is 112 mm and takes in the anterior cortex
+    above the trochlea, which put 3 mm on the reference femur's AP; a knee-only segment is
+    shorter than the window and is measured exactly as before.
     """
-    distal = mesh.vertices[
-        regional_mask(mesh.vertices, frame.z_proximal,
-                      fraction=distal_fraction, end="low")
-    ]
+    window = DISTAL_WINDOW_CONDYLAR_WIDTHS * condylar_width_mm(mesh)
+    heights = mesh.vertices @ frame.z_proximal
+    span = float(heights.max() - heights.min())
+    if span <= window:
+        mask = regional_mask(mesh.vertices, frame.z_proximal,
+                             fraction=distal_fraction, end="low")
+    else:
+        mask = heights <= float(heights.min()) + distal_fraction * window
+    distal = mesh.vertices[mask]
     local = frame.to_local(distal)
 
     return SizingMeasurement(
@@ -90,7 +103,8 @@ def measure_femoral_ml(
         ap_mm=float(np.ptp(local[:, 0])),
         method="measure.femur.frame_aligned_distal_bbox.v1",
         diagnostics={
-            "region": f"distal {distal_fraction:.0%} of the segment",
+            "region": (f"distal {distal_fraction:.0%} of the segment" if span <= window
+                       else f"distal {distal_fraction:.0%} of a {window:.0f} mm window"),
             "n_vertices": int(len(distal)),
             "world_aligned_ml_mm": round(float(mesh.extent[0]), 2),
         },

@@ -36,6 +36,8 @@ __all__ = [
     "estimate_femoral_landmarks",
     "estimate_tibial_landmarks",
     "estimate_landmarks",
+    "condylar_width_mm",
+    "distal_window_mm",
 ]
 
 ANTERIOR = -LPS_POSTERIOR
@@ -45,6 +47,18 @@ ENVELOPE_CELL_MM = 2.0
 # A face this close to horizontal can be joint surface; anything steeper is the side of
 # the bone. cos 55 degrees.
 ENVELOPE_MIN_COS = 0.57
+
+# How much of a femur the distal searches look at, in condylar widths. The searches are
+# fractions of a length -- the condyles in the bottom fifth, the epicondyles between 15
+# and 35 per cent -- and were tuned on knee-only segments, which run 147 to 248 mm here,
+# or 1.7 to 2.6 condylar widths. On a full-length femur the same fractions of 450 mm
+# reach the shaft: the reference femur's lateral epicondyle was placed 157 mm above the
+# joint. So the length they are fractions of is capped at this many condylar widths,
+# which leaves every knee-only segment searched exactly as before and searches a longer
+# femur as if it had been scanned knee-only. It scales with the bone, not the scan.
+DISTAL_WINDOW_CONDYLAR_WIDTHS = 2.75
+# The condylar width is the widest caliper of the bottom of the bone, this thick.
+CONDYLAR_SLAB_MM = 25.0
 
 
 def _estimated(landmark_id: str, position, method: str, confidence: str) -> Landmark:
@@ -141,6 +155,45 @@ def _central(points: np.ndarray, *, fraction: float) -> np.ndarray:
     return points[keep]
 
 
+def condylar_width_mm(mesh: Mesh) -> float:
+    """The widest caliper of the bottom ``CONDYLAR_SLAB_MM`` of a femur, in the transverse plane.
+
+    The widest of 180 directions, so it does not depend on how the femur lies in the
+    scanner: on the condylar block that is the mediolateral width. It is the femur's own
+    size, measured before any landmark exists, which is what the distal window needs.
+    """
+    vertices = mesh.vertices
+    z = vertices @ LPS_SUPERIOR
+    slab = vertices[z <= float(z.min()) + CONDYLAR_SLAB_MM][:, :2]
+    angles = np.radians(np.arange(180) * 1.0)
+    calipers = slab @ np.stack([np.cos(angles), np.sin(angles)])
+    return float(np.max(calipers.max(axis=0) - calipers.min(axis=0)))
+
+
+def distal_window_mm(mesh: Mesh) -> float:
+    """The length of femur the distal searches take their fractions of.
+
+    The whole segment on a knee-only scan, and ``DISTAL_WINDOW_CONDYLAR_WIDTHS``
+    condylar widths of it on anything longer. Measured from the most distal point, so it
+    is anchored at the joint and the scan's far end plays no part once it is beyond the
+    window.
+    """
+    z = mesh.vertices @ LPS_SUPERIOR
+    height = float(z.max() - z.min())
+    return min(height, DISTAL_WINDOW_CONDYLAR_WIDTHS * condylar_width_mm(mesh))
+
+
+def _distal_block(vertices: np.ndarray, window: float) -> np.ndarray:
+    """The bottom fifth of the distal window: the condyles and the notch beneath the shaft.
+
+    Written exactly as :func:`~tka_planner.core.geometry.regional_mask` computes its
+    fraction, so where the window is the whole segment the block is the same vertices to
+    the last bit as before the window existed.
+    """
+    z = vertices @ LPS_SUPERIOR
+    return vertices[z <= float(z.min()) + 0.20 * window]
+
+
 def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
     """Estimate femoral landmarks from the distal femur surface.
 
@@ -158,7 +211,9 @@ def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
     vertices = mesh.vertices
     z = vertices @ LPS_SUPERIOR
     z_min, z_max = float(z.min()), float(z.max())
-    height = z_max - z_min
+    # Every distal search is a fraction of this, not of the scan: see
+    # DISTAL_WINDOW_CONDYLAR_WIDTHS. On a knee-only segment it is the segment's height.
+    window = distal_window_mm(mesh)
 
     landmarks: list[Landmark] = []
 
@@ -174,12 +229,13 @@ def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
     # it put the rotational reference 26 degrees out. The posterior condyles are a far
     # better anchor: they are genuine extremes of the surface, and the posterior
     # condylar line is the standard surgical rotational reference in any case.
-    lateral_axis, posterior = _converge_posterior_condylar_axis(mesh, side)
+    lateral_axis, posterior = _converge_posterior_condylar_axis(mesh, side,
+                                                                window=window)
 
     landmarks: list[Landmark] = []
 
     # ---- Stage two: condyles, along the femur's own directions ------
-    distal = vertices[regional_mask(vertices, LPS_SUPERIOR, fraction=0.20, end="low")]
+    distal = _distal_block(vertices, window)
     offsets = distal @ lateral_axis
     midline = float(np.median(offsets))
     lateral_half, medial_half = distal[offsets >= midline], distal[offsets < midline]
@@ -201,7 +257,10 @@ def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
         ))
 
     # ---- Stage three: epicondyles, along the corrected axis ---------
-    band = vertices[(z >= z_min + 0.15 * height) & (z <= z_min + 0.35 * height)]
+    # 15 to 35 per cent of the distal window above the most distal point: 22 to 87 mm
+    # on the knee-only segments. A fraction of the whole scan put a full-length femur's
+    # band on the shaft.
+    band = vertices[(z >= z_min + 0.15 * window) & (z <= z_min + 0.35 * window)]
     if len(band) >= CONTACT_AVERAGE_N:
         lateral_direction = (
             lateral_axis if side is Side.LEFT else -lateral_axis
@@ -241,7 +300,8 @@ def estimate_femoral_landmarks(mesh: Mesh, side: Side) -> list[Landmark]:
 
 
 def _converge_posterior_condylar_axis(
-    mesh: Mesh, side: Side, *, max_rounds: int = 12, tolerance_deg: float = 0.01
+    mesh: Mesh, side: Side, *, window: float | None = None, max_rounds: int = 12,
+    tolerance_deg: float = 0.01,
 ):
     """Find the femur's mediolateral axis from its posterior condyles, iteratively.
 
@@ -260,9 +320,9 @@ def _converge_posterior_condylar_axis(
     the epicondylar-band search it replaced sat 26 degrees away.
     """
     vertices = mesh.vertices
-    distal = vertices[
-        regional_mask(vertices, LPS_SUPERIOR, fraction=0.20, end="low")
-    ]
+    distal = _distal_block(
+        vertices, distal_window_mm(mesh) if window is None else window
+    )
 
     lateral_axis = LPS_PATIENT_LEFT.astype(float).copy()
     for _ in range(max_rounds):
