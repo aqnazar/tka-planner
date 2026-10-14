@@ -275,10 +275,13 @@ def build_femoral_frame(
          "femur.epicondyle_lateral", medial_id),
     )
 
-    stea_raw = lateral_epicondyle - medial_reference
     # Point it patient-left, so the frame's y axis always means the same direction
-    # regardless of which end was picked first or which knee this is.
-    stea_raw = orient_towards(stea_raw, _patient_left_reference(side, z_proximal))
+    # whichever knee this is. The landmarks' names say which end is lateral, and the side
+    # says whether lateral is patient-left -- so the sign comes from the anatomy and not
+    # from the scanner. Orienting towards scanner +X instead turned the frame 180 degrees
+    # on a femur lying 30 degrees off in the scanner, once the epicondylar axis had
+    # swung past the scanner's left-right axis.
+    stea_raw = side.lateral_sign * (lateral_epicondyle - medial_reference)
 
     # The component removed by projection is the axis's out-of-plane tilt. It is a
     # useful pick-quality signal, so it is measured before being discarded.
@@ -341,28 +344,30 @@ def _femoral_proximal_axis(landmarks, knee_centre, side, ama_assumption, attempt
     # angle. Rotating the wrong way would double the error rather than remove it.
     #
     # "The coronal plane" is the femur's own: the plane holding the shaft and the
-    # epicondylar axis. The scanner's left-right axis gives the sign of medial and
-    # nothing more -- taking the plane from it rotated the axis partly into the sagittal
-    # plane on any leg lying turned about its long axis, by 6 x sin(turn) degrees, and
-    # cost mLDFA 6 x (1 - cos(turn)): 0.8 degrees at 30. Using the epicondyles here
-    # couples them to the axis only at second order -- an epicondylar pick off by e
-    # degrees in the transverse plane moves the axis by 6 x (1 - cos e) -- so the
-    # coronal and rotational constructions stay effectively independent.
-    medial_hint = side.medial_direction(_patient_left_reference(side, axis))
+    # epicondylar axis. Taking the plane from the scanner's left-right axis rotated the
+    # axis partly into the sagittal plane on any leg lying turned about its long axis, by
+    # 6 x sin(turn) degrees, and cost mLDFA 6 x (1 - cos(turn)): 0.8 degrees at 30. Using
+    # the epicondyles here couples them to the axis only at second order -- an
+    # epicondylar pick off by e degrees in the transverse plane moves the axis by
+    # 6 x (1 - cos e) -- so the coronal and rotational constructions stay effectively
+    # independent. Which way is medial is in the landmarks' names; the scanner's
+    # left-right axis is consulted only when there are no epicondyles, and then the
+    # frame cannot be completed anyway (it needs them for its rotational reference).
     lateral_epicondyle = landmarks.position("femur.epicondyle_lateral")
     medial_epicondyle = landmarks.position("femur.epicondyle_medial_sulcus")
     if medial_epicondyle is None:
         medial_epicondyle = landmarks.position("femur.epicondyle_medial_prominence")
-    medial = medial_hint
-    diagnostics["ama_plane"] = "scanner_left_right"
+    medial = None
     if lateral_epicondyle is not None and medial_epicondyle is not None:
         try:
-            medial = orient_towards(
-                project_out(medial_epicondyle - lateral_epicondyle, axis), medial_hint
-            )
+            medial = project_out(medial_epicondyle - lateral_epicondyle, axis)
             diagnostics["ama_plane"] = "epicondylar"
         except ValueError:
-            pass  # an epicondylar axis along the shaft: keep the scanner's plane
+            pass  # an epicondylar axis along the shaft: fall back to the scanner's plane
+    if medial is None:
+        medial = side.medial_direction(
+            _patient_left_reference(side, axis, "femoral", attempts))
+        diagnostics["ama_plane"] = "scanner_left_right"
     coronal_normal = unit(np.cross(medial, axis))
     z_proximal = _rotate_about(axis, coronal_normal,
                                np.radians(ama_assumption.value), towards=medial)
@@ -450,8 +455,16 @@ def build_tibial_frame(
     y_patient_left = unit(np.cross(z_proximal, x_anterior))
     # The Akagi line's own direction fixes anterior, and the cross product then fixes
     # patient-left. Confirm it really points patient-left rather than trusting the
-    # ordering, since a mis-picked pair would otherwise invert the frame silently.
-    if float(np.dot(y_patient_left, _patient_left_reference(side, z_proximal))) < 0:
+    # ordering, since a mis-picked pair would otherwise invert the frame silently. The
+    # check is against the spines, whose names say which is lateral: the knee's own
+    # left-right, so a tibia lying turned in the scanner is judged on its anatomy.
+    spine_lateral, spine_medial = landmarks.require("tibia.spine_lateral",
+                                                    "tibia.spine_medial")
+    left_reference = side.lateral_sign * (spine_lateral - spine_medial)
+    across = left_reference - float(np.dot(left_reference, z_proximal)) * z_proximal
+    if float(np.linalg.norm(across)) < 1e-6:
+        left_reference = _patient_left_reference(side, z_proximal, "tibial", attempts)
+    if float(np.dot(y_patient_left, left_reference)) < 0:
         raise FrameConstructionError(
             "tibial",
             attempts + [
@@ -554,22 +567,26 @@ def _diaphyseal_axis(
     return axis, float(np.linalg.norm(proximal - distal))
 
 
-def _patient_left_reference(side: Side, proximal_axis: np.ndarray) -> np.ndarray:
-    """A world direction that is unambiguously patient-left, for orienting axes.
+def _patient_left_reference(side: Side, proximal_axis: np.ndarray, bone: str,
+                            attempts: list[str]) -> np.ndarray:
+    """The scanner's patient-left direction, for the sign of an axis no landmark names.
 
-    Frames are built in the LPS patient frame, where +X is patient-left by definition,
-    so that is the reference. It is used only to fix the *sign* of an axis, never its
-    direction, so a proximal axis that is not exactly world-vertical costs nothing.
+    The last resort: both frames take left and right from their landmarks' names where
+    they can, and come here only when those landmarks are missing or degenerate. Frames
+    are built in the LPS patient frame, where +X is patient-left by definition. It fixes
+    only the *sign* of an axis, never its direction, so a proximal axis that is not
+    exactly vertical costs nothing -- but one lying along the scanner's left-right axis
+    leaves left and right undecidable, and that is a refusal, not a crash.
     """
     from .sides import LPS_PATIENT_LEFT
 
     reference = LPS_PATIENT_LEFT
     if abs(float(np.dot(reference, unit(proximal_axis)))) > 0.9:
-        raise ValueError(
-            "The proximal axis is nearly parallel to the patient-left direction, so "
-            "left and right cannot be distinguished. The bone is probably mis-oriented "
-            "or the landmarks are in the wrong coordinate system."
-        )
+        raise FrameConstructionError(bone, attempts + [
+            "the proximal axis is nearly parallel to the scanner's patient-left "
+            "direction, so left and right cannot be distinguished: the bone is "
+            "mis-oriented or the landmarks are in the wrong coordinate system"
+        ])
     return reference
 
 
