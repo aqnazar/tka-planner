@@ -1,0 +1,24 @@
+{
+  "case": "SYNTHETIC_DETERMINISM",
+  "library": true,
+  "platform": "Windows-10-10.0.26300-SP0",
+  "python": "3.11.3",
+  "numpy": "2.4.6",
+  "manifold3d": "3.5.3",
+  "hashes": {
+    "plan.json": "14d4ed98779e5ff178417fd9dd56c4570f4ba3fab76a0873f0b2382aed916393",
+    "section/inputs": "bdbe7d90dbf50e88aa7e5ea6e52a070c5c4768bf844ab8802184c00c4554d06f",
+    "section/frames": "5ad01454ad6b64064a163b83b624fd744cf62d545ebb42b3b1b79f4ada9ee291",
+    "section/metrics": "2dd52566eb5f0aadec98e30d60110617acb0c537553d9bf6a0bcb861fff31cb1",
+    "section/surgical_plan": "f53fbfcf47d852ece70219c4781db2339ee04a009a2d6f0e0be4b16015229d87",
+    "section/sizing": "fb72c791c2150a545ec39bd62f1af052a74c0ed4645a03983711cd1d1b0ffadf",
+    "section/implant_spec": "cfb06c669e99f897eb96ce4aec481e3ea386d1f4d5b1639f6991a04e1bd98921",
+    "section/fit": "b634edca3dd862ed6f07535539bb241b2d193ce8bd34d139889245e46f6a0f6b",
+    "section/quality_control": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "section/landmarks": "165da7e0ad10b712720c73b27d09d070c4be106ee8c81998a0872510c833806c",
+    "geometry/Femur": "9de8155759296676d84c02505f38370bd663d970fcd7c2f291736b2744c0a9a6",
+    "geometry/Femur.Shell": "8a6477dfdde87057098ba6640f9f54fbaa495dd4952facc4bf56d6aea7dcb718",
+    "geometry/Tibia": "3c0eee292a09fe6922e6eec6c3a169f0a35325bc9df9f0c2362e77a39efa7474",
+    "geometry/Tibia.Shell": "5528be138edfba7af557d5792af30af5a0857af840260c51d779990783541b65"
+  }
+}

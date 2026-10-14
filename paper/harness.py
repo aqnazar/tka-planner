@@ -108,6 +108,89 @@ def _version(module: str) -> str:
         return ""
 
 
+def cpu_name() -> str:
+    """The processor's marketing name, which ``platform.processor()`` does not give on
+    Windows (it returns the family and stepping) and gives empty on most Linux."""
+    try:
+        if sys.platform == "win32":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+                return str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip()
+        if sys.platform.startswith("linux"):
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+        if sys.platform == "darwin":
+            return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                  capture_output=True, text=True).stdout.strip()
+    except Exception:
+        pass
+    return platform.processor()
+
+
+def memory_gb() -> dict:
+    """Installed and currently available RAM, in GB; empty where it cannot be read."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
+                            ("total", ctypes.c_ulonglong), ("available", ctypes.c_ulonglong),
+                            ("page_total", ctypes.c_ulonglong),
+                            ("page_available", ctypes.c_ulonglong),
+                            ("virtual_total", ctypes.c_ulonglong),
+                            ("virtual_available", ctypes.c_ulonglong),
+                            ("extended", ctypes.c_ulonglong)]
+
+            status = Status()
+            status.length = ctypes.sizeof(Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            total, available = status.total, status.available
+        elif sys.platform.startswith("linux"):
+            info = dict(line.split(":", 1) for line in
+                        Path("/proc/meminfo").read_text().splitlines() if ":" in line)
+            total = int(info["MemTotal"].split()[0]) * 1024
+            available = int(info["MemAvailable"].split()[0]) * 1024
+        else:
+            return {}
+    except Exception:
+        return {}
+    return {"ram_total_gb": round(total / 2**30, 1),
+            "ram_available_gb": round(available / 2**30, 1)}
+
+
+def cpu_busy_percent(seconds: float = 1.0) -> float | None:
+    """How busy the whole machine's CPU is over ``seconds``, from 0 to 100.
+
+    A timing taken while something else is running is not a benchmark. This is
+    recorded beside every timing so a reader can tell a quiet machine from a busy one.
+    ``None`` where the counters cannot be read.
+    """
+    def sample():
+        if sys.platform == "win32":
+            import ctypes
+            idle, kernel, user = (ctypes.c_ulonglong() for _ in range(3))
+            ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle),
+                                                  ctypes.byref(kernel),
+                                                  ctypes.byref(user))
+            # Kernel time includes idle time.
+            return idle.value, kernel.value + user.value
+        fields = [int(v) for v in Path("/proc/stat").read_text().split("\n")[0]
+                  .split()[1:]]
+        return fields[3] + fields[4], sum(fields)
+
+    try:
+        idle0, total0 = sample()
+        time.sleep(seconds)
+        idle1, total1 = sample()
+    except Exception:
+        return None
+    total = total1 - total0
+    return round(100.0 * (1.0 - (idle1 - idle0) / total), 1) if total > 0 else None
+
+
 def run_record() -> dict:
     """The provenance of a result: commit, versions, machine, time."""
     return {
@@ -120,7 +203,9 @@ def run_record() -> dict:
         "platform": platform.platform(),
         "machine": platform.machine(),
         "processor": platform.processor(),
+        "cpu": cpu_name(),
         "cpu_count": os.cpu_count(),
+        **memory_gb(),
         "seed": SEED,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -185,13 +270,13 @@ class Experiment:
     experiment_id: str
     title: str
     run: Callable[[Context], object]
-    needs_cohort: bool
+    needs_cohort: bool | str     # True, False, or "optional"
 
 
 REGISTRY: dict[str, Experiment] = {}
 
 
-def experiment(experiment_id: str, title: str, *, needs_cohort: bool = True):
+def experiment(experiment_id: str, title: str, *, needs_cohort: bool | str = True):
     """Register ``run(ctx)`` as a paper experiment."""
     def register(function):
         REGISTRY[experiment_id] = Experiment(experiment_id, title, function, needs_cohort)
@@ -211,7 +296,9 @@ def run_experiment(experiment_id: str, *, quick: bool = False,
     (out / "summary.md").write_text(f"# {exp.experiment_id}: {exp.title}\n\n",
                                     encoding="utf-8")
     cases = cohort_cases(include_reference=include_reference) if exp.needs_cohort else []
-    if exp.needs_cohort and not cases:
+    # "optional": the cohort is used when present, and the experiment still runs its
+    # synthetic part from a plain checkout without it.
+    if exp.needs_cohort is True and not cases:
         raise SystemExit(f"{experiment_id} needs the cohort; none found under "
                          f"{cohort_root()} (set TKA_COHORT_DIR).")
     if quick:

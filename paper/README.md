@@ -55,3 +55,13 @@ the same refusals.
 | E10b | Posterior condylar offset per compartment: preoperative, planned (patient-specific and catalogue), change | cohort + implant library |
 | E10c | Slope of modelled flexion against offset (component moved -3 to +3 mm) and against posterior femoral translation, against Bellemans 2002 and Banks 2003 | cohort + implant library |
 | E12 | Paper 1 pipeline (frozen legacy script, headless Blender) vs the current planner; reproduction of the archived Paper 1 runs | cohort, Blender, legacy library |
+| E8 | Geometry kernel: manifold3d against Blender's exact solver (gate cases, every installed Blender, cohort resections), repair statistics, refused defects | cohort optional; Blender optional (`TKA_BLENDER`) |
+| E9 | Per-stage time per knee, commit time against triangle count, plan determinism in and across processes | cohort optional; synthetic fixture |
+`needs_cohort="optional"` runs on the cohort when it is there and on its synthetic part
+alone when it is not.
+**Determinism.** `python -m paper.determinism --synthetic` prints the SHA-256 of the
+plan file, of each of its sections and of the committed geometry, for the fixture in
+`tests/fixtures/determinism/`. `--compare paper/determinism_synthetic.json` checks it
+against the table made on the paper's machine; CI runs that on Linux and Windows.
+`--case P009L` does the same for a cohort knee. **E9's timings are only paper numbers
+from a quiet machine**: its summary says so when the CPU was busy around the run.
