@@ -23,6 +23,10 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
+from .core.condylar_offset import (
+    planned_condylar_offset,
+    posterior_condylar_offset_metrics,
+)
 from .core.frames import AnatomicalFrame, build_femoral_frame, build_tibial_frame
 from .core.landmarks import LandmarkSet, load_landmarks, overlay_landmarks
 from .core.landmarks_auto import estimate_landmarks
@@ -81,6 +85,11 @@ __all__ = [
     "component_scales",
     "IMPLANT_MODES",
     "write_implant_spec",
+    "FLEXION_PAIRS",
+    "FlexionSettings",
+    "FlexionModel",
+    "flexion_model",
+    "flexion_case",
 ]
 
 # How the components are shaped. A patient-specific implant takes its width and depth
@@ -99,7 +108,7 @@ REQUIRED_KEYS = (
     "scan_coverage", "frames", "metrics", "surgical_plan", "sizing",
     "quality_control", "landmarks", "implant_spec", "fit", "controls", "trial",
     "geometry",
-    "geometry_matches_plan", "intended_use",
+    "geometry_matches_plan", "kinematics", "intended_use",
 )
 # Written into every document since they were added within version 2, but not required
 # of one, so a version-2 file written before them still reads.
@@ -263,6 +272,10 @@ def measure_from_landmarks(
     femoral_frame = build_femoral_frame(landmarks)
     tibial_frame = build_tibial_frame(landmarks)
     metrics = compute_all(landmarks, femoral_frame, tibial_frame)
+    # The one metric read off the surface rather than the landmarks: the femoral shaft's
+    # posterior cortex is part of its definition.
+    metrics.update(posterior_condylar_offset_metrics(femur.vertices, landmarks,
+                                                     femoral_frame))
 
     chart_path = Path(size_chart) if size_chart else find_size_chart()
     return CaseMeasurement(
@@ -753,6 +766,9 @@ def fit_case(
     exactly as the viewer poses them, so the fit is of what the surgeon sees. Returns
     ``None`` with no library, and names any component the library lacks rather than
     guessing its shape.
+
+    The posterior condylar offset is measured here too, on the femoral component as it
+    is placed: preoperative, planned and the change, per compartment.
     """
     result, _ = fit_case_with_grids(measurement, plan, sizing, library, mode)
     return result
@@ -808,6 +824,9 @@ def fit_case_with_grids(
             place(plan.components[name], scales.get(group, spec["scale"]),
                   shifts.get(group)),
         )
+        if name == "femoral_component":
+            result["posterior_condylar_offset"] = planned_condylar_offset(
+                m.femur.vertices, posed.vertices, m.landmarks, m.femoral_frame)
         resection = plan.resections[cut]
         fit = section_fit(
             cut=cut, bone=bone, component=posed,
@@ -825,6 +844,10 @@ def fit_case_with_grids(
                 round(float(v), 6) for v in scales[group]]
             result["library_sizes"][name]["shift_mm"] = [
                 round(float(v), 3) for v in shifts[group]]
+    if "femoral_component" not in specs:
+        result["posterior_condylar_offset"] = {
+            "available": False,
+            "reason": "the implant library has no femoral component for this side"}
     result["insert"] = _insert_check(plan, specs, m, transforms)
     return result, grids
 
@@ -978,6 +1001,395 @@ def findings_case(
     return findings
 
 
+FLEXION_PAIRS = (
+    "insert_vs_femoral_bone",
+    "femoral_component_vs_insert",
+    "femoral_component_vs_tibial_bone",
+    "tibial_bone_vs_femoral_bone",
+)
+
+
+@dataclass(frozen=True)
+class FlexionSettings:
+    """How the maximum-flexion search is run, recorded with every result.
+
+    ``articular_tolerance_mm`` is the rule that tells the intended bearing contact from
+    impingement between the femoral component and the insert (see
+    :class:`FlexionModel`); ``None`` lets articular overlap never stop flexion. The
+    crop boxes are in the femoral and tibial frames' axes, centred on the hinge.
+    """
+
+    start_deg: float = 0.0
+    stop_deg: float = 170.0
+    step_deg: float = 5.0
+    resolution_deg: float = 0.5
+    min_volume_mm3: float = 1.0
+    articular_tolerance_mm: float | None = 1.0
+    rim_margin_mm: float = 2.0
+    simplify_mm: float = 0.2
+    femur_box_mm: tuple = ((-80.0, -80.0, -60.0), (80.0, 80.0, 90.0))
+    tibia_box_mm: tuple = ((-80.0, -80.0, -100.0), (80.0, 80.0, 40.0))
+
+    def to_dict(self) -> dict:
+        return {k: (list(map(list, v)) if isinstance(v, tuple) else v)
+                for k, v in self.__dict__.items()}
+
+
+def _frame_at(frame: AnatomicalFrame, origin) -> np.ndarray:
+    matrix = frame.matrix.copy()
+    matrix[:3, 3] = np.asarray(origin, dtype=float)
+    return matrix
+
+
+def _cropped_bone(mesh: Mesh, frame: np.ndarray, box) -> "object":
+    """A bone as a solid, cropped to the reach of a flexing knee. Kept for the bone last
+    asked about: it is the slow step (a million triangles into manifold3d) and depends
+    on neither the plan nor the trajectory."""
+    from .geom.collision import Solid
+
+    key = (id(mesh), np.asarray(frame).tobytes(), repr(box))
+    cached = _BONE_SOLIDS.get(key)
+    if cached is None or cached[0] is not mesh:
+        # Two entries -- one knee's femur and tibia -- since each holds a bone's worth
+        # of geometry and the mesh it came from.
+        while len(_BONE_SOLIDS) >= 2:
+            _BONE_SOLIDS.pop(next(iter(_BONE_SOLIDS)))
+        cached = (mesh, Solid.from_mesh(mesh).cropped(frame, *box))
+        _BONE_SOLIDS[key] = cached
+    return cached[1]
+
+
+_BONE_SOLIDS: dict = {}
+
+
+@dataclass
+class FlexionModel:
+    """The planned construct as solids, ready to be flexed.
+
+    The femoral side (resected femur, femoral component) stays where the plan put it;
+    the tibial side (resected tibia, stretched insert) moves by the trajectory's pose.
+    The hinge is the one Reduce mode uses (:func:`~tka_planner.scene.motion.flexion_axis`).
+
+    **Articulation or impingement.** The femoral component is meant to bear on the
+    insert, and a prescribed trajectory is not solved from contact, so the two will
+    overlap somewhat where they articulate. An overlap of the pair is impingement when
+    either
+
+    * any of it lies within ``rim_margin_mm`` of the insert's edge -- its anterior or
+      posterior lip or its sides, in the insert's own axes -- which is contact outside
+      the articular surface; or
+    * it reaches deeper, along the insert's axis, than the overlap the plan itself
+      leaves at extension (the solved insert's seating) by more than
+      ``articular_tolerance_mm``.
+
+    Anything else is the intended articulation and does not stop flexion; it is still
+    returned, marked so. Every other pair -- insert against the resected femur, the
+    femoral component against the resected tibia, bone against bone -- stops flexion at
+    any overlap above ``min_volume_mm3``.
+    """
+
+    pivot: np.ndarray
+    femoral_frame: AnatomicalFrame
+    tibial_frame: AnatomicalFrame
+    femur: object
+    tibia: object
+    femoral_component: object
+    insert: object
+    insert_pose: np.ndarray
+    insert_bounds: tuple
+    settings: FlexionSettings
+    diagnostics: dict
+    baseline_depth_mm: float = 0.0
+
+    def pose(self, trajectory, flexion_deg: float) -> np.ndarray:
+        from .scene.motion import trajectory_pose
+
+        return trajectory_pose(self.pivot, flexion_deg, trajectory,
+                               anterior=self.tibial_frame.x_anterior,
+                               medial=self.tibial_frame.medial)
+
+    def _articular(self, shared, pose: np.ndarray) -> tuple:
+        """Where on the insert an overlap lies, and how deep it reaches along the
+        insert's axis (mm, :meth:`~tka_planner.geom.collision.Overlap.thickness_mm`)."""
+        points = shared.vertices
+        insert_pose = pose @ self.insert_pose
+        cad = (np.c_[points, np.ones(len(points))] @ np.linalg.inv(insert_pose).T)[:, :3]
+        sx, sy = (np.linalg.norm(insert_pose[:3, i]) for i in (0, 1))
+        (x0, y0), (x1, y1) = self.insert_bounds
+        margin = self.settings.rim_margin_mm
+        # CAD axes of tibial parts: +X patient-left, +Y posterior, +Z proximal.
+        region = "articular"
+        if np.any((y1 - cad[:, 1]) * sy < margin):
+            region = "posterior_rim"
+        elif np.any((cad[:, 1] - y0) * sy < margin):
+            region = "anterior_rim"
+        elif np.any(np.minimum(cad[:, 0] - x0, x1 - cad[:, 0]) * sx < margin):
+            region = "side_rim"
+        return region, shared.thickness_mm(insert_pose[:3, 2])
+
+    def contacts(self, trajectory, flexion_deg: float) -> list:
+        """Every overlap above the volume threshold at one angle, as
+        :class:`~tka_planner.core.kinematics.Contact`."""
+        from .core.kinematics import Contact
+        from .geom.collision import overlap
+
+        s = self.settings
+        pose = self.pose(trajectory, flexion_deg)
+        insert = self.insert.transformed(pose)
+        tibia = self.tibia.transformed(pose)
+        found = []
+        for pair, a, b in (
+            ("insert_vs_femoral_bone", insert, self.femur),
+            ("femoral_component_vs_insert", self.femoral_component, insert),
+            ("femoral_component_vs_tibial_bone", self.femoral_component, tibia),
+            ("tibial_bone_vs_femoral_bone", tibia, self.femur),
+        ):
+            shared = overlap(a, b)
+            if shared is None or shared.volume_mm3 < s.min_volume_mm3:
+                continue
+            local = self.femoral_frame.to_local(shared.vertices)
+            location = local.mean(axis=0)
+            medial_sign = float(np.dot(self.femoral_frame.medial,
+                                       self.femoral_frame.y_patient_left))
+            diagnostics = {
+                "crop_limited": self._at_crop(shared.vertices, pose),
+                "compartment": "medial" if location[1] * medial_sign > 0 else "lateral",
+            }
+            if pair == "femoral_component_vs_insert":
+                region, depth = self._articular(shared, pose)
+                tolerance = s.articular_tolerance_mm
+                too_deep = (tolerance is not None
+                            and depth > self.baseline_depth_mm + tolerance)
+                kind = ("impingement" if region != "articular" or too_deep
+                        else "articulation")
+                diagnostics["baseline_depth_mm"] = round(self.baseline_depth_mm, 3)
+            else:
+                region = "anterior" if location[0] > 0.0 else "posterior"
+                depth = float(np.ptp(local, axis=0).min())
+                kind = "impingement"
+            found.append(Contact(
+                pair=pair, flexion_deg=float(flexion_deg),
+                volume_mm3=shared.volume_mm3, depth_mm=depth, location=location,
+                kind=kind, region=region, diagnostics=diagnostics,
+            ))
+        return found
+
+    def _at_crop(self, points: np.ndarray, pose: np.ndarray) -> bool:
+        """Whether an overlap touches a crop face: if so, the bone beyond the crop could
+        have been hit first, and the result says so."""
+        s = self.settings
+        femoral = (points - self.pivot[:3, 3]) @ self.femoral_frame.matrix[:3, :3]
+        tibial_points = (np.c_[points, np.ones(len(points))]
+                         @ np.linalg.inv(pose).T)[:, :3]
+        tibial = (tibial_points - self.pivot[:3, 3]) @ self.tibial_frame.matrix[:3, :3]
+        for local, (low, high) in ((femoral, s.femur_box_mm), (tibial, s.tibia_box_mm)):
+            near = (np.abs(local - np.asarray(low)) < 1.0) | (
+                np.abs(local - np.asarray(high)) < 1.0)
+            if near.any():
+                return True
+        return False
+
+
+def flexion_model(
+    measurement: CaseMeasurement,
+    plan: SurgicalPlan,
+    sizing: SizingDecision,
+    library,
+    mode: str = "patient_specific",
+    *,
+    settings: FlexionSettings | None = None,
+    femoral_offset_mm: float = 0.0,
+) -> FlexionModel | None:
+    """Build the planned construct as solids for the flexion search.
+
+    The parts are the library parts posed and shaped exactly as the viewer and
+    :func:`fit_case` pose them; the bones are cut by the plan's cutting blocks, as
+    Commit cuts them. ``None`` with no library, or when it lacks a part.
+
+    ``femoral_offset_mm`` moves the femoral component that far anteriorly along its own
+    AP axis, relative to the femur, with the joint re-seated on the component: the
+    tibial set and the hinge keep their place relative to the component, so only the
+    femur moves (by the opposite amount) before it is cut. That is what a change of
+    posterior condylar offset does to a knee that articulates on its implant. Zero is
+    the plan as it stands.
+    """
+    import time
+
+    from .geom import mesh as gm
+    from .geom.collision import Solid, overlap
+    from .scene.build import insert_stretch_matrix, place, resolve_component_meshes
+    from .scene.motion import flexion_axis, pivot_frame
+
+    if library is None:
+        return None
+    settings = settings or FlexionSettings()
+    m = measurement
+    specs = resolve_component_meshes(library, chart=m.chart, sizing=sizing,
+                                     side=str(m.side))
+    needed = ("femoral_component", "femoral_cutting_block", "tibial_component",
+              "tibial_insert", "tibial_cutting_block")
+    if any(name not in specs for name in needed):
+        return None
+    display = insert_display(plan, specs)
+    if display is None:
+        return None
+    transforms = component_scales(m, plan, sizing, library, mode) or {}
+    scales, shifts = transforms.get("scales", {}), transforms.get("shifts", {})
+
+    def posed(name):
+        spec = specs[name]
+        group = spec.get("group", "femoral")
+        matrix = place(plan.components[f"{group}_component"],
+                       scales.get(group, spec["scale"]), shifts.get(group))
+        if name == "tibial_insert":
+            matrix = matrix @ insert_stretch_matrix(display)
+        return matrix, _cached_component(spec)
+
+    t0 = time.perf_counter()
+    origin, direction = flexion_axis(plan, m.femoral_frame, m.landmarks)
+    pivot = pivot_frame(origin, direction)
+    femur = _cropped_bone(m.femur, _frame_at(m.femoral_frame, origin),
+                          settings.femur_box_mm)
+    tibia = _cropped_bone(m.tibia, _frame_at(m.tibial_frame, origin),
+                          settings.tibia_box_mm)
+    t_bones = time.perf_counter() - t0
+
+    anterior = np.asarray(plan.components["femoral_component"], dtype=float)[:3, 0]
+    anterior = anterior / np.linalg.norm(anterior)
+    if femoral_offset_mm:
+        femur = femur.translated(-float(femoral_offset_mm) * anterior)
+
+    blocks = {}
+    for name in ("femoral_cutting_block", "tibial_cutting_block"):
+        matrix, mesh = posed(name)
+        blocks[name] = Solid.from_mesh(gm.transformed(mesh, matrix))
+    femur = femur.minus(blocks["femoral_cutting_block"]).simplified(settings.simplify_mm)
+    tibia = tibia.minus(blocks["tibial_cutting_block"]).simplified(settings.simplify_mm)
+
+    component_matrix, component_mesh = posed("femoral_component")
+    component = Solid.from_mesh(gm.transformed(component_mesh, component_matrix))
+    insert_matrix, insert_mesh = posed("tibial_insert")
+    insert = Solid.from_mesh(gm.transformed(insert_mesh, insert_matrix))
+    bounds = (tuple(insert_mesh.vertices[:, :2].min(axis=0)),
+              tuple(insert_mesh.vertices[:, :2].max(axis=0)))
+
+    model = FlexionModel(
+        pivot=pivot, femoral_frame=m.femoral_frame, tibial_frame=m.tibial_frame,
+        femur=femur, tibia=tibia, femoral_component=component, insert=insert,
+        insert_pose=insert_matrix, insert_bounds=bounds, settings=settings,
+        diagnostics={
+            "implant_mode": mode if scales else "catalogue",
+            "hinge_origin_mm": [round(float(v), 3) for v in origin],
+            "hinge_direction": [round(float(v), 6) for v in direction],
+            "femoral_offset_mm": float(femoral_offset_mm),
+            "triangles": {"femur": femur.n_triangles, "tibia": tibia.n_triangles,
+                          "femoral_component": component.n_triangles,
+                          "insert": insert.n_triangles},
+            "bone_preparation_s": round(t_bones, 2),
+        },
+    )
+    seated = overlap(component, insert)
+    if seated is not None:
+        _, model.baseline_depth_mm = model._articular(seated, np.eye(4))
+    model.diagnostics["baseline_articular_depth_mm"] = round(model.baseline_depth_mm, 3)
+    model.diagnostics["model_build_s"] = round(time.perf_counter() - t0, 2)
+    return model
+
+
+def flexion_case(
+    measurement: CaseMeasurement,
+    plan: SurgicalPlan,
+    sizing: SizingDecision,
+    library,
+    mode: str = "patient_specific",
+    *,
+    trajectories=("S1", "S2", "S3"),
+    settings: FlexionSettings | None = None,
+    femoral_offset_mm: float = 0.0,
+    model: FlexionModel | None = None,
+) -> dict | None:
+    """The impingement-limited maximum flexion of a plan, under each trajectory, and the
+    envelope across them (E10a).
+
+    For each trajectory the knee is flexed until two parts first overlap in a way that
+    blocks it (see :class:`FlexionModel` for the rule); the result names the pair, where
+    it touched (femoral frame, mm from the knee centre: anterior, patient-left,
+    proximal) and how much. ``None`` with no implant library.
+
+    This is a geometric limit: no soft tissue, no thigh-calf contact, and a prescribed
+    rather than contact-solved motion. It bounds what the parts allow, not what a
+    patient will reach.
+    """
+    import time
+
+    from .core.kinematics import envelope, scenario, search_max_flexion
+
+    settings = settings or (model.settings if model is not None else FlexionSettings())
+    if model is None:
+        model = flexion_model(measurement, plan, sizing, library, mode,
+                              settings=settings, femoral_offset_mm=femoral_offset_mm)
+    if model is None:
+        return None
+    m = measurement
+    lateral_ml, medial_ml = _compartment_ml(m, model.pivot[:3, 3])
+    limits, records = {}, {}
+    for name in trajectories:
+        trajectory = scenario(name)
+        t0 = time.perf_counter()
+        limit = search_max_flexion(
+            lambda angle, t=trajectory: model.contacts(t, angle),
+            trajectory=trajectory.name, start_deg=settings.start_deg,
+            stop_deg=settings.stop_deg, step_deg=settings.step_deg,
+            resolution_deg=settings.resolution_deg,
+        )
+        limits[trajectory.name] = limit
+        theta = limit.max_flexion_deg
+        records[trajectory.name] = {
+            **limit.to_dict(),
+            "parameters": trajectory.to_dict(),
+            "at_limit": {
+                "internal_rotation_deg": round(trajectory.at(theta)[0], 3),
+                "medial_ap_mm": round(trajectory.compartment_translation_mm(
+                    theta, medial_ml), 3),
+                "lateral_ap_mm": round(trajectory.compartment_translation_mm(
+                    theta, lateral_ml), 3),
+            },
+            "seconds": round(time.perf_counter() - t0, 2),
+        }
+    component = np.asarray(plan.components["femoral_component"], dtype=float)
+    return {
+        "method": "flexion.impingement_search.v1",
+        "provenance": "estimated",
+        "note": ("Geometric limit of the parts under a prescribed trajectory: no soft "
+                 "tissue, no thigh-calf contact, not contact-solved (WP-D level D1)."),
+        "pairs": list(FLEXION_PAIRS),
+        "trajectories": records,
+        "envelope": envelope(limits),
+        "compartment_ml_mm": {"medial": round(medial_ml, 2),
+                              "lateral": round(lateral_ml, 2)},
+        "settings": settings.to_dict(),
+        "diagnostics": model.diagnostics,
+        "femoral_component_anterior": [round(float(v), 6) for v in
+                                       component[:3, 0] / np.linalg.norm(component[:3, 0])],
+    }
+
+
+def _compartment_ml(m: CaseMeasurement, centre) -> tuple[float, float]:
+    """The posterior condyles' positions along the medial axis, from the hinge midpoint
+    (mm, + medial): where the trajectory's per-compartment translation is reported.
+    Falls back to 22 mm either side when the landmarks are missing."""
+    medial = m.femoral_frame.medial
+    values = []
+    for compartment, default in (("lateral", -22.0), ("medial", 22.0)):
+        landmark = f"femur.condyle_posterior_{compartment}"
+        if m.landmarks.available(landmark):
+            point = np.asarray(m.landmarks.require(landmark)[0], dtype=float)
+            values.append(float((point - np.asarray(centre)) @ medial))
+        else:
+            values.append(default)
+    return values[0], values[1]
+
+
 def discrete_sizing(measurement: CaseMeasurement) -> SizingDecision:
     """The legacy round-down chart size, kept beside every plan for comparison."""
     return select_discrete_size(
@@ -1000,6 +1412,8 @@ def plan_document(
     geometry_matches_plan: bool | None = None,
     resection_table: dict | None = None,
     findings: list | None = None,
+    trajectory: str = "S3",
+    flexion: dict | None = None,
 ) -> dict:
     """The one ``plan.json`` shape.
 
@@ -1016,7 +1430,13 @@ def plan_document(
     schema version 2: they are new keys beside the old ones, so a reader of an earlier
     version-2 file loses nothing and :func:`validate_plan_document` does not require
     them.
+
+    ``kinematics`` records the flexion trajectory the plan was previewed with and the
+    parameters of every scenario, so a plan says which motion its flexion numbers
+    assumed; ``flexion`` is :func:`flexion_case`'s result when it was run.
     """
+    from .core.kinematics import SCENARIOS, scenario
+
     m = measurement
     if resection_table is None:
         resection_table = resection_table_case(m, plan)
@@ -1061,6 +1481,11 @@ def plan_document(
         "trial": trial,
         "geometry": geometry,
         "geometry_matches_plan": geometry_matches_plan,
+        "kinematics": {
+            "trajectory": scenario(trajectory).name,
+            "scenarios": {name: t.to_dict() for name, t in SCENARIOS.items()},
+            "flexion": flexion,
+        },
         "intended_use": INTENDED_USE,
     }
 

@@ -179,6 +179,28 @@ def test_an_unknown_trial_control_is_refused(session):
         session.set_trial(twist_deg=5.0)
 
 
+def test_the_default_trial_is_the_reduce_hinge_bit_for_bit(session):
+    from tka_planner.scene import motion
+
+    delta = session.set_trial(flexion_deg=40.0)
+    assert np.array_equal(delta.poses["TibialSet"],
+                          motion.flexion_pose(session.scene.pivot, flexion_deg=40.0))
+
+
+def test_a_flexion_trajectory_moves_the_tibia_off_the_hinge(session):
+    hinge = session.set_trial(flexion_deg=90.0).poses["TibialSet"]
+    slid = session.set_trial(trajectory="S2").poses["TibialSet"]
+    assert not np.allclose(hinge, slid)
+    assert session.reset_trial().poses["TibialSet"] == pytest.approx(np.eye(4))
+    assert session.trial.trajectory == "S2"
+
+
+def test_an_unknown_trajectory_is_refused(session):
+    with pytest.raises(ValueError, match="Unknown trajectory"):
+        session.set_trial(trajectory="S7")
+    assert session.trial.trajectory == "S3"
+
+
 def test_the_trial_delta_names_the_tibial_set(session):
     delta = session.set_trial(flexion_deg=10.0)
     assert "TibialSet" in delta.poses

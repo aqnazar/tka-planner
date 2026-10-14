@@ -114,3 +114,53 @@ def test_the_command_line_and_the_application_plan_a_real_case_identically(tmp_p
     for key in ("inputs", "frames", "metrics", "surgical_plan", "sizing",
                 "quality_control", "landmarks", "scan_coverage"):
         assert from_app[key] == from_cli[key], key
+
+
+# ----------------------------------------------------------------------
+# Flexion (WP-D) and the posterior condylar offset, through the pipeline
+# ----------------------------------------------------------------------
+
+
+def test_a_plan_records_its_trajectory_and_every_scenario(session):
+    document = plan_document(session.measurement, session.plan, session.sizing,
+                             trajectory="S2")
+    kinematics = document["kinematics"]
+    assert kinematics["trajectory"] == "S2"
+    assert set(kinematics["scenarios"]) == {"S1", "S2", "S3"}
+    assert kinematics["scenarios"]["S1"]["status"] == "placeholder"
+    assert kinematics["flexion"] is None
+
+
+def test_the_preoperative_offset_is_a_metric_with_provenance(session):
+    metric = session.measurement.metrics["pco_medial_mm"].to_dict()
+    assert metric["status"] in ("measured", "estimated", "not_computable")
+    assert "Bellemans" in metric["definition"]
+
+
+def test_the_fit_reports_the_planned_offset(session):
+    from tka_planner.pipeline import fit_case
+
+    fit = fit_case(session.measurement, session.plan, session.sizing, session.library)
+    pco = fit["posterior_condylar_offset"]
+    assert "available" in pco
+    if pco["available"]:
+        for compartment in ("medial", "lateral"):
+            assert set(pco[compartment]) == {"preoperative_mm", "planned_mm",
+                                             "change_mm"}
+
+
+def test_the_flexion_search_runs_end_to_end_and_writes_into_the_plan(session, tmp_path):
+    from tka_planner.pipeline import FlexionSettings, flexion_case
+
+    flexion = flexion_case(session.measurement, session.plan, session.sizing,
+                           session.library,
+                           settings=FlexionSettings(step_deg=20.0, resolution_deg=2.0))
+    assert set(flexion["trajectories"]) == {"S1", "S2", "S3"}
+    for record in flexion["trajectories"].values():
+        assert 0.0 <= record["max_flexion_deg"] <= 170.0
+        assert record["parameters"]["name"] == record["trajectory"]
+    assert flexion["envelope"]["min_deg"] <= flexion["envelope"]["max_deg"]
+    document = plan_document(session.measurement, session.plan, session.sizing,
+                             flexion=flexion)
+    assert read_plan(write_plan(document, tmp_path / "plan.json"))[
+        "kinematics"]["flexion"]["method"] == "flexion.impingement_search.v1"

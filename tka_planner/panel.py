@@ -159,6 +159,15 @@ TRIAL_SCHEMA = (
      "min": 0.0, "max": 20.0, "step": 0.5, "unit": "mm",
      "help": "Pull the tibia away from the femur along its axis. The plan closes the "
              "joint with no gap; this opens one to be seen, without changing the plan."},
+    {"name": "trajectory", "label": "Trajectory", "kind": "choice",
+     "choices": [["S3", "S3 Neutral hinge"],
+                 ["S2", "S2 Observed CR (anterior slide)"],
+                 ["S1", "S1 Native-like (placeholder)"]],
+     "help": "How the femur moves on the tibia as the knee flexes. S3 is the pure "
+             "hinge about the transepicondylar axis. S2 adds the paradoxical anterior "
+             "slide and small internal rotation measured in cruciate-retaining knees "
+             "(Bellemans 2002). S1 is a medial pivot with lateral rollback; its numbers "
+             "are placeholders until fitted to native-knee data."},
 )
 
 

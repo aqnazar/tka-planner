@@ -122,6 +122,10 @@ class TrialControls:
     varus_valgus_deg: float = 0.0
     drawer_ap_mm: float = 0.0
     distraction_mm: float = 0.0
+    # The flexion trajectory (WP-D level D1): S3 is the pure hinge Reduce mode has
+    # always used; S1 and S2 add the scenarios' rollback or slide and axial rotation.
+    # See tka_planner.core.kinematics.
+    trajectory: str = "S3"
 
     @property
     def is_identity(self) -> bool:
@@ -372,18 +376,34 @@ class PlanningSession:
         if unknown:
             raise ValueError(f"Unknown trial control(s): {sorted(unknown)}")
 
+        if "trajectory" in changes:
+            # Refuse an unknown name here, before it is stored.
+            from tka_planner.core.kinematics import scenario
+            scenario(changes["trajectory"])
         self.trial = replace(self.trial, **changes)
-        pose = motion.trial_pose(
-            self.scene.pivot,
-            flexion_deg=self.trial.flexion_deg,
-            varus_valgus_deg=self.trial.varus_valgus_deg,
-            drawer_ap_mm=self.trial.drawer_ap_mm,
-            distraction_mm=self.trial.distraction_mm,
-            distal=-self._tibial_frame.z_proximal,
-        )
+        pose = self.trial_pose_at(self.trial.flexion_deg)
         self.scene.set_pose(TIBIAL, pose)
         return SceneDelta(poses={"TibialSet": pose},
                           scalars={"distraction_mm": self.trial.distraction_mm})
+
+    def trial_pose_at(self, flexion_deg: float):
+        """The tibial set pose at a flexion angle under the other trial controls.
+
+        One function for the slider and the scripted arc, so the two cannot disagree
+        about the trajectory or the stress.
+        """
+        frame = self._tibial_frame
+        return motion.trial_pose(
+            self.scene.pivot,
+            flexion_deg=flexion_deg,
+            varus_valgus_deg=self.trial.varus_valgus_deg,
+            drawer_ap_mm=self.trial.drawer_ap_mm,
+            distraction_mm=self.trial.distraction_mm,
+            distal=-frame.z_proximal,
+            trajectory=self.trial.trajectory,
+            anterior=frame.x_anterior,
+            medial=frame.medial,
+        )
 
     def reset_trial(self) -> SceneDelta:
         """Return every trial control to zero, and the tibia to extension."""

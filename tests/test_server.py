@@ -387,7 +387,7 @@ def test_resetting_the_trial_returns_to_extension(api, session_id):
 
     assert payload["trial"] == {
         "flexion_deg": 0.0, "varus_valgus_deg": 0.0, "drawer_ap_mm": 0.0,
-        "distraction_mm": 0.0,
+        "distraction_mm": 0.0, "trajectory": "S3",
     }
     assert np.allclose(payload["delta"]["poses"]["TibialSet"], np.eye(4))
 

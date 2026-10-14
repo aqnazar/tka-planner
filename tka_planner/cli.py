@@ -25,6 +25,7 @@ from .pipeline import (
     discrete_sizing,
     findings_case,
     fit_case_with_grids,
+    flexion_case,
     implant_spec_case,
     measure_case,
     plan_case,
@@ -107,6 +108,14 @@ def _measure(args: argparse.Namespace) -> int:
         "implant_mode": args.implant_mode,
     }
 
+    flexion = None
+    if getattr(args, "flexion", False):
+        if args.library is None:
+            print("  --flexion needs --library: skipped", file=sys.stderr)
+        else:
+            flexion = flexion_case(m, surgical, sizing, args.library,
+                                   args.implant_mode)
+
     report_path = write_report(
         render_case_report(m, surgical, sizing, fit=fit, fit_grids=grids,
                            implant_spec=spec, resection_table=table,
@@ -114,7 +123,8 @@ def _measure(args: argparse.Namespace) -> int:
         output / "report.html")
     plan_path = write_plan(
         plan_document(m, surgical, sizing, fit=fit, implant_spec=spec,
-                      controls=controls, resection_table=table, findings=findings),
+                      controls=controls, resection_table=table, findings=findings,
+                      flexion=flexion),
         output / "plan.json",
     )
     spec_path = write_implant_spec(spec, output / "implant_spec.json")
@@ -168,6 +178,22 @@ def _measure(args: argparse.Namespace) -> int:
                   + (f"  [{', '.join(f['flags'])}]" if f["flags"] else ""))
         if fit["missing"]:
             print(f"  not in the library: {', '.join(fit['missing'])}")
+        pco = fit.get("posterior_condylar_offset") or {}
+        if pco.get("available"):
+            for compartment in ("medial", "lateral"):
+                row = pco[compartment]
+                if row["planned_mm"] is None:
+                    continue
+                print(f"  posterior condylar offset {compartment:7s} "
+                      f"{row['preoperative_mm']:5.1f} -> {row['planned_mm']:5.1f} mm "
+                      f"({row['change_mm']:+.1f}, {pco['status']})")
+    if flexion is not None:
+        print()
+        for name, record in flexion["trajectories"].items():
+            bound = ">=" if record["censored"] else "  "
+            print(f"  max flexion {name}  {bound}{record['max_flexion_deg']:6.1f} deg"
+                  + (f"  first contact: {record['first_pair']}"
+                     if record["first_pair"] else ""))
     print()
     f_dims = spec["femoral_component"]["dimensions_mm"]
     t_dims = spec["tibial_component"]["dimensions_mm"]
@@ -354,6 +380,11 @@ def main(argv: list[str] | None = None) -> int:
     measure.add_argument(
         "--insert-delta", type=float, default=0.0,
         help="insert thicker (+) or thinner (-) than the one that closes the joint, mm",
+    )
+    measure.add_argument(
+        "--flexion", action="store_true",
+        help="search the impingement-limited maximum flexion under the three flexion "
+             "trajectories S1-S3 (needs --library; about half a minute per knee)",
     )
     measure.set_defaults(func=_measure)
 

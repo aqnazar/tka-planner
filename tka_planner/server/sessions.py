@@ -20,7 +20,6 @@ from pathlib import Path
 
 from tka_planner.scene.build import SHELL_COLOUR
 from tka_planner.scene.model import FEMORAL, TIBIAL, Node, SceneDelta
-from tka_planner.scene.motion import trial_pose
 from tka_planner.session import PlanningSession
 from tka_planner.store import Store, plan_key
 from tka_planner.store.keys import BONES
@@ -272,14 +271,7 @@ class SessionManager:
             flexion = max_deg * index / steps
             frames.append({
                 "flexion_deg": float(flexion),
-                "pose": trial_pose(
-                    session.scene.pivot,
-                    flexion_deg=flexion,
-                    varus_valgus_deg=session.trial.varus_valgus_deg,
-                    drawer_ap_mm=session.trial.drawer_ap_mm,
-                    distraction_mm=session.trial.distraction_mm,
-                    distal=-session.measurement.tibial_frame.z_proximal,
-                ).tolist(),
+                "pose": session.trial_pose_at(flexion).tolist(),
             })
         return frames
 

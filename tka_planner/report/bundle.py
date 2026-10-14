@@ -54,7 +54,9 @@ def export_session(session, out_dir, *, commit=None, write_meshes: bool = True) 
             "varus_valgus_deg": session.trial.varus_valgus_deg,
             "drawer_ap_mm": session.trial.drawer_ap_mm,
             "distraction_mm": session.trial.distraction_mm,
+            "trajectory": session.trial.trajectory,
         },
+        trajectory=session.trial.trajectory,
         geometry=commit.to_dict() if commit is not None else None,
         geometry_matches_plan=not session.stale,
     )
