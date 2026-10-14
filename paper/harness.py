@@ -8,7 +8,7 @@ the machine. Every number in the paper comes out of one of these folders.
 
 Patient data never enters the repository, so neither the cohort nor the results do. The
 cohort is read from ``TKA_COHORT_DIR`` (default: ``Patient Dataset`` at the top of the
-checkout), and results go to ``TKA_PAPER_OUT`` (default: ``paper/out``, gitignored).
+checkout; the full-length reference knee from ``TKA_REFERENCE_DIR``), and results go to ``TKA_PAPER_OUT`` (default: ``paper/out``, gitignored).
 Knees are named by their case id and side only (``P009L``), taken from the segmentation
 file names, never from folder names.
 """
@@ -29,7 +29,6 @@ from typing import Callable
 
 REPO = Path(__file__).resolve().parent.parent
 LIBRARY_DEFAULT = REPO / "data" / "implants"
-REFERENCE_DIR = REPO / "data" / "cases" / "REF_KJ2"
 SEED = 20261014
 
 _SEGMENT = re.compile(r"(P\d{3})_([LR])", re.IGNORECASE)
@@ -48,6 +47,10 @@ class Case:
 
 def cohort_root() -> Path:
     return Path(os.environ.get("TKA_COHORT_DIR", REPO / "Patient Dataset"))
+
+
+def reference_dir() -> Path:
+    return Path(os.environ.get("TKA_REFERENCE_DIR", REPO / "data" / "cases" / "REF_KJ2"))
 
 
 def library_root() -> Path | None:
@@ -82,9 +85,10 @@ def cohort_cases(*, include_reference: bool = False) -> list[Case]:
             side = "left" if case_id.endswith("L") else "right"
             cases.append(Case(case_id, side, femur, tibia))
     cases.sort(key=lambda c: c.case_id)
-    if include_reference and (REFERENCE_DIR / "FD1Right.stl").is_file():
-        cases.insert(0, Case("REF_KJ2", "right", REFERENCE_DIR / "FD1Right.stl",
-                             REFERENCE_DIR / "TD1Right.stl", reference=True))
+    reference = reference_dir()
+    if include_reference and (reference / "FD1Right.stl").is_file():
+        cases.insert(0, Case("REF_KJ2", "right", reference / "FD1Right.stl",
+                             reference / "TD1Right.stl", reference=True))
     return cases
 
 
