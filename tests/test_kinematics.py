@@ -195,6 +195,7 @@ def test_articulation_does_not_stop_flexion():
         + ([_contact("rim", a)] if a >= 97.0 else []))
     assert limit.first_pair == "rim"
     assert 96.5 <= limit.max_flexion_deg < 97.0
+    assert limit.deepest_articulation.pair == "bearing"
 
 
 def test_a_pair_blocked_at_extension_is_listed_not_read_as_zero_flexion():

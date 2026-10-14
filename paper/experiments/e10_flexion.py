@@ -133,6 +133,10 @@ def run_e10a(ctx: Context) -> None:
                     "blocked_at_start": " ".join(
                         c["pair"] for c in record["blocked_at_start"]) or None,
                     "never_cleared": " ".join(record["never_cleared"]) or None,
+                    "deepest_articular_overlap_mm": (
+                        (record["deepest_articulation"] or {}).get("depth_mm")),
+                    "deepest_articular_overlap_at_deg": (
+                        (record["deepest_articulation"] or {}).get("flexion_deg")),
                     "internal_rotation_at_limit_deg":
                         record["at_limit"]["internal_rotation_deg"],
                     "medial_ap_at_limit_mm": record["at_limit"]["medial_ap_mm"],
@@ -198,6 +202,12 @@ def run_e10a(ctx: Context) -> None:
         for r in blocked:
             ctx.note(f"  - {r['case']} {r['philosophy']} {r['trajectory']}: "
                      f"{r['blocked_at_start']}")
+    depths = [r["deepest_articular_overlap_mm"] for r in rows
+              if r["deepest_articular_overlap_mm"] is not None]
+    ctx.note("- Deepest overlap of the femoral component in the insert's articular "
+             "surface over each searched arc (the prescribed motion's error, not "
+             f"impingement): {_summary_stats(depths)} mm; over 2 mm in "
+             f"{sum(d > 2.0 for d in depths)} of {len(depths)} searches.")
     cropped = [r for r in rows if r.get("crop_limited")]
     if cropped:
         ctx.note(f"- {len(cropped)} limiting contacts touch the crop box: the bone "

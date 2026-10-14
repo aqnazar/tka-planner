@@ -554,13 +554,19 @@ most one bisection step (0.3°), and a whole search takes under half a second pe
 scenario once the bones are prepared (about 25 s per knee, once).
 
 The femoral component is *meant* to touch the insert, and a prescribed motion is not
-solved from contact, so the two pairs are told apart by a stated rule: their overlap is
-**impingement** if any of it lies within 2 mm of the insert's rim (its anterior or
-posterior lip or its sides, in the insert's own axes), or if it reaches deeper along the
-insert's axis than the plan's own seating at extension by more than 1 mm; otherwise it
-is the **articulation** and does not stop flexion. Depth is the overlap's thickness
-measured column by column, not its overall extent, which on a sloping dish is several
-times larger. Both thresholds are settings. Any other pair blocks at any overlap above
+solved from contact, so a hinge that does not run through the centres of this
+component's condyles drives them into the dish or lifts them off it. That is the
+motion's error, not impingement, and the two are told apart by a stated rule: overlap
+of the component and the insert is **impingement** if any of it lies within 2 mm of the
+insert's rim (its anterior or posterior lip or its sides, in the insert's own axes);
+otherwise it is the **articulation** and does not stop flexion. The deepest articular
+overlap over the arc is reported with every search, as a check on how well the motion
+follows the parts. Depth is the overlap's thickness measured column by column, not its
+overall extent, which on a sloping dish is several times larger. Both the rim margin
+and an optional depth limit (articular overlap deeper than the plan's own seating by
+more than a tolerance) are settings. The first cohort run used a 1 mm depth limit and
+stopped one knee at 35°, deep in the medial dish: the hinge, not the parts, so the
+default no longer counts depth. Any other pair blocks at any overlap above
 1 mm³. A pair already in contact at extension is a plan problem, not a flexion limit: it
 is reported, and set aside only until the sweep first finds it clear.
 
@@ -582,10 +588,13 @@ compartment:
 * the **sagittal plane** is normal to the transepicondylar axis made perpendicular to the
   shaft axis — the projection a true lateral radiograph makes;
 * the **posterior cortex tangent** is a straight line fitted to the posterior silhouette
-  of the shaft between the canal levels (the most posterior surface point of each 2 mm
-  band, which is the outline a film shows), then moved posteriorly until it touches the
-  silhouette without crossing it. The fit residual is reported, since a bowed femur makes
-  the tangent ambiguous;
+  of the distal shaft (the most posterior surface point of each 2 mm band, which is the
+  outline a film shows), then moved posteriorly until it touches the silhouette without
+  crossing it. The shaft used is what a lateral knee film shows: from the distal canal
+  centre's level, but no more than 100 mm above the knee centre, for 100 mm or up to the
+  proximal canal centre. On the full-length reference femur a tangent over the whole
+  canal span followed the femoral bow (6 mm off its own fit) and put the offset near
+  60 mm. The fit residual is reported, since a bowed femur makes the tangent ambiguous;
 * each compartment's **offset** is the largest distance from that tangent, perpendicular
   to it in the sagittal plane, to any point of the condyle distal of the fitted shaft,
   compartments split at the notch centre. The film's single value is the larger of the

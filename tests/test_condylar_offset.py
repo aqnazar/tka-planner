@@ -135,6 +135,29 @@ def test_without_the_canal_the_offset_is_not_computable_and_says_why():
     assert "femur.canal_centre_distal" in metric.missing
 
 
+def test_the_tangent_is_drawn_on_the_distal_shaft_of_a_full_length_femur():
+    """A full-length femur: the canal centres sit at mid-shaft and near the
+    trochanters, where the shaft flares. The tangent must stay on the distal shaft a
+    knee film shows, so the flare cannot move it."""
+    points, _ = _femur()
+    angles = np.linspace(0.0, 2.0 * np.pi, 120, endpoint=False)
+    flare = [np.c_[18.0 * np.cos(angles), 18.0 * np.sin(angles),
+                   np.full_like(angles, z)] for z in np.arange(260.0, 420.0, 1.0)]
+    shaft = [np.c_[SHAFT_RADIUS * np.cos(angles), SHAFT_RADIUS * np.sin(angles),
+                   np.full_like(angles, z)] for z in np.arange(200.0, 260.0, 1.0)]
+    long_femur = np.vstack([points, *shaft, *flare])
+    landmarks = _landmarks()
+    moved = LandmarkSet("CASE_PCO", "left", "LPS", [
+        Landmark(id=one.id, status=one.status, origin="synthetic",
+                 position_mm=({"femur.canal_centre_distal": np.array([0, 0, 190.0]),
+                               "femur.canal_centre_proximal": np.array([0, 0, 400.0])}
+                              .get(one.id, one.position_mm)))
+        for one in landmarks])
+    metrics = posterior_condylar_offset_metrics(long_femur, moved, _frame())
+    assert metrics["pco_medial_mm"].value == pytest.approx(16.0, abs=0.05)
+    assert metrics["pco_medial_mm"].diagnostics["shaft_start_mm"] == pytest.approx(100.0)
+
+
 def test_too_little_shaft_is_refused_rather_than_fitted():
     points, _ = _femur()
     short = points[(points[:, 2] < 76.0)]   # 6 mm of shaft above the distal canal level

@@ -332,6 +332,7 @@ class FlexionLimit:
     resolution_deg: float
     blocked_at_start: tuple[Contact, ...] = ()
     never_cleared: tuple[str, ...] = ()
+    deepest_articulation: Contact | None = None
     evaluations: int = 0
 
     @property
@@ -350,6 +351,8 @@ class FlexionLimit:
             "contacts": [c.to_dict() for c in self.contacts],
             "blocked_at_start": [c.to_dict() for c in self.blocked_at_start],
             "never_cleared": list(self.never_cleared),
+            "deepest_articulation": (None if self.deepest_articulation is None
+                                     else self.deepest_articulation.to_dict()),
             "search": {"start_deg": self.start_deg, "stop_deg": self.stop_deg,
                        "step_deg": self.step_deg, "resolution_deg": self.resolution_deg,
                        "evaluations": self.evaluations},
@@ -375,10 +378,18 @@ def search_max_flexion(
         raise ValueError("The step and the resolution must be positive.")
     evaluations = 0
 
+    deepest = None
+
     def blocking(angle):
-        nonlocal evaluations
+        # The deepest contact that does not block is kept, so a search also says how
+        # far the prescribed motion drove the bearing surfaces into each other.
+        nonlocal evaluations, deepest
         evaluations += 1
-        return [c for c in contacts_at(float(angle)) if c.blocks]
+        found = contacts_at(float(angle))
+        for c in found:
+            if not c.blocks and (deepest is None or c.depth_mm > deepest.depth_mm):
+                deepest = c
+        return [c for c in found if c.blocks]
 
     at_start = tuple(blocking(start_deg))
     ignored = {c.pair for c in at_start}
@@ -407,13 +418,14 @@ def search_max_flexion(
             contacts=tuple(found), start_deg=start_deg, stop_deg=stop_deg,
             step_deg=step_deg, resolution_deg=resolution_deg,
             blocked_at_start=at_start, never_cleared=tuple(sorted(ignored)),
-            evaluations=evaluations,
+            deepest_articulation=deepest, evaluations=evaluations,
         )
     return FlexionLimit(
         trajectory=trajectory, max_flexion_deg=clear, censored=True, contacts=(),
         start_deg=start_deg, stop_deg=stop_deg, step_deg=step_deg,
         resolution_deg=resolution_deg, blocked_at_start=at_start,
-        never_cleared=tuple(sorted(ignored)), evaluations=evaluations,
+        never_cleared=tuple(sorted(ignored)), deepest_articulation=deepest,
+        evaluations=evaluations,
     )
 
 

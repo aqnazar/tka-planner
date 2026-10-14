@@ -18,12 +18,18 @@ All of it happens in one sagittal plane of the femur.
 * **Sagittal plane**: normal to the femoral frame's mediolateral axis (the
   transepicondylar axis) made perpendicular to ``a``. Projecting every point into it is
   what a true lateral radiograph does.
-* **Posterior cortex line**: the posterior silhouette of the shaft between the two canal
-  levels -- in 2 mm bands along ``a``, the most posterior surface point of each band,
-  which is the outline a lateral film shows -- fitted with a straight line, and then
-  moved posteriorly until it touches the silhouette without crossing it. That is the
-  tangent. Its fit residual is reported, because a femur bowed over the fitted length
-  makes "the" tangent ambiguous.
+* **Posterior cortex line**: the posterior silhouette of the distal shaft -- in 2 mm
+  bands along ``a``, the most posterior surface point of each band, which is the outline
+  a lateral film shows -- fitted with a straight line, and then moved posteriorly until
+  it touches the silhouette without crossing it. That is the tangent. The shaft used is
+  the stretch a lateral knee film shows: it starts at the distal canal centre's level,
+  but no more than ``MAX_TANGENT_START_MM`` (100 mm) above the knee centre, and runs
+  ``TANGENT_WINDOW_MM`` (100 mm) or to the proximal canal centre, whichever is shorter.
+  On a full-length femur the canal centres sit at mid-shaft and near the trochanters,
+  and a tangent over that length follows the femoral bow instead of the distal cortex
+  (on the reference femur it lay 6 mm off its own fit and put the offset near 60 mm).
+  Its fit residual is reported, because a femur bowed over the fitted length makes
+  "the" tangent ambiguous.
 * **Offset** of a compartment: the largest distance, perpendicular to the tangent in the
   sagittal plane, from the tangent to any point of that condyle, positive posteriorly.
   For a mesh the maximum of a distance along a direction is reached at a vertex, so
@@ -71,6 +77,9 @@ __all__ = [
 METHOD = "metrics.posterior_condylar_offset.v1"
 BAND_MM = 2.0
 MIN_BANDS = 8
+# The stretch of shaft a lateral knee radiograph shows, where Bellemans drew the tangent.
+TANGENT_WINDOW_MM = 100.0
+MAX_TANGENT_START_MM = 100.0
 
 PCO_DEFINITION = (
     "Posterior condylar offset (Bellemans 2002, per compartment): in the sagittal "
@@ -142,8 +151,8 @@ def posterior_cortex_line(
     vertices = np.asarray(vertices, dtype=float)
     rel = vertices - origin
     s, r = rel @ axial, rel @ posterior
-    low = float((np.asarray(distal) - origin) @ axial)
-    high = float((np.asarray(proximal) - origin) @ axial)
+    low = min(float((np.asarray(distal) - origin) @ axial), MAX_TANGENT_START_MM)
+    high = min(float((np.asarray(proximal) - origin) @ axial), low + TANGENT_WINDOW_MM)
     inside = (s >= low) & (s <= high)
     if not inside.any():
         raise ValueError("no shaft surface between the canal centres")

@@ -1013,10 +1013,12 @@ FLEXION_PAIRS = (
 class FlexionSettings:
     """How the maximum-flexion search is run, recorded with every result.
 
-    ``articular_tolerance_mm`` is the rule that tells the intended bearing contact from
-    impingement between the femoral component and the insert (see
-    :class:`FlexionModel`); ``None`` lets articular overlap never stop flexion. The
-    crop boxes are in the femoral and tibial frames' axes, centred on the hinge.
+    ``articular_tolerance_mm`` is part of the rule that tells the intended bearing
+    contact from impingement between the femoral component and the insert (see
+    :class:`FlexionModel`). ``None``, the default, lets overlap in the articular region
+    never stop flexion; a number makes it stop when deeper than the plan's own seating
+    by more than that. The crop boxes are in the femoral and tibial frames' axes,
+    centred on the hinge.
     """
 
     start_deg: float = 0.0
@@ -1024,7 +1026,7 @@ class FlexionSettings:
     step_deg: float = 5.0
     resolution_deg: float = 0.5
     min_volume_mm3: float = 1.0
-    articular_tolerance_mm: float | None = 1.0
+    articular_tolerance_mm: float | None = None
     rim_margin_mm: float = 2.0
     simplify_mm: float = 0.2
     femur_box_mm: tuple = ((-80.0, -80.0, -60.0), (80.0, 80.0, 90.0))
@@ -1072,18 +1074,16 @@ class FlexionModel:
 
     **Articulation or impingement.** The femoral component is meant to bear on the
     insert, and a prescribed trajectory is not solved from contact, so the two will
-    overlap somewhat where they articulate. An overlap of the pair is impingement when
-    either
-
-    * any of it lies within ``rim_margin_mm`` of the insert's edge -- its anterior or
-      posterior lip or its sides, in the insert's own axes -- which is contact outside
-      the articular surface; or
-    * it reaches deeper, along the insert's axis, than the overlap the plan itself
-      leaves at extension (the solved insert's seating) by more than
-      ``articular_tolerance_mm``.
-
-    Anything else is the intended articulation and does not stop flexion; it is still
-    returned, marked so. Every other pair -- insert against the resected femur, the
+    overlap, or part, where they articulate: a hinge that does not run through the
+    centres of this component's condyles drives them into the dish or lifts them off
+    it. That is the motion's error, not impingement. So an overlap of the pair is
+    impingement only when any of it lies within ``rim_margin_mm`` of the insert's edge
+    -- its anterior or posterior lip or its sides, in the insert's own axes -- which is
+    contact outside the articular surface. Overlap inside the articular surface is the
+    articulation; it does not stop flexion, and the deepest of it over the arc is
+    reported with every search as a check on how well the motion follows the parts.
+    With ``articular_tolerance_mm`` set, articular overlap deeper than the plan's own
+    seating at extension by more than that also counts as impingement. Every other pair -- insert against the resected femur, the
     femoral component against the resected tibia, bone against bone -- stops flexion at
     any overlap above ``min_volume_mm3``.
     """
