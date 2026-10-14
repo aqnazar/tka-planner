@@ -32,7 +32,7 @@ import numpy as np
 
 from .geometry import fit_sphere_robust, regional_mask
 from .landmarks import CoordinateSystem, LandmarkSet
-from .meshio import Mesh, weld_vertices
+from .meshio import Mesh, face_components, weld_vertices
 from .sides import LPS_PATIENT_LEFT, LPS_SUPERIOR, Side
 
 __all__ = [
@@ -41,6 +41,7 @@ __all__ = [
     "QCReport",
     "MeshQuality",
     "assess_mesh_quality",
+    "separate_detached_fragments",
     "assess_femur_coverage",
     "assess_tibia_coverage",
     "check_plausible_bone_scale",
@@ -56,6 +57,13 @@ FEMUR_HEAD_RADIUS_MM = (18.0, 30.0)
 PLAUSIBLE_BONE_LENGTH_MM = (60.0, 600.0)
 PLAUSIBLE_EPICONDYLAR_WIDTH_MM = (35.0, 130.0)
 LANDMARK_MESH_MARGIN_MM = 5.0
+
+# A detached piece of a bone mesh is set aside when it is smaller than this share of the
+# triangles and lies further than this outside the main body's extent. The cohort's own
+# specks are single collapsed points inside the bone, or 0.4 mm below it; the one that
+# mattered was 80 triangles 37 mm above a tibia. See separate_detached_fragments.
+DETACHED_FRAGMENT_MAX_SHARE = 0.01
+DETACHED_FRAGMENT_GAP_MM = 2.0
 
 # Length below which the femoral head cannot be present. The head-to-condyle distance
 # *is* the femur's length, 400-500 mm in adults, so any scan containing both must be at
@@ -283,6 +291,93 @@ def assess_mesh_quality(
             n_triangles=len(faces),
         )
     return quality, report
+
+
+def separate_detached_fragments(
+    mesh: Mesh,
+    bone: str,
+    *,
+    welded: Mesh | None = None,
+    max_share: float = DETACHED_FRAGMENT_MAX_SHARE,
+    min_gap_mm: float = DETACHED_FRAGMENT_GAP_MM,
+) -> tuple[Mesh, Mesh, QCReport]:
+    """Set aside specks of surface that lie apart from the bone, outside its extent.
+
+    The landmark estimators read a bone's extremes -- the top of the tibia is the
+    highest vertex, and the plateau, spines and tubercle are all searched below it. A
+    detached speck beyond the bone therefore relocates all of them. On one cohort tibia
+    an 80-triangle sliver of femoral surface, labelled tibia by the segmentation and
+    37 mm above the plateau, became the "top of the tibia": the spines and the PCL
+    insertion were placed on it, and the tibial frame was refused as if two landmarks
+    had been swapped.
+
+    A piece is set aside only when it is both small (under ``max_share`` of the
+    triangles) and outside the main body's bounding box by more than ``min_gap_mm`` --
+    that is, when it would move an extreme. Specks inside the bone's extent cannot, and
+    are left alone; so are large pieces, which may be anatomy and are not this
+    function's to judge. Each removal is a warning in the report, so it is never silent.
+
+    ``welded`` is the welded copy of ``mesh`` if the caller has one (mesh quality needs
+    it too, and welding is the expensive step). Returns the mesh, its welded copy and the
+    report; with nothing set aside they are the very objects passed in, so a clean mesh
+    is measured exactly as before.
+    """
+    report = QCReport()
+    welded = weld_vertices(mesh) if welded is None else welded
+    if len(welded.faces) != len(mesh.faces):
+        raise ValueError("The welded mesh must have the same faces as the mesh.")
+    labels = face_components(welded)
+    if len(labels) == 0 or labels.max() == 0:
+        return mesh, welded, report
+
+    main_points = welded.vertices[np.unique(welded.faces[labels == 0])]
+    low, high = main_points.min(axis=0), main_points.max(axis=0)
+    counts = np.bincount(labels)
+    drop = np.zeros(len(counts), dtype=bool)
+    outside = np.zeros(len(counts))
+    for piece in range(1, len(counts)):
+        if counts[piece] >= max_share * len(labels):
+            continue
+        points = welded.vertices[np.unique(welded.faces[labels == piece])]
+        outside[piece] = float(np.max(np.concatenate(
+            [low - points.min(axis=0), points.max(axis=0) - high, [0.0]])))
+        drop[piece] = outside[piece] > min_gap_mm
+    if not drop.any():
+        return mesh, welded, report
+
+    keep = ~drop[labels]
+    n_dropped = int((~keep).sum())
+    report.add(
+        "MESH_DETACHED_FRAGMENT", Severity.WARNING,
+        f"The {bone} mesh holds {int(drop.sum())} detached fragment(s) of "
+        f"{n_dropped} triangles ({n_dropped / len(labels):.3%} of the surface) lying up "
+        f"to {outside[drop].max():.0f} mm outside the bone. They were set aside before "
+        f"measuring, since the bone's extremes would otherwise be taken from them. "
+        f"Check the segmentation.",
+        bone=bone, n_fragments=int(drop.sum()), n_triangles=n_dropped,
+        max_outside_mm=round(float(outside[drop].max()), 1),
+    )
+    return _keep_faces(mesh, keep), _keep_faces(welded, keep), report
+
+
+def _keep_faces(mesh: Mesh, keep: np.ndarray) -> Mesh:
+    """The mesh without the faces not kept, and without vertices only they used.
+
+    Vertex order is preserved, so every search that breaks ties by index breaks them
+    the same way on what remains.
+    """
+    faces = mesh.faces[keep]
+    used = np.unique(faces)
+    index = np.full(len(mesh.vertices), -1, dtype=np.int64)
+    index[used] = np.arange(len(used))
+    return Mesh(
+        vertices=mesh.vertices[used],
+        faces=index[faces],
+        source_path=mesh.source_path,
+        sha256=mesh.sha256,
+        metadata={**mesh.metadata,
+                  "detached_triangles_removed": int(len(mesh.faces) - len(faces))},
+    )
 
 
 # ----------------------------------------------------------------------

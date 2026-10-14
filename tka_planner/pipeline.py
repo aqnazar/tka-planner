@@ -46,6 +46,7 @@ from .core.qc import (
     check_landmarks_on_mesh,
     check_laterality,
     check_plausible_bone_scale,
+    separate_detached_fragments,
 )
 from .core.sides import Side
 from .core.sizing import (
@@ -182,11 +183,19 @@ def measure_case(
     tibia = read_stl(tibia_path)
 
     qc = QCReport()
+    # Specks of surface detached from the bone and outside it are set aside first:
+    # every estimator reads the bone's extremes, and a speck beyond the bone becomes
+    # one. The weld is shared with the mesh-quality check, which needs it too.
+    bones = {}
     for mesh, bone in ((femur, "femur"), (tibia, "tibia")):
+        mesh, welded, fragment_report = separate_detached_fragments(mesh, bone)
+        qc.extend(fragment_report)
+        bones[bone] = mesh
         qc.extend(check_plausible_bone_scale(mesh, bone))
         qc.extend(check_laterality(mesh, side))
-        _, mesh_report = assess_mesh_quality(mesh)
+        _, mesh_report = assess_mesh_quality(welded, already_welded=True)
         qc.extend(mesh_report)
+    femur, tibia = bones["femur"], bones["tibia"]
     qc.raise_if_errors()
 
     femur_coverage, femur_report = assess_femur_coverage(femur)
