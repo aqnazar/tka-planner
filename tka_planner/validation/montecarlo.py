@@ -460,6 +460,28 @@ def plan_outputs(measurement, plan, sizing, *, reference=None) -> dict[str, floa
 # ----------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _FixedBoundsMesh(Mesh):
+    """A mesh whose bounding box is computed once.
+
+    Sizing records the world-aligned extent as a diagnostic on every call, which on a
+    three-million-vertex segmentation is a fifth of a second per draw spent recomputing a
+    number that cannot change: the draws move landmarks, never the mesh.
+    """
+
+    fixed_bounds: tuple | None = None
+
+    @property
+    def bounds(self):
+        return self.fixed_bounds
+
+
+def _fixed_bounds(mesh: Mesh) -> Mesh:
+    return _FixedBoundsMesh(vertices=mesh.vertices, faces=mesh.faces,
+                            source_path=mesh.source_path, sha256=mesh.sha256,
+                            metadata=mesh.metadata, fixed_bounds=mesh.bounds)
+
+
 @dataclass
 class PropagationResult:
     """Every draw's outputs, the nominal plan's, and what failed."""
@@ -544,6 +566,7 @@ def propagate(
     nominal_size = discrete_sizing(measurement).nearest_discrete_size
 
     meshes = {"femur": measurement.femur, "tibia": measurement.tibia}
+    femur, tibia = _fixed_bounds(measurement.femur), _fixed_bounds(measurement.tibia)
     model = SurfaceModel.build(measurement.landmarks, meshes if surface != "free" else None,
                                surface)
     frames = {"femur": measurement.femoral_frame, "tibia": measurement.tibial_frame}
@@ -561,7 +584,7 @@ def propagate(
                        surface=model)
         try:
             m = measure_from_landmarks(
-                draw, measurement.femur, measurement.tibia,
+                draw, femur, tibia,
                 femur_path=measurement.femur_path, tibia_path=measurement.tibia_path,
                 case_id=measurement.case_id, side=measurement.side,
                 size_chart=measurement.chart_path,
