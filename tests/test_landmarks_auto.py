@@ -100,7 +100,7 @@ def test_the_plateau_low_points_never_sit_on_the_side_of_the_bone(side):
     landmarks = landmarks_for(side)
     for landmark_id in ("tibia.plateau_medial_lowest", "tibia.plateau_lateral_lowest"):
         landmark = landmarks[landmark_id]
-        assert landmark.origin == "auto:plateau_dish.v2"
+        assert landmark.origin == "auto:plateau_dish.v3"
         assert landmark.position_mm[2] > -10.0
 
 
