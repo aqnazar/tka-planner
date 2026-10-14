@@ -13,6 +13,8 @@ dependencies = ["numpy>=1.24", "manifold3d>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
+# The paper harness (paper/) draws its figures with matplotlib; the planner never imports it.
+paper = ["matplotlib>=3.8"]
 # GPL. Never imported at runtime; used only by the kernel cross-check test.
 blender = ["bpy>=4.4"]
 
