@@ -65,3 +65,5 @@ plan file, of each of its sections and of the committed geometry, for the fixtur
 against the table made on the paper's machine; CI runs that on Linux and Windows.
 `--case P009L` does the same for a cohort knee. **E9's timings are only paper numbers
 from a quiet machine**: its summary says so when the CPU was busy around the run.
+| E8 | Geometry kernel: manifold3d vs Blender, repair statistics, refusals | cohort optional; Blender (`TKA_BLENDER`) |
+| E9 | Performance and determinism (`python -m paper.determinism`; timings only from a quiet machine) | cohort optional |
