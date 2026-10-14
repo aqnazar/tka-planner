@@ -172,6 +172,27 @@ class TestFemoralAxisLadder:
         assert np.allclose(measured.z_proximal, estimated.z_proximal, atol=1e-9)
         assert measured.quality is not estimated.quality
 
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("axial_deg", [-30.0, -15.0, 15.0, 30.0])
+    def test_the_assumed_ama_is_applied_in_the_femurs_own_coronal_plane(
+        self, side, axial_deg
+    ):
+        """A leg turned about its long axis in the scanner keeps its mechanical axis.
+
+        The AMA is a coronal angle of the femur, and the femur's coronal plane is the
+        one holding its shaft and its epicondylar axis. The rotation used to be taken in
+        the plane holding the shaft and the scanner's left-right axis, which is that
+        plane only while the knee lies square. Turned 30 degrees, the recovered axis
+        was 3.1 degrees off and mLDFA 0.8 degrees off (6 x (1 - cos 30)).
+        """
+        from tka_planner.validation.synthetic import posed, scanner_rotation
+
+        rotation = scanner_rotation(axial_deg=axial_deg)
+        square = build_femoral_frame(synthetic_knee(side))
+        turned = build_femoral_frame(posed(synthetic_knee(side), rotation))
+
+        assert np.allclose(turned.z_proximal, rotation @ square.z_proximal, atol=1e-9)
+
     def test_records_the_diaphyseal_lever_arm(self):
         """Angular uncertainty scales inversely with it, so it must be visible."""
         frame = build_femoral_frame(synthetic_knee("left", include_head=False))

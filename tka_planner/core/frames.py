@@ -339,7 +339,30 @@ def _femoral_proximal_axis(landmarks, knee_centre, side, ama_assumption, attempt
     # to the femoral head. Recovering the mechanical axis therefore means rotating the
     # anatomical axis medially, in the coronal plane, by the mechanical-anatomical
     # angle. Rotating the wrong way would double the error rather than remove it.
-    medial = side.medial_direction(_patient_left_reference(side, axis))
+    #
+    # "The coronal plane" is the femur's own: the plane holding the shaft and the
+    # epicondylar axis. The scanner's left-right axis gives the sign of medial and
+    # nothing more -- taking the plane from it rotated the axis partly into the sagittal
+    # plane on any leg lying turned about its long axis, by 6 x sin(turn) degrees, and
+    # cost mLDFA 6 x (1 - cos(turn)): 0.8 degrees at 30. Using the epicondyles here
+    # couples them to the axis only at second order -- an epicondylar pick off by e
+    # degrees in the transverse plane moves the axis by 6 x (1 - cos e) -- so the
+    # coronal and rotational constructions stay effectively independent.
+    medial_hint = side.medial_direction(_patient_left_reference(side, axis))
+    lateral_epicondyle = landmarks.position("femur.epicondyle_lateral")
+    medial_epicondyle = landmarks.position("femur.epicondyle_medial_sulcus")
+    if medial_epicondyle is None:
+        medial_epicondyle = landmarks.position("femur.epicondyle_medial_prominence")
+    medial = medial_hint
+    diagnostics["ama_plane"] = "scanner_left_right"
+    if lateral_epicondyle is not None and medial_epicondyle is not None:
+        try:
+            medial = orient_towards(
+                project_out(medial_epicondyle - lateral_epicondyle, axis), medial_hint
+            )
+            diagnostics["ama_plane"] = "epicondylar"
+        except ValueError:
+            pass  # an epicondylar axis along the shaft: keep the scanner's plane
     coronal_normal = unit(np.cross(medial, axis))
     z_proximal = _rotate_about(axis, coronal_normal,
                                np.radians(ama_assumption.value), towards=medial)
