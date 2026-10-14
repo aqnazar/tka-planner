@@ -9,3 +9,5 @@ from . import e06c_hip_centre  # noqa: F401
 from . import e_regression  # noqa: F401
 from . import e07a_sizing  # noqa: F401
 from . import e07b_fit  # noqa: F401
+from . import e01_synthetic_accuracy  # noqa: F401
+from . import e05_montecarlo  # noqa: F401

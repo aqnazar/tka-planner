@@ -38,3 +38,5 @@ the same refusals.
 | REG | Regression check: every landmark, frame, metric and the default plan per knee against a frozen baseline (`TKA_REG_FREEZE=1` freezes; baselines in `TKA_PAPER_OUT/baselines/`) | cohort |
 | E7a | Sizing measurement: legacy bounding box vs resection cross-section at the planned cuts; chart-size changes | cohort |
 | E7b | Implant fit on the cuts: chart size vs uniform scale vs patient-specific (and the Fusion-regenerated parts, with `TKA_PATIENT_BUILDS`) | cohort |
+| E1 | Metric accuracy on synthetic knees: anatomy, width, tibial-axis and scanner-pose sweeps; provenance tiers | synthetic |
+| E5 | Monte Carlo propagation of landmark picking error (PLACEHOLDER dispersion until E3) | cohort |
