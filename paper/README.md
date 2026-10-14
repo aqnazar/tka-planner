@@ -21,8 +21,8 @@ tibia, plus segmentation exports whose names carry the case id (`..._P009_L...`)
 Knees are only ever named by case id and side. The implant catalogue is `data/implants/`
 (or `TKA_IMPLANT_LIBRARY`). E7b also reads the private Fusion builds of the
 patient-specific parts, read-only and only when `TKA_PATIENT_BUILDS` names their folder
-(one `<knee>/` per build with `job.json`, `femoral.stl`, `plate.stl`). Experiments that need no cohort (synthetic knees, the
-kernel checks) run from a plain checkout.
+(one `<knee>/` per build with `job.json`, `femoral.stl`, `plate.stl`). Experiments that
+need no cohort (synthetic knees, the kernel checks) run from a plain checkout.
 
 **The Paper 1 baseline (E12).** `python -m paper.legacy_runner P009L` runs the frozen
 `legacy/TKA_Script_v3.py` on one knee in headless Blender (5.1 by default, the version
@@ -44,26 +44,26 @@ the same refusals.
 | Id | Experiment | Data |
 |---|---|---|
 | E0 | Cohort inventory and acceptance | cohort |
+| E1 | Metric accuracy on synthetic knees: anatomy, width, tibial-axis and scanner-pose sweeps; provenance tiers | synthetic |
 | E2 | Metamorphic invariance: mirror + side swap, random rigid motions, scanner rotation about each axis (-30 to +30 deg), decimation (50%, 10%), remeshing, vertex noise; automatic and oracle (carried) landmarks | cohort |
+| E5 | Monte Carlo propagation of landmark picking error (PLACEHOLDER dispersion until E3) | cohort |
 | E6c | Functional hip centre from camera-tracked pivoting: accuracy vs arc, noise, samples, pelvic motion (synthetic part) | synthetic |
-| REG | Regression check: every landmark, frame, metric and the default plan per knee against a frozen baseline (`TKA_REG_FREEZE=1` freezes; baselines in `TKA_PAPER_OUT/baselines/`) | cohort |
 | E7a | Sizing measurement: legacy bounding box vs resection cross-section at the planned cuts; chart-size changes | cohort |
 | E7b | Implant fit on the cuts: chart size vs uniform scale vs patient-specific (and the Fusion-regenerated parts, with `TKA_PATIENT_BUILDS`) | cohort |
-| E1 | Metric accuracy on synthetic knees: anatomy, width, tibial-axis and scanner-pose sweeps; provenance tiers | synthetic |
-| E5 | Monte Carlo propagation of landmark picking error (PLACEHOLDER dispersion until E3) | cohort |
+| E8 | Geometry kernel: manifold3d against Blender's exact solver (gate cases, every installed Blender, cohort resections), repair statistics, refused defects | cohort optional; Blender optional (`TKA_BLENDER`) |
+| E9 | Per-stage time per knee, commit time against triangle count, plan determinism in and across processes | cohort optional; synthetic fixture |
 | E10a | Impingement-limited maximum flexion per knee, MA and KA plans, trajectories S1-S3, and the envelope | cohort + implant library |
 | E10b | Posterior condylar offset per compartment: preoperative, planned (patient-specific and catalogue), change | cohort + implant library |
 | E10c | Slope of modelled flexion against offset (component moved -3 to +3 mm) and against posterior femoral translation, against Bellemans 2002 and Banks 2003 | cohort + implant library |
 | E12 | Paper 1 pipeline (frozen legacy script, headless Blender) vs the current planner; reproduction of the archived Paper 1 runs | cohort, Blender, legacy library |
-| E8 | Geometry kernel: manifold3d against Blender's exact solver (gate cases, every installed Blender, cohort resections), repair statistics, refused defects | cohort optional; Blender optional (`TKA_BLENDER`) |
-| E9 | Per-stage time per knee, commit time against triangle count, plan determinism in and across processes | cohort optional; synthetic fixture |
+| REG | Regression check: every landmark, frame, metric and the default plan per knee against a frozen baseline (`TKA_REG_FREEZE=1` freezes; baselines in `TKA_PAPER_OUT/baselines/`) | cohort |
+
 `needs_cohort="optional"` runs on the cohort when it is there and on its synthetic part
 alone when it is not.
+
 **Determinism.** `python -m paper.determinism --synthetic` prints the SHA-256 of the
 plan file, of each of its sections and of the committed geometry, for the fixture in
 `tests/fixtures/determinism/`. `--compare paper/determinism_synthetic.json` checks it
 against the table made on the paper's machine; CI runs that on Linux and Windows.
 `--case P009L` does the same for a cohort knee. **E9's timings are only paper numbers
 from a quiet machine**: its summary says so when the CPU was busy around the run.
-| E8 | Geometry kernel: manifold3d vs Blender, repair statistics, refusals | cohort optional; Blender (`TKA_BLENDER`) |
-| E9 | Performance and determinism (`python -m paper.determinism`; timings only from a quiet machine) | cohort optional |
