@@ -34,6 +34,13 @@ elsewhere), else from the catalogue. The catalogue cannot run every knee: it has
 right femoral components outside L4 and no L4 cutting blocks, under the names the script
 expects. Paper 1's runs used the twelve-size CAD export with the catalogue's chart.
 
+**Each knee in 3D.** After E12, `python -m paper.legacy_view --serve` writes and serves
+`paper/out/E12/viewer/` (http://127.0.0.1:8790): per knee, the bones, the parts the Paper 1
+script placed (read back from its own output files), the planner's like-for-like and
+default parts, both main cuts of each, and the numbers between them, all in the knee's
+STL frame. Two clicked points report their STL coordinates and distance. The output holds
+patient geometry and stays in the gitignored `paper/out/`.
+
 **Adding an experiment.** A module `paper/experiments/eNN_<topic>.py` with a
 `run(ctx)` decorated by `@experiment("ENN", "title", needs_cohort=...)`, imported in
 `paper/experiments/__init__.py`. Use `ctx.table(...)` for tables, `ctx.note(...)` for the
