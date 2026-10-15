@@ -90,9 +90,11 @@ along its anterior axis), between the 0.1st and 99.9th percentiles of the block'
 Taken in the frame's axes rather than the world's, since a femur lies at whatever
 rotation the scanner found it in. Not the bounding box: a box is the distance between
 two vertices, so surface noise only widens it. On the cohort, 0.5 mm of vertex noise
-added 2.1–3.1 mm to the box and moved the chart size on 5 of 11 knees; the percentile
-extent grew 0.4–0.7 mm and moved none. On clean meshes it reads about 0.6 mm narrower
-than the box and changes no knee's size (`measure.femur.frame_aligned_distal_extent.v2`).
+added 2.1–3.1 mm to the box and moved the nearest size on 5 of 11 knees; the percentile
+extent grew 0.4–0.7 mm and moved none. On clean meshes it reads 0.4–0.8 mm narrower than
+the box (`measure.femur.frame_aligned_distal_extent.v2`). No knee's nearest size changes;
+the round-down chart size of P029L and P029R, whose boxes were 80.49 and 80.02 mm against
+the 80 mm L2 threshold, goes from L2 to L1.
 
 **Tibial AP** — the anteroposterior extent of the **resection cross-section**, cut a few
 millimetres below the articular surface. Not a bounding box: a box round the proximal

@@ -2,9 +2,10 @@
 
 A bounding box is the distance between two vertices, so a single stray vertex moves it by
 its whole excursion, and surface noise always widens it: on the cohort 0.5 mm of vertex
-noise put 2.1 to 3.1 mm on the femoral ML and changed the chart size on five of eleven
+noise put 2.1 to 3.1 mm on the femoral ML and changed the nearest size on five of eleven
 knees. The extent is now taken between the 0.1st and 99.9th percentiles, which on the
-clean cohort changed no size.
+clean cohort changed no nearest size (two knees on the 80 mm L2 threshold now round down
+to L1).
 """
 
 import numpy as np

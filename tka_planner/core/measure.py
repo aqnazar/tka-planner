@@ -53,9 +53,11 @@ EMINENCE_HALF_WIDTH_FRACTION = 0.20
 
 # Percentile trimmed from each end of the femoral extent. A bounding box is the distance
 # between two vertices, so surface noise only ever widens it: on the cohort 0.5 mm of
-# vertex noise added 2.1-3.1 mm to the femoral ML and moved the chart size on five of
-# eleven knees. Between the 0.1st and 99.9th percentiles the same noise adds 0.4-0.7 mm,
-# no clean knee changes size, and a clean bone reads about 0.6 mm narrower than its box.
+# vertex noise added 2.1-3.1 mm to the femoral ML and moved the nearest size on five of
+# eleven knees. Between the 0.1st and 99.9th percentiles the same noise adds 0.4-0.7 mm and
+# moves none. A clean bone reads 0.4-0.8 mm narrower than its box: no clean knee's
+# nearest size changes, but P029L and P029R, whose boxes were 80.49 and 80.02 mm against
+# L2's 80 mm, now round down to L1.
 # 0.5 would leave less noise bias (0.16 mm) but take 1.9 mm off every clean knee.
 EXTENT_PERCENTILE = 0.1
 
