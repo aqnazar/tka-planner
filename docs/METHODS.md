@@ -713,7 +713,13 @@ posterior reach exceeds the anterior by 16–31 mm. Before the gate, every knee 
 planned (errors to 114° in a metric, 119° in the femoral cut) and at 90° seven of
 eleven failed inside the planner.
 Within it, the estimators are invariant to how the knee lies; the coverage lengths are
-measured along the bones' axes too.
+measured along the bones' axes too. On the cohort (E2 after the fixes) every accepted
+rigid or scanner motion reproduced the original to 0.006 mm in landmarks, 0.001° in
+metrics and 0.002° / 0.008 mm in the plan; every knee turned 90° or 180° was refused.
+The gate is not a guarantee of the estimators, though: tilted 30° forward about scanner X
+(about 38° in all), two knee-only femurs (P007R, P029L) had their long axis estimated
+130° from superior, and one knee turned 30° (P047L, already 15° turned) crossed the turn
+limit. All three were refused, not planned.
 
 ## Verification
 
