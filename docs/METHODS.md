@@ -53,6 +53,14 @@ Rotational reference: the surgical epicondylar axis where the medial sulcus has 
 picked, otherwise the anatomical axis, with the substitution recorded. The sulcus is a
 depression rather than a surface extreme, so no automatic estimator can find it.
 
+**Left and right come from the landmarks' names.** The epicondylar axis is oriented
+patient-left by the side (lateral is patient-left on a left knee), and the tibial frame
+checks its Akagi line against the spines' labels. The femoral frame used to orient the
+epicondylar axis towards scanner +X, which turned the frame 180° on the reference knee
+tilted 30° in the scanner; scanner +X is now consulted only when those landmarks are
+missing, and a bone lying along it raises `FrameConstructionError`, a refusal, not a bare
+`ValueError`.
+
 ## Provenance
 
 Every reported value carries a tier:
@@ -77,9 +85,14 @@ epicondylar axes. With real landmarks it is measured, not assumed.
 
 ## Measurement
 
-**Femoral ML** — bounding box of the distal block along the frame's mediolateral axis.
+**Femoral ML** — extent of the distal block along the frame's mediolateral axis (and AP
+along its anterior axis), between the 0.1st and 99.9th percentiles of the block's vertices.
 Taken in the frame's axes rather than the world's, since a femur lies at whatever
-rotation the scanner found it in.
+rotation the scanner found it in. Not the bounding box: a box is the distance between
+two vertices, so surface noise only widens it. On the cohort, 0.5 mm of vertex noise
+added 2.1–3.1 mm to the box and moved the chart size on 5 of 11 knees; the percentile
+extent grew 0.4–0.7 mm and moved none. On clean meshes it reads about 0.6 mm narrower
+than the box and changes no knee's size (`measure.femur.frame_aligned_distal_extent.v2`).
 
 **Tibial AP** — the anteroposterior extent of the **resection cross-section**, cut a few
 millimetres below the articular surface. Not a bounding box: a box round the proximal
@@ -179,11 +192,23 @@ mechanical axis gave a 4.4° disagreement on a real case — error from canal se
 ~82 mm apart on a 174 mm femur, not anatomy. The disagreement is now measured and
 reported as a warning.
 
-The reference's own sagittal tilt is stripped against the **patient** frame before use. A
-diaphyseal axis fitted to a supine, slightly flexed leg leans forwards ~4.3°, and that
-says how the leg lay in the scanner. Component flexion and tibial slope are surgical
-parameters, set explicitly. (Projecting against the *bone* frame's anterior axis removes
-nothing — it is perpendicular to that frame's own axis by construction.)
+**Femoral flexion is measured from the femur's own axis.** Zero flexion is a distal cut
+square to the femoral frame's proximal axis seen from the side: the mechanical axis where
+the femoral head was measured, otherwise the distal diaphyseal axis (the assumed AMA
+turns it only in the coronal plane), which is the reference an intramedullary femoral
+guide sets. Component flexion and tibial slope are surgical parameters, set explicitly
+from the target and each measured on its own bone. The hinge, the coronal and per-cut
+varus rotations and the shared-slope check all use the femoral frame's anterior axis.
+
+Until 2026-10-14 the reference's sagittal tilt was stripped against the **scanner's**
+anterior axis instead, on the argument that a diaphyseal axis fitted to a supine,
+slightly flexed leg leans forwards (~4.3° on P009) only because of how the leg lay. But
+that lean is the femur's, and the cut is made on the femur: with the landmarks carried
+through a sagittal tilt of the scan, the femoral cut stayed put in the scanner and the
+component's flexion *on the femur* moved by exactly the tilt (E2), while the tibial cut
+followed its bone. The old construction is kept as
+`femoral_sagittal_reference="scanner"` for comparison, and the plan records which was
+used.
 
 A positive slope drops the posterior edge of the cut, tilting the plane normal
 posteriorly. Inverting this produced cuts sloping forwards.
@@ -337,8 +362,8 @@ on both knees. Reported per cut:
 An overhang over 2 mm raises a flag. That limit is a convention from the literature on
 tibial overhang, not a validated threshold, and the distances are always reported.
 
-On case P009 the femur is sized from the bounding box of its distal quarter, 90.2 mm ML,
-which the epicondyles set. The bone at the distal cut is 76.5 mm wide, so the solved
+On case P009 the femur is sized from the extent of its distal quarter, 89.6 mm ML (90.2
+as a bounding box), which the epicondyles set. The bone at the distal cut is 76.5 mm wide, so the solved
 component overhangs the distal cut by up to 12 mm. The legacy pipeline sizes the femur
 the same way. The fit check exists to expose exactly this kind of mismatch.
 
@@ -430,14 +455,36 @@ A complete first pass from two STL files, so a plan can be produced with no manu
 picking. **Everything it emits is marked `ESTIMATED`**, never `PRESENT` — an automatic
 estimate is a starting position for a human to correct.
 
-The estimator solves for the femur's own mediolateral axis first, iterating on the
-posterior condyles: locating them needs a posterior direction, which needs the
-mediolateral axis, so the two converge together from the world axis in about three
-rounds. Everything downstream then searches along the bone's own directions.
+**Every search runs in the bone's own axes** (`landmarks_auto.v2`), found from its
+surface before any landmark exists, and the landmarks are mapped back to scanner
+coordinates. The axes are right-handed, in LPS order, with the origin at the surface's
+area-weighted centroid:
 
-An earlier version took the extremes of the epicondylar band along the *world* axes.
-On a femur rotated ~15° that finds whatever part of the condylar circumference is widest
-in world X, and it put the rotational reference **26° out**.
+| Bone | Superior | Patient-left |
+|---|---|---|
+| Femur (`bone_axes.femur.shaft_ama.v1`) | the diaphyseal axis, through two canal sections each cut square to the last round's axis, turned medially by the population AMA (6°) in the plane of the posterior condylar line: the axis the femoral frame falls back to on a knee-only scan | the posterior condylar line, converged in the plane square to that axis |
+| Tibia (`bone_axes.tibia.shaft.v1`) | the diaphyseal axis, as for the femur, with no turn: the axis the tibial frame uses | the tibia's own posterior condylar line, on the top 22 mm, converged from the plateau's widest direction |
+
+The femur's axes are found on its distal window only (2.75 condylar widths), so a
+full-length femur gets the axes of its own knee-only scan. The tibia's mediolateral axis
+is its own rather than the femur's so that the tibial frame's rotational reference,
+built from landmarks found in these axes, does not inherit the femur's rotation; and the
+posterior condyles rather than the plateau's widest direction, which is asymmetric and
+lay 18° from both posterior condylar lines on P009L. The refinements read discrete point
+sets and so end in a cycle of 0.001–0.04°, reached in three to five rounds.
+
+**The scanner contributes only signs** — which end is superior, which side patient-left —
+and those are protected by the orientation gate (see Quality control). Searching along the
+scanner's axes, as version 1 did, measured the scan rather than the knee. Metamorphic
+testing (paper experiment E2) showed what it cost: turning the leg 10° in the scanner
+turned the tibial AP (Akagi) axis 17°, and 30° turned it 46°; a 30° coronal tilt moved a
+distal condyle 30–34 mm; and moving the knee 100 mm *without turning it* moved a plateau
+low point up to 12.5 mm and changed the posterior slope by up to 1.7°, because the
+articular grid below was anchored at the scanner's origin. In the bone's axes a rigid
+motion moves every landmark with the bone exactly (synthetic bones: to 1e-6 mm), and a
+mirror mirrors them. Before that, an earlier version still took the extremes of the
+epicondylar band along the *world* axes: on a femur rotated ~15° that put the rotational
+reference **26° out**.
 
 The plateau low points are searched on the **articular surface only**: faces within 55°
 of horizontal, the highest in each 2 mm cell seen from above, away from the edge of that
@@ -446,9 +493,29 @@ first version took the lowest vertex of a 22 mm slab at the top of the bone, and
 always the slab floor on the cortex. On case P009 both landmarks sat exactly 22 mm below
 the top, level with each other, so MPTA came out as 90° by construction. It is 84.4°.
 
+Two estimators were ill-posed whatever the axes and were redefined in v2:
+
+- **Notch centre** (`notch_roof.v2`): the roof of the intercondylar notch on the midline
+  between the posterior condyles, at its lowest — where the notch roof meets the end of
+  the trochlea, the top of the notch as an AP view shows it and where an intramedullary
+  rod enters. The roof is flat there for several millimetres from front to back, so the
+  point is the centre of the stretch of a 6 mm sagittal strip within 2 mm of its lowest.
+  Version 1 took the most proximal point near the median of the condylar block, which is
+  always the block's ceiling, 20–40 mm above the notch on a cortex; under 0.1 mm of noise
+  it moved 15–43 mm. The distal condyles are now split at the notch rather than at the
+  block's median.
+- **PCL footprint** (`posterior_intercondylar.v2`): the most posterior point, within
+  18 mm of the top, of a 4 mm strip on the midline between the spines. Version 1 searched
+  a 32 mm band, whose most posterior points are the backs of the two condyles at its
+  edges: on every knee it picked one edge or the other, 16 mm off the midline, and a turn
+  could swap them (32 mm apart on the reference knee).
+
 Confidence is recorded per landmark. Condylar and plateau extremes are good; epicondyles
-fair; the tibial rotational references weakest, since a patellar tendon insertion has no
-geometric signature to find.
+and the notch fair; the tibial rotational references weakest, since a patellar tendon
+insertion has no geometric signature to find. Extremes on flat surfaces are sharp across
+the surface and loose along it: a distal condyle's height is well defined, its AP
+position is not (it moved 3–16 mm along the condyle between v1 and v2 for a 4–6°
+change of axis, with its height unchanged within 0.1 mm).
 
 ## Flexion
 
@@ -630,6 +697,22 @@ positive X in LPS; and landmarks must fall within their bone's bounding box, whi
 catches an LPS/RAS mismatch decisively since it displaces points by twice their distance
 from the midline.
 
+**Orientation gate.** The landmark searches run in each bone's own axes but take their
+signs from the scanner, so a knee lying too far from LPS is refused, as an error, before
+any landmark is found: a bone's long axis more than **45°** from scanner superior
+(`SCAN_ORIENTATION_TILTED`); the femur's posterior condylar line more than **45°** from
+scanner left-right, measured about the femur's own axis (`SCAN_ORIENTATION_TURNED`); the
+femur below the tibia along its axis (`SCAN_UPSIDE_DOWN`); or the condylar block
+reaching more than **5 mm** further in front of the femoral shaft than behind it — a knee
+facing backwards, which the line tests cannot see (`SCAN_FACING_BACKWARDS`). 45° is half
+of the 90° at which those signs become ambiguous. On the 11 cohort knees the bones' long
+axes lie 1–8° from superior, the femur's condylar line 0–15° from left-right, and the
+posterior reach exceeds the anterior by 16–31 mm. Before the gate, every knee turned upside down was
+planned (errors to 114° in a metric, 119° in the femoral cut) and at 90° seven of
+eleven failed inside the planner.
+Within it, the estimators are invariant to how the knee lies; the coverage lengths are
+measured along the bones' axes too.
+
 ## Verification
 
 `pytest` runs the full suite with no Blender installed.
@@ -644,6 +727,13 @@ and both the condylar twist and JLCA conventions were inverted.
 flip its side, and every scalar metric and resection depth must be unchanged. A knee is
 not more varus for being a right knee. This is the class of bug the legacy pipeline had,
 where compartments were labelled by world position and so were right on one side only.
+
+**Rigid motion is the second.** The same knee moved and turned in the scanner is the
+same knee: the automatic landmarks on synthetic bones must move with the bone to 1e-6 mm
+under translations, ±30° turns about each axis and an oblique motion; both frames must
+turn with landmarks carried through any rotation; and the plan's cuts, depths and
+component poses must turn with the knee. Paper experiment E2 runs the same check on the
+cohort's meshes.
 
 Blender-side geometry is verified headless and numerically — component offset from its
 cut plane, whether parts coincide, whether the joint stays articulated through the arc —

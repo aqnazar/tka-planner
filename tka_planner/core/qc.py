@@ -706,8 +706,9 @@ def check_scan_orientation(femur_axes, tibia_axes) -> QCReport:
     search in. Within the gate the estimators do not depend on how the knee lies; beyond
     it the signs they take from the scanner may be wrong, and a plan built on them would
     be confidently mirrored or reversed. Metamorphic testing found exactly that before
-    this gate existed: every knee turned upside down was planned, with rotational errors
-    up to 112 degrees, and at 90 degrees seven of ten failed inside the planner.
+    this gate existed: every knee turned upside down was planned, with errors up to 114
+    degrees in a metric and 119 in the femoral cut, and at 90 degrees seven of eleven
+    failed inside the planner.
 
     Four ways to fail, each an error:
 

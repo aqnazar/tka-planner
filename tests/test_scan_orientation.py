@@ -1,8 +1,8 @@
 """The orientation gate: a knee lying too far from LPS is refused, cleanly.
 
 Before the gate, metamorphic testing turned every knee upside down and the planner
-accepted all ten, with rotational errors up to 112 degrees; at 90 degrees seven of ten
-crashed inside the planner. Within the gate the landmark searches run in the bones' own
+accepted all eleven, with errors up to 114 degrees in a metric and 119 in the femoral
+cut; at 90 degrees seven of eleven failed inside the planner. Within the gate the landmark searches run in the bones' own
 axes and do not care how the knee lies (see test_landmarks_auto_invariance); beyond it
 the signs they take from the scanner cannot be trusted, so the scan is refused with a
 finding that says why.
