@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from . import experiments  # noqa: F401  (registers every experiment)
@@ -20,7 +21,12 @@ def main(argv=None) -> int:
                      help="smoke run: two cases, fewer samples")
     run.add_argument("--reference", action="store_true",
                      help="also include the full-length reference knee REF_KJ2")
+    run.add_argument("--cases", default=None,
+                     help="only these knees, comma-separated (e.g. REF_KJ2,P009L); "
+                          "same as TKA_PAPER_CASES")
     args = parser.parse_args(argv)
+    if getattr(args, "cases", None):
+        os.environ["TKA_PAPER_CASES"] = args.cases
 
     if args.command == "list":
         for exp in sorted(REGISTRY.values(), key=lambda e: _order(e.experiment_id)):

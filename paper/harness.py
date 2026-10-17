@@ -63,12 +63,25 @@ def _bone(folder: Path, prefix: str) -> Path | None:
                  if p.name.upper().startswith(prefix)), None)
 
 
+def case_filter() -> set[str] | None:
+    """The knees named in ``TKA_PAPER_CASES`` (comma-separated case ids, e.g.
+    ``REF_KJ2,P009L``), or ``None`` when it is unset: every knee."""
+    names = os.environ.get("TKA_PAPER_CASES", "")
+    wanted = {n.strip().upper() for n in names.split(",") if n.strip()}
+    return wanted or None
+
+
 def cohort_cases(*, include_reference: bool = False) -> list[Case]:
     """Every knee in the cohort folder, sorted by id.
 
     A knee is a folder holding an ``FD*`` femur and a ``TD*`` tibia, plus the
     segmentation exports whose names carry the case id and side. Folders without them
     are skipped, so stray outputs never become cases.
+
+    With ``TKA_PAPER_CASES`` set (``python -m paper run ... --cases``), only the knees it
+    names are returned, in the same order; naming ``REF_KJ2`` includes the reference
+    knee without ``include_reference``. A name that matches no knee is an error, so a
+    typo cannot quietly shrink a run.
     """
     cases = []
     root = cohort_root()
@@ -85,10 +98,18 @@ def cohort_cases(*, include_reference: bool = False) -> list[Case]:
             side = "left" if case_id.endswith("L") else "right"
             cases.append(Case(case_id, side, femur, tibia))
     cases.sort(key=lambda c: c.case_id)
+    wanted = case_filter()
     reference = reference_dir()
-    if include_reference and (reference / "FD1Right.stl").is_file():
+    if ((include_reference or (wanted and "REF_KJ2" in wanted))
+            and (reference / "FD1Right.stl").is_file()):
         cases.insert(0, Case("REF_KJ2", "right", reference / "FD1Right.stl",
                              reference / "TD1Right.stl", reference=True))
+    if wanted is not None:
+        missing = wanted - {c.case_id for c in cases}
+        if missing:
+            raise SystemExit(f"TKA_PAPER_CASES names knees not found: "
+                             f"{', '.join(sorted(missing))}.")
+        cases = [c for c in cases if c.case_id in wanted]
     return cases
 
 

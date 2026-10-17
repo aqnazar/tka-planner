@@ -8,6 +8,7 @@ python -m paper list                 # experiments, and the cohort found
 python -m paper run E0               # one experiment
 python -m paper run E1 E2 --quick    # smoke run: two cases, fewer samples
 python -m paper run all --reference  # everything, plus the full-length reference knee
+python -m paper run E10a --cases REF_KJ2,P009L   # only these knees (or TKA_PAPER_CASES)
 ```
 
 Results go to `paper/out/<id>/` (or `TKA_PAPER_OUT`): tables as CSV with a Markdown
