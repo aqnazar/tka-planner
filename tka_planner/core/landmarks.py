@@ -169,7 +169,6 @@ class LandmarkDefinition:
     definition: str
     feeds: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
-    observer_sd_mm: float | None = None
     typically_out_of_scan: bool = False
     picked_in_increment_1: bool = True
 
@@ -195,7 +194,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("stea", "atea", "condylar_twist_angle"),
         aliases=("lateral_epicondyle", "LE", "epicondyle_lat"),
-        observer_sd_mm=1.7,
     ),
     LandmarkDefinition(
         id="femur.epicondyle_medial_sulcus",
@@ -208,7 +206,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("stea", "condylar_twist_angle"),
         aliases=("medial_sulcus", "MS", "sulcus"),
-        observer_sd_mm=2.4,  # the hardest reliable pick on the distal femur
     ),
     LandmarkDefinition(
         id="femur.epicondyle_medial_prominence",
@@ -220,7 +217,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("atea",),
         aliases=("medial_epicondyle", "ME", "epicondyle_med"),
-        observer_sd_mm=1.6,
     ),
     LandmarkDefinition(
         id="femur.condyle_distal_medial",
@@ -233,7 +229,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         feeds=("distal_condylar_axis", "mldfa", "distal_resection_medial",
                "joint_line_obliquity"),
         aliases=("distal_medial", "DMC"),
-        observer_sd_mm=0.9,
     ),
     LandmarkDefinition(
         id="femur.condyle_distal_lateral",
@@ -243,7 +238,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         feeds=("distal_condylar_axis", "mldfa", "distal_resection_lateral",
                "joint_line_obliquity"),
         aliases=("distal_lateral", "DLC"),
-        observer_sd_mm=0.9,
     ),
     LandmarkDefinition(
         id="femur.condyle_posterior_medial",
@@ -253,7 +247,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         feeds=("posterior_condylar_axis", "condylar_twist_angle",
                "posterior_resection_medial"),
         aliases=("posterior_medial", "PMC"),
-        observer_sd_mm=1.0,
     ),
     LandmarkDefinition(
         id="femur.condyle_posterior_lateral",
@@ -263,7 +256,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         feeds=("posterior_condylar_axis", "condylar_twist_angle",
                "posterior_resection_lateral"),
         aliases=("posterior_lateral", "PLC"),
-        observer_sd_mm=1.0,
     ),
     LandmarkDefinition(
         id="femur.notch_centre",
@@ -276,7 +268,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("femoral_knee_centre", "whiteside_line"),
         aliases=("notch", "intercondylar_notch"),
-        observer_sd_mm=1.5,
     ),
     LandmarkDefinition(
         id="femur.trochlear_groove_anterior",
@@ -288,7 +279,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("whiteside_line",),
         aliases=("trochlear_groove", "whiteside_anterior"),
-        observer_sd_mm=1.8,
     ),
     LandmarkDefinition(
         id="femur.canal_centre_distal",
@@ -326,7 +316,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("femoral_mechanical_axis", "hka", "mldfa"),
         aliases=("hip_centre", "femoral_head", "FHC"),
-        observer_sd_mm=1.2,
         typically_out_of_scan=True,
     ),
     # ---------------- Tibia ----------------
@@ -337,7 +326,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         definition="Apex of the medial intercondylar tubercle (medial tibial spine).",
         feeds=("tibial_knee_centre",),
         aliases=("medial_spine",),
-        observer_sd_mm=1.3,
     ),
     LandmarkDefinition(
         id="tibia.spine_lateral",
@@ -346,7 +334,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         definition="Apex of the lateral intercondylar tubercle (lateral tibial spine).",
         feeds=("tibial_knee_centre",),
         aliases=("lateral_spine",),
-        observer_sd_mm=1.3,
     ),
     LandmarkDefinition(
         id="tibia.pcl_insertion_midpoint",
@@ -358,7 +345,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("akagi_line", "tibial_rotation"),
         aliases=("pcl", "pcl_insertion"),
-        observer_sd_mm=2.0,
     ),
     LandmarkDefinition(
         id="tibia.tubercle_patellar_tendon_medial_border",
@@ -371,7 +357,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("akagi_line", "tibial_rotation"),
         aliases=("akagi_anterior", "patellar_tendon_medial"),
-        observer_sd_mm=2.2,
     ),
     LandmarkDefinition(
         id="tibia.tubercle_medial_third",
@@ -384,7 +369,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("tibial_rotation",),
         aliases=("medial_third",),
-        observer_sd_mm=2.0,
     ),
     LandmarkDefinition(
         id="tibia.plateau_medial_lowest",
@@ -396,7 +380,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("mpta", "tibial_resection_medial", "coronal_joint_line"),
         aliases=("medial_plateau",),
-        observer_sd_mm=1.1,
     ),
     LandmarkDefinition(
         id="tibia.plateau_lateral_lowest",
@@ -405,7 +388,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         definition="The most distal point of the lateral articular surface.",
         feeds=("mpta", "tibial_resection_lateral", "coronal_joint_line"),
         aliases=("lateral_plateau",),
-        observer_sd_mm=1.1,
     ),
     LandmarkDefinition(
         id="tibia.plateau_medial_anterior",
@@ -416,7 +398,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
             "With the posterior rim this defines the native posterior slope."
         ),
         feeds=("posterior_slope_medial",),
-        observer_sd_mm=1.4,
     ),
     LandmarkDefinition(
         id="tibia.plateau_medial_posterior",
@@ -426,7 +407,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
             "Posterior rim of the medial plateau in its mid-compartment sagittal plane."
         ),
         feeds=("posterior_slope_medial",),
-        observer_sd_mm=1.4,
     ),
     LandmarkDefinition(
         id="tibia.canal_centre_proximal",
@@ -459,7 +439,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("tibial_mechanical_axis", "hka", "mpta"),
         aliases=("ankle", "malleolar_midpoint"),
-        observer_sd_mm=1.5,
         typically_out_of_scan=True,
     ),
     # ---------------- Fibula ----------------
@@ -474,7 +453,6 @@ REGISTRY: dict[str, LandmarkDefinition] = _define(
         ),
         feeds=("coronal_reference_secondary",),
         aliases=("fibular_head",),
-        observer_sd_mm=1.6,
     ),
     # ---------------- Patella (registered now, used later) ----------------
     LandmarkDefinition(

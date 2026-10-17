@@ -13,10 +13,11 @@ picked landmark (``placeholder_uniform_2mm.csv``). The intervals below say how t
 planner *would* respond to that much scatter; they are not the planner's uncertainty
 until E3's table replaces it (same CSV format, ``landmark_id,sd_mm``).
 
-Variants, at fewer draws: the registry's unsourced ``observer_sd_mm`` values; the
-uniform table with the canal centres also moved by 2 mm, since they set both
-mechanical axes and are otherwise held fixed; and on one knee, free 3D noise against
-the default tangent-plane model.
+Variants, at fewer draws: the uniform table with the canal centres also moved by 2 mm,
+since they set both mechanical axes and are otherwise held fixed; and on one knee, free
+3D noise against the default tangent-plane model. (A variant on the landmark
+registry's ``observer_sd_mm`` values was dropped on 2026-10-17: they had no recorded
+source, and the author's ruling on question #18 was to drop them.)
 
 Outputs: ``intervals`` (per knee and output: nominal, mean, SD, 2.5/97.5 percentiles),
 ``pooled`` (per output across knees: the 2.5/97.5 percentiles of the deviation from
@@ -143,7 +144,6 @@ def run(ctx: Context) -> None:
     library = library_root()
     main = placeholder_dispersion("uniform_2mm")
     variants = {
-        "registry": placeholder_dispersion("registry"),
         "uniform_with_canals": _with_canal_centres(main),
     }
 

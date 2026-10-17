@@ -22,7 +22,7 @@ import numpy as np
 from tka_planner.core.meshio import Mesh
 
 from ..kernel import KernelRecord, KernelResult
-from ..repair import edge_report, kernel_ready, prepare_for_kernel
+from ..repair import edge_report, prepare_for_kernel
 
 __all__ = ["ManifoldKernel"]
 
@@ -63,8 +63,8 @@ class ManifoldKernel:
     def _prepare(mesh: Mesh, role: str) -> tuple:
         # Repaired once per mesh content and kept: a commit cuts the same uncut bone
         # for the shell and again for the block, and every re-commit starts from it.
-        fixed, actions = prepare_for_kernel(mesh)
-        if not kernel_ready(fixed):
+        fixed, actions, ready = prepare_for_kernel(mesh)
+        if not ready:
             report = ", ".join(
                 f"{key}={value}" for key, value in edge_report(fixed).items() if value
             ) or "inconsistent winding"

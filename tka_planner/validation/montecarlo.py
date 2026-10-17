@@ -103,7 +103,6 @@ _COV_COLUMNS = ("cov_aa", "cov_al", "cov_ap", "cov_ll", "cov_lp", "cov_pp")
 _TABLE_DIR = Path(__file__).resolve().parent / "dispersion"
 PLACEHOLDER_TABLES = {
     "uniform_2mm": _TABLE_DIR / "placeholder_uniform_2mm.csv",
-    "registry": _TABLE_DIR / "placeholder_registry.csv",
 }
 
 

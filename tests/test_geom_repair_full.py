@@ -134,3 +134,23 @@ def test_quality_control_reports_a_repair_it_made():
     [finding] = report.findings
     assert finding.code == "MESH_REPAIRED"
     assert finding.severity is Severity.WARNING
+
+
+def test_the_weld_made_at_opening_is_what_the_first_commit_cuts(monkeypatch):
+    monkeypatch.setattr(gr, "CACHE_MIN_TRIANGLES", 0)
+    calls = []
+    real = gr.repair
+    monkeypatch.setattr(gr, "repair", lambda m, **k: calls.append(1) or real(m, **k))
+    bone = soup(sphere())
+    welded, _ = real(bone)
+    assert gr.remember_welded(bone, welded)
+    prepared, actions, ready = gr.prepare_for_kernel(bone)
+    assert prepared is welded and ready and actions == ("welded",)
+    assert not calls
+
+
+def test_a_welded_copy_that_is_not_ready_is_not_remembered(monkeypatch):
+    monkeypatch.setattr(gr, "CACHE_MIN_TRIANGLES", 0)
+    whole = sphere()
+    holed = Mesh(vertices=whole.vertices, faces=whole.faces[1:])
+    assert not gr.remember_welded(soup(holed), holed)

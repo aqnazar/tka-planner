@@ -56,6 +56,7 @@ from .core.qc import (
     clean_islands,
 )
 from .core.sides import Side
+from .geom.repair import remember_welded
 from .core.sizing import (
     SizeChart,
     SizingDecision,
@@ -268,6 +269,9 @@ def measure_meshes(
             if not quality.watertight or quality.n_degenerate_faces \
                     or quality.n_duplicate_faces:
                 qc.extend(_for_bone(check_repairable(mesh, bone), bone))
+            else:
+                # Welded here already; the first Commit need not weld it again.
+                remember_welded(mesh, welded)
     if mesh_quality is not None:
         qc.extend(mesh_quality)
     femur, tibia = bones["femur"], bones["tibia"]

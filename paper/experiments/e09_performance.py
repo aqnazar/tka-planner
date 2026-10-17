@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 
 from tka_planner.core.frames import FrameConstructionError
-from tka_planner.core.landmarks_auto import estimate_landmarks
+from tka_planner.core.landmarks_auto import estimate_landmarks, femoral_axes, tibial_axes
 from tka_planner.core.meshio import read_stl
 from tka_planner.core.qc import (
     QCReport,
@@ -43,8 +43,12 @@ from tka_planner.core.qc import (
     check_landmarks_on_mesh,
     check_laterality,
     check_plausible_bone_scale,
+    check_repairable,
+    check_scan_orientation,
+    clean_islands,
 )
 from tka_planner.core.sides import Side
+from tka_planner.geom import repair as repair_module
 from tka_planner.geom.kernels.manifold_kernel import ManifoldKernel
 from tka_planner.pipeline import (
     fit_case,
@@ -107,24 +111,43 @@ def one_pass(case, library) -> tuple[dict, dict, str]:
 
     femur, tibia = _clock(times, "read_stl", read_both)
 
-    # Quality control exactly as ``measure_case`` runs it.
+    # Quality control exactly as ``measure_meshes`` runs it: detached pieces, scale,
+    # laterality, mesh quality (and the kernel's repair where the mesh is not closed),
+    # each bone's own axes and the orientation gate, then coverage.
     def quality_control():
         qc = QCReport()
+        bones = {}
         for mesh, bone in ((femur, "femur"), (tibia, "tibia")):
+            mesh, welded, fragments = clean_islands(mesh, bone)
+            qc.extend(fragments)
+            bones[bone] = mesh
             qc.extend(check_plausible_bone_scale(mesh, bone))
             qc.extend(check_laterality(mesh, side))
-            qc.extend(assess_mesh_quality(mesh)[1])
+            quality, report = assess_mesh_quality(welded, already_welded=True)
+            qc.extend(report)
+            if (not quality.watertight or quality.n_degenerate_faces
+                    or quality.n_duplicate_faces):
+                qc.extend(check_repairable(mesh, bone))
+            else:
+                repair_module.remember_welded(mesh, welded)
         qc.raise_if_errors()
-        femur_coverage, femur_report = assess_femur_coverage(femur)
-        tibia_coverage, tibia_report = assess_tibia_coverage(tibia)
+        axes = femoral_axes(bones["femur"], side), tibial_axes(bones["tibia"])
+        qc.extend(check_scan_orientation(*axes))
+        qc.raise_if_errors()
+        femur_coverage, femur_report = assess_femur_coverage(
+            bones["femur"], superior=axes[0].superior)
+        tibia_coverage, tibia_report = assess_tibia_coverage(
+            bones["tibia"], superior=axes[1].superior)
         qc.extend(femur_report)
         qc.extend(tibia_report)
-        return qc, {"femur": femur_coverage, "tibia": tibia_coverage}
+        return qc, {"femur": femur_coverage, "tibia": tibia_coverage}, bones, axes
 
     try:
-        qc, coverage = _clock(times, "qc", quality_control)
+        qc, coverage, bones, axes = _clock(times, "qc", quality_control)
+        femur, tibia = bones["femur"], bones["tibia"]
         landmarks = _clock(times, "landmarks", estimate_landmarks, femur, tibia,
-                           side, case_id=case.case_id)
+                           side, case_id=case.case_id, femur_axes=axes[0],
+                           tibia_axes=axes[1])
         qc.extend(check_landmarks_on_mesh(landmarks, {"femur": femur, "tibia": tibia}))
         qc.raise_if_errors()
         m = _clock(times, "frames_metrics", measure_from_landmarks, landmarks, femur,
@@ -147,13 +170,21 @@ def one_pass(case, library) -> tuple[dict, dict, str]:
 
     session = _clock(times, "scene_build", planned_session, case, m, library)
     for bone in ("Femur", "Tibia"):
-        # The repair every boolean of the commit runs on the uncut bone first: timed
-        # alone, because it is paid once per boolean, twice per bone in block mode.
+        # The kernel prepares (repairs and checks) the uncut bone once per content and
+        # keeps it. Timed alone from cold; then the first commit from cold, which pays
+        # it once; then a re-commit from the same uncut bone, which reuses it -- what
+        # every Commit after a control change costs in the app.
+        uncut = session.scene.nodes[bone].mesh_id
         try:
+            repair_module._PREPARED.clear()
             _clock(times, f"repair_{bone.lower()}", ManifoldKernel._prepare,
                    session.scene.mesh_for(bone), "target")
+            repair_module._PREPARED.clear()
             kernel = TimedKernel()
             _clock(times, f"commit_{bone.lower()}", session.commit, kernel,
+                   bones=(bone,))
+            session.scene.nodes[bone].mesh_id = uncut
+            _clock(times, f"recommit_{bone.lower()}", session.commit, TimedKernel(),
                    bones=(bone,))
         except ValueError:
             # The kernel refused the bone (E8 says why); there is no commit to time.
@@ -301,20 +332,21 @@ def run(ctx: Context) -> None:
     timed = [r for r in rows if not r["refused"]]
     if timed:
         for stage in ("measure_total", "plan", "implant_spec", "fit", "plan_file",
-                      "scene_build", "commit_femur", "commit_tibia", "replan",
+                      "scene_build", "commit_femur", "commit_tibia",
+                      "recommit_femur", "recommit_tibia", "replan",
                       "reduce_frame"):
             values = [r[stage] for r in timed if r.get(stage) is not None]
             if values:
                 ctx.note(f"- {stage}: median {statistics.median(values):.4f} s "
                          f"(range {min(values):.4f}-{max(values):.4f}) over "
                          f"{len(values)} knees")
-        shares = [(r[f"repair_{b}"] * 2) / r[f"commit_{b}"] for r in timed
+        shares = [r[f"repair_{b}"] / r[f"commit_{b}"] for r in timed
                   for b in ("femur", "tibia")
                   if r.get(f"commit_{b}") and r.get(f"repair_{b}") is not None]
         if shares:
-            ctx.note(f"- Each block-mode boolean repairs the uncut bone again (weld and "
-                     f"checks); twice that repair is a median "
-                     f"{100 * statistics.median(shares):.0f}% of a bone's commit time.")
+            ctx.note(f"- The uncut bone is prepared for the kernel (weld, repair, checks) "
+                     f"once and kept: a median {100 * statistics.median(shares):.0f}% of "
+                     f"a bone's first commit, and nothing of a re-commit.")
         ctx.note(_figure(ctx, timed))
     for r in rows:
         if r["refused"]:

@@ -32,6 +32,7 @@ from tka_planner.core.islands import find_islands, keep_faces, smaller_than_pate
 from tka_planner.core.meshio import Mesh, weld_vertices
 
 __all__ = ["HOLE_FILL_MAX_MM", "is_manifold", "edge_report", "repair", "kernel_ready",
+           "remember_welded",
            "prepare_for_kernel", "connected_components", "repair_statistics"]
 
 # The widest hole closed by a fan of triangles. A segmentation's holes are a few voxels
@@ -114,29 +115,52 @@ def repair(mesh: Mesh, *, max_hole_mm: float = HOLE_FILL_MAX_MM
     return fixed, actions
 
 
-def prepare_for_kernel(mesh: Mesh) -> tuple[Mesh, tuple[str, ...]]:
-    """The mesh as a boolean kernel should receive it, repaired once per content.
+def prepare_for_kernel(mesh: Mesh) -> tuple[Mesh, tuple[str, ...], bool]:
+    """The mesh as a boolean kernel should receive it, what repair did, and whether the
+    result is kernel-ready -- all computed once per mesh content.
 
     A commit cuts each bone at least twice (the block shell, then the block), and the
     app re-commits whenever a control moves, always from the same uncut bone. The
     result is kept for the few most recent large meshes, keyed by a hash of their
-    vertices and faces, so the cache cannot hand one mesh another mesh's repair.
+    vertices and faces, so the cache cannot hand one mesh another mesh's repair. The
+    readiness test is kept with it: on a million-triangle bone it costs as much as a
+    cut.
     """
     key = _fingerprint(mesh)
     with _PREPARED_LOCK:
         if key in _PREPARED:
             _PREPARED.move_to_end(key)
             return _PREPARED[key]
-    if is_manifold(mesh) and _consistently_wound(mesh.faces):
-        prepared = (mesh, ())
+    if kernel_ready(mesh):
+        prepared = (mesh, (), True)
     else:
-        prepared = repair(mesh)
+        fixed, actions = repair(mesh)
+        prepared = (fixed, actions, kernel_ready(fixed))
     if mesh.n_triangles >= CACHE_MIN_TRIANGLES:
         with _PREPARED_LOCK:
             _PREPARED[key] = prepared
             while len(_PREPARED) > CACHE_ENTRIES:
                 _PREPARED.popitem(last=False)
     return prepared
+
+
+def remember_welded(mesh: Mesh, welded: Mesh) -> bool:
+    """Keep a welded copy that opening a case already made as the kernel's preparation.
+
+    Quality control welds every bone to count its edges; when the welded copy is
+    already kernel-ready, a commit can cut it as it is instead of welding the STL a
+    second time. Nothing is kept unless the copy passes the kernel's own test.
+    """
+    if mesh.n_triangles < CACHE_MIN_TRIANGLES or not kernel_ready(welded):
+        return False
+    actions = ("welded",) if welded.n_vertices < mesh.n_vertices else ()
+    key = _fingerprint(mesh)
+    with _PREPARED_LOCK:
+        _PREPARED[key] = (welded, actions, True)
+        _PREPARED.move_to_end(key)
+        while len(_PREPARED) > CACHE_ENTRIES:
+            _PREPARED.popitem(last=False)
+    return True
 
 
 def kernel_ready(mesh: Mesh) -> bool:

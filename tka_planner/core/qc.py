@@ -444,11 +444,11 @@ def check_repairable(mesh: Mesh, bone: str) -> QCReport:
     The repair is the kernel's own (:func:`tka_planner.geom.repair.prepare_for_kernel`)
     and its result is kept, so the first Commit reuses it rather than repeating it.
     """
-    from tka_planner.geom.repair import kernel_ready, prepare_for_kernel
+    from tka_planner.geom.repair import prepare_for_kernel
 
     report = QCReport()
-    fixed, actions = prepare_for_kernel(mesh)
-    if kernel_ready(fixed):
+    _, actions, ready = prepare_for_kernel(mesh)
+    if ready:
         report.add(
             "MESH_REPAIRED", Severity.WARNING,
             f"The {bone} mesh was not a closed surface; it was repaired before cutting "

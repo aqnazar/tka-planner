@@ -699,6 +699,40 @@ positive X in LPS; and landmarks must fall within their bone's bounding box, whi
 catches an LPS/RAS mismatch decisively since it displaces points by twice their distance
 from the midline.
 
+**Detached pieces.** A bone mesh is often more than one piece of surface: collapsed
+specks, slivers of a neighbouring bone, a cavity wall exported as a closed shell,
+occasionally a whole patella. Every landmark search reads the bone's extremes, so a piece
+beyond the bone becomes its top or its edge (one cohort tibia had an 80-triangle sliver
+37 mm above the plateau, which became the "top of the tibia"); and the kernel cuts every
+piece, so a broken speck refuses the cut of an otherwise clean bone (the P007R femur: six
+zero-size pieces, 96 triangles, inside the bone). Every piece but the main body that fits
+inside the smallest adult patella along all three of its own principal axes — 14 × 23 ×
+25 mm, from the thinnest published cohort's mean less two SD (Muhamed 2017) and the
+smallest height and width reported in 713 female TKA knees (Kim 2009) — is removed: a
+warning if it lay more than 2 mm outside the bone, where it would have moved an extreme, a
+note otherwise. A larger piece may be anatomy and is kept, with a warning saying where it
+lies (inside the bone's extent, a cavity; outside, a patella, fibula or neighbouring
+bone); `--remove-islands`, or the finding's Remove button in the app, removes every piece
+but the main body. This replaces the earlier rule (pieces under 1 % of the triangles and
+more than 2 mm outside), at the author's ruling (2026-10-15).
+
+**Repair before refusal.** A bone that is not a closed surface after that is repaired
+when the case is opened, exactly as the kernel will repair it (see *The boolean kernel*),
+and refused there (`MESH_UNREPAIRABLE`, an error) only if repair cannot close it — rather
+than accepted and then failing at the first cut, as P007R did.
+
+**An entered femur length.** A knee-only scan cannot give the femur's length, so it may
+be entered (`--femur-length`, or the field beside the case in the app): the hip-centre to
+knee-centre distance from a long-leg film or scanogram. It must lie within 300–650 mm
+(`FEMUR_LENGTH_IMPLAUSIBLE` otherwise), is recorded in `plan.json` under
+`inputs.entered`, and is never reported as measured. A functional hip centre (camera
+pivoting) uses it twice: the fit's predicted centre uncertainty becomes this patient's
+mechanical-axis uncertainty, atan(sd / L), instead of one on a nominal 430 mm femur; and
+the pivoted length (hip centre to knee centre) is compared with it — more than 10 mm apart
+is flagged, because pelvic motion moves the fitted centre without raising the residual,
+much of it along the femur, and an independent length is the check that can see it. The
+10 mm is a proposal pending the phantom.
+
 **Orientation gate.** The landmark searches run in each bone's own axes but take their
 signs from the scanner, so a knee lying too far from LPS is refused, as an error, before
 any landmark is found: a bone's long axis more than **45°** from scanner superior
@@ -760,11 +794,30 @@ worth more than the speed. A solver that silently accepts a broken mesh returns 
 geometry, and a cut that looks like a cut and is not is the failure this project keeps
 guarding against.
 
-Because segmentations are not reliably manifold, a repair pass runs first: weld, then
-drop degenerate and duplicated faces. It is deliberately conservative — it never moves a
-vertex and never fills a hole, so the honest answer to a hole in a segmentation is still
-that there is a hole. Whatever it did is recorded rather than done quietly, and lands in
-`plan.json` beside the measurement provenance.
+Because segmentations are not reliably manifold, a repair pass runs first. Weld, then drop
+degenerate and duplicated faces; if that leaves a closed, consistently wound manifold,
+nothing more is done (every cohort bone, once the detached pieces are gone). Otherwise, in
+up to three rounds: remove pieces smaller than a patella (*Detached pieces*, under
+Quality control); cut out every face on an edge that three or more faces share, since no
+rule for which of them to keep is principled; wind every face consistently, the main body
+outward and other pieces relative to their own seed, so a cavity wall exported facing
+inward stays inward; and close each hole up to **10 mm** across with a fan of triangles
+around its centroid, wound against the faces around it. No existing vertex moves. A wider
+opening is something missing from the scan rather than a defect of the surface, and a
+boundary that passes through one vertex twice (two surfaces meeting at a point) cannot be
+closed by a fan; both are left open and the mesh is refused, saying which. This is the
+author's rule (2026-10-15): repair every bone as far as it can be repaired and refuse,
+with a warning, only what cannot. Whatever repair did is recorded rather than done
+quietly, and lands in `plan.json` beside the measurement provenance.
+
+The repair is done **once per bone**. A commit cuts each bone twice (the block's shell,
+then the block), and the app re-commits from the same uncut bone after every control
+change; each boolean used to repeat the weld and the checks, 92 % of a commit's time. The
+prepared mesh and its readiness are now kept per content hash of the mesh (the four most
+recent bones), and opening a case hands the kernel the welded copy quality control has
+already made. On REF_KJ2 and P007R the first commit went from 7.6 s and 21.5 s to 0.7 s
+and 2.1 s, at a cost of 1–4 s more when the case is opened; the geometry is unchanged.
+Bone shells are drawn deep orange (they were red, which the fit map uses for overhang).
 
 **Blender's exact solver is kept as a cross-check**, behind an optional extra, never
 imported at runtime. Four cases are cut in Blender once and committed as STL, and the
