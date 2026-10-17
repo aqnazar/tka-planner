@@ -714,7 +714,12 @@ note otherwise. A larger piece may be anatomy and is kept, with a warning saying
 lies (inside the bone's extent, a cavity; outside, a patella, fibula or neighbouring
 bone); `--remove-islands`, or the finding's Remove button in the app, removes every piece
 but the main body. This replaces the earlier rule (pieces under 1 % of the triangles and
-more than 2 mm outside), at the author's ruling (2026-10-15).
+more than 2 mm outside), at the author's ruling (2026-10-15). On the cohort it changes
+one knee's measurement: P007L's femur carried an 8-triangle speck of zero size 0.39 mm
+below the bone, which the earlier rule kept (it was within 2 mm) and which had been taken
+as the distal medial condyle; measured from the condyle itself, mLDFA and aLDFA move by
+0.47° and JLCA by 0.45°. The P007R specks move nothing measurably (femoral AP by
+0.0002 mm); the other nine knees are identical.
 
 **Repair before refusal.** A bone that is not a closed surface after that is repaired
 when the case is opened, exactly as the kernel will repair it (see *The boolean kernel*),
@@ -815,8 +820,9 @@ then the block), and the app re-commits from the same uncut bone after every con
 change; each boolean used to repeat the weld and the checks, 92 % of a commit's time. The
 prepared mesh and its readiness are now kept per content hash of the mesh (the four most
 recent bones), and opening a case hands the kernel the welded copy quality control has
-already made. On REF_KJ2 and P007R the first commit went from 7.6 s and 21.5 s to 0.7 s
-and 2.1 s, at a cost of 1–4 s more when the case is opened; the geometry is unchanged.
+already made. On REF_KJ2 a commit took 11.2 s every time before; the first now takes
+0.7 s and a re-commit 0.7 s. P007R, refused at Commit before, commits in 2.1 s and
+re-commits in 2.0 s. Opening a case costs 1–4 s more; the geometry is unchanged.
 Bone shells are drawn deep orange (they were red, which the fit map uses for overhang).
 
 **Blender's exact solver is kept as a cross-check**, behind an optional extra, never
