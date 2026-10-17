@@ -374,7 +374,23 @@ def run(ctx: Context) -> None:
 
 def _comparisons(rows: list[dict], phase_rows: list[dict]) -> list[str]:
     """The sentences the summary needs, computed rather than written by hand."""
-    lines = []
+    lines = ["Primary method: the pivot (author, question #13); the sphere fit is reported "
+             "beside it. Femur length is a secondary outcome (#14): it can also be entered, "
+             "from a long-leg film, and compared with the pivoted length."]
+    lines.append(f"In-phase pelvic motion moves the pivot's centre along the femur, not "
+                 f"across it -- a femur-length error, which an entered length can detect "
+                 f"(95th percentile, {REFERENCE_NOISE_MM} mm, {REFERENCE_SAMPLES} samples; "
+                 f"axial | transverse, mm):")
+    for cone in CONES_DEG:
+        cells = []
+        for amplitude in PELVIS_MM:
+            [row] = _pick(rows, method="pivot", cone_deg=cone, pelvis_mm=amplitude,
+                          noise_mm=REFERENCE_NOISE_MM, samples=REFERENCE_SAMPLES) or [{}]
+            if "axial_p95_mm" in row:
+                cells.append(f"{amplitude:g} mm: {row['axial_p95_mm']:.1f} | "
+                             f"{row['transverse_p95_mm']:.2f}")
+        if cells:
+            lines.append(f"- cone {cone:g} deg -- " + "; ".join(cells))
     still = [r for r in rows if r["pelvis_mm"] == 0.0 and "err_med_mm" in r]
     pairs = {}
     for r in still:
