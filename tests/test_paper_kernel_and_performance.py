@@ -124,14 +124,19 @@ def test_the_kernel_refuses_a_hole_and_accepts_a_soup():
 def test_the_defect_catalogue_refuses_what_cannot_be_repaired():
     rows = {row["defect"]: row for row in refusal_catalogue(None)}
 
+    # Holes wider than the fill limit, and surfaces meeting at a point, are refused.
     for refused in ("hole (one face missing)", "open surface (a disc)",
-                    "non-manifold edge (cubes on an edge)", "one face flipped"):
+                    "non-manifold edge (cubes on an edge)"):
         assert rows[refused]["manifold3d"] == "refused"
     for repaired in ("triangle soup (unwelded STL)", "degenerate face",
                      "duplicated face"):
         assert rows[repaired]["manifold3d"] == "accepted"
         assert rows[repaired]["manifold3d_mm3"] == pytest.approx(
             rows[repaired]["expected_mm3"])
+    # A face wound against its neighbours is turned back (repair, 2026-10-17).
+    assert rows["one face flipped"]["manifold3d"] == "accepted"
+    assert rows["one face flipped"]["manifold3d_mm3"] == pytest.approx(
+        rows["clean cube"]["manifold3d_mm3"])
 
 
 # ----------------------------------------------------------------------

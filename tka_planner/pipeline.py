@@ -17,7 +17,7 @@ on two pipelines that agree only by coincidence, so both now call the functions 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -50,8 +50,10 @@ from .core.qc import (
     check_landmarks_on_mesh,
     check_laterality,
     check_plausible_bone_scale,
+    check_entered_femur_length,
     check_scan_orientation,
-    separate_detached_fragments,
+    check_repairable,
+    clean_islands,
 )
 from .core.sides import Side
 from .core.sizing import (
@@ -141,6 +143,8 @@ class CaseMeasurement:
     qc: QCReport
     chart: SizeChart
     chart_path: Path
+    # Values the operator entered rather than the scan gave, e.g. ``femur_length_mm``.
+    entered: dict = field(default_factory=dict)
 
     @property
     def native_slope_deg(self) -> float | None:
@@ -183,6 +187,8 @@ def measure_case(
     rater: str | None = None,
     session: str | None = None,
     size_chart=None,
+    remove_large_islands: bool = False,
+    femur_length_mm: float | None = None,
 ) -> CaseMeasurement:
     """Read, check and measure a case.
 
@@ -200,7 +206,8 @@ def measure_case(
         case_id=case_id or femur_path.parent.name,
         femur_path=femur_path, tibia_path=tibia_path,
         landmarks_path=landmarks_path, rater=rater, session=session,
-        size_chart=size_chart,
+        size_chart=size_chart, remove_large_islands=remove_large_islands,
+        femur_length_mm=femur_length_mm,
     )
 
 
@@ -217,6 +224,8 @@ def measure_meshes(
     session: str | None = None,
     size_chart=None,
     mesh_quality: QCReport | None = None,
+    remove_large_islands: bool = False,
+    femur_length_mm: float | None = None,
 ) -> CaseMeasurement:
     """:func:`measure_case` for meshes already in memory.
 
@@ -230,22 +239,35 @@ def measure_meshes(
     measuring a knee, and a rigid motion cannot change the topology it reports on, so a
     caller re-measuring rigidly moved copies may pass the original's findings. Anything
     that moves vertices non-rigidly must leave it ``None``.
+
+    ``remove_large_islands`` removes every detached piece of a bone, not only those too
+    small to be anatomy; the large ones are otherwise kept and reported.
+
+    ``femur_length_mm`` is an entered femur length (hip centre to knee centre), which a
+    knee-only scan cannot give. It is checked for plausibility and recorded as entered.
     """
     side = Side.parse(side)
     qc = QCReport()
-    # Specks of surface detached from the bone and outside it are set aside first:
-    # every estimator reads the bone's extremes, and a speck beyond the bone becomes
-    # one. The weld is shared with the mesh-quality check, which needs it too.
+    qc.extend(check_entered_femur_length(femur_length_mm))
+    # Detached pieces too small to be anatomy are removed first: every estimator reads
+    # the bone's extremes, and a speck beyond the bone becomes one. The weld is shared
+    # with the mesh-quality check, which needs it too. A mesh that is not a closed
+    # manifold is repaired now, as the kernel will repair it at Commit, and refused here
+    # if it cannot be: better than accepting the knee and failing at the first cut.
     bones = {}
     for mesh, bone in ((femur, "femur"), (tibia, "tibia")):
-        mesh, welded, fragment_report = separate_detached_fragments(mesh, bone)
+        mesh, welded, fragment_report = clean_islands(
+            mesh, bone, remove_large=remove_large_islands)
         qc.extend(_for_bone(fragment_report, bone))
         bones[bone] = mesh
         qc.extend(_for_bone(check_plausible_bone_scale(mesh, bone), bone))
         qc.extend(_for_bone(check_laterality(mesh, side), bone))
         if mesh_quality is None:
-            _, mesh_report = assess_mesh_quality(welded, already_welded=True)
+            quality, mesh_report = assess_mesh_quality(welded, already_welded=True)
             qc.extend(_for_bone(mesh_report, bone))
+            if not quality.watertight or quality.n_degenerate_faces \
+                    or quality.n_duplicate_faces:
+                qc.extend(_for_bone(check_repairable(mesh, bone), bone))
     if mesh_quality is not None:
         qc.extend(mesh_quality)
     femur, tibia = bones["femur"], bones["tibia"]
@@ -273,7 +295,7 @@ def measure_meshes(
     qc.extend(check_landmarks_on_mesh(landmarks, {"femur": femur, "tibia": tibia}))
     qc.raise_if_errors()
 
-    return measure_from_landmarks(
+    measurement = measure_from_landmarks(
         landmarks, femur, tibia,
         femur_path=femur_path or femur.source_path or "",
         tibia_path=tibia_path or tibia.source_path or "",
@@ -281,6 +303,9 @@ def measure_meshes(
         qc=qc, coverage={"femur": femur_coverage, "tibia": tibia_coverage},
         size_chart=size_chart,
     )
+    if femur_length_mm is not None:
+        measurement.entered["femur_length_mm"] = float(femur_length_mm)
+    return measurement
 
 
 def _for_bone(report: QCReport, bone: str) -> QCReport:
@@ -1505,6 +1530,7 @@ def plan_document(
             "tibia_sha256": m.tibia.sha256,
             "size_chart": m.chart_path.name,
             "size_chart_sha256": m.chart.sha256,
+            **({"entered": dict(m.entered)} if m.entered else {}),
         },
         "scan_coverage": m.coverage,
         "frames": {"femoral": m.femoral_frame.to_dict(),

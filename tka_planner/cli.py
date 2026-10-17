@@ -50,6 +50,8 @@ def _measure(args: argparse.Namespace) -> int:
             args.femur, args.tibia, args.side,
             case_id=args.case_id, landmarks_path=args.landmarks,
             rater=args.rater, session=args.session, size_chart=args.size_chart,
+            remove_large_islands=args.remove_islands,
+            femur_length_mm=args.femur_length,
         )
     except QualityControlError as error:
         print(f"\n[REFUSED] {error}", file=sys.stderr)
@@ -342,6 +344,16 @@ def main(argv: list[str] | None = None) -> int:
                          help="rating session of the landmark file")
     measure.add_argument("--size-chart", default=None,
                          help="size chart CSV; defaults to the bundled chart")
+    measure.add_argument(
+        "--femur-length", type=float, default=None, metavar="MM",
+        help="hip-centre to knee-centre length from a long-leg film or scanogram; a "
+             "knee-only scan cannot give it, so it is recorded as entered",
+    )
+    measure.add_argument(
+        "--remove-islands", action="store_true",
+        help="remove every detached piece of each bone, including those large enough "
+             "to be anatomy (by default they are kept and reported)",
+    )
     measure.add_argument(
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
         help="alignment philosophy",

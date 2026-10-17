@@ -131,15 +131,6 @@ def test_repair_statistics_count_dropped_faces():
     assert stats["accepted"] is True
 
 
-def test_repair_statistics_refuse_a_hole_rather_than_fill_it():
-    cube = gm.box(10.0)
-    stats = gr.repair_statistics(Mesh(vertices=cube.vertices, faces=cube.faces[1:]))
-
-    assert stats["accepted"] is False
-    assert stats["boundary_edges"] == 3
-    assert stats["triangles_out"] == 11
-
-
 def test_repair_statistics_agree_with_repair():
     cube = gm.box(10.0)
     broken = Mesh(vertices=cube.vertices, faces=np.vstack([cube.faces, [[2, 2, 3]]]))

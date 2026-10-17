@@ -149,6 +149,11 @@ class PlanningSession:
     trial: TrialControls = field(default_factory=TrialControls)
     case_id: str = ""
     landmarks_path: Path | None = None
+    # Remove every detached piece of a bone, not only those too small to be anatomy.
+    # Quality control reports the large ones; this is the option it offers.
+    remove_large_islands: bool = False
+    # Hip centre to knee centre, entered: a knee-only scan cannot give it.
+    femur_length_mm: float | None = None
 
     measurement = None
 
@@ -170,7 +175,8 @@ class PlanningSession:
 
     @classmethod
     def open(cls, folder, *, side: str, library=None,
-             landmarks=None) -> "PlanningSession":
+             landmarks=None, remove_large_islands: bool = False,
+             femur_length_mm: float | None = None) -> "PlanningSession":
         """Find the two bone meshes in a patient folder and measure them.
 
         ``landmarks`` is a landmark file laid over the automatic estimate, exactly as
@@ -182,6 +188,8 @@ class PlanningSession:
             library=Path(library) if library else None,
             case_id=Path(folder).name,
             landmarks_path=Path(landmarks) if landmarks else None,
+            remove_large_islands=remove_large_islands,
+            femur_length_mm=femur_length_mm,
         )
         session._measure()
         return session
@@ -196,6 +204,8 @@ class PlanningSession:
         self.measurement = measure_case(
             self.femur_path, self.tibia_path, self.side,
             case_id=self.case_id or None, landmarks_path=self.landmarks_path,
+            remove_large_islands=self.remove_large_islands,
+            femur_length_mm=self.femur_length_mm,
         )
 
     # The measurement's parts, under the names the scene, the report and the export
@@ -259,6 +269,8 @@ class PlanningSession:
             insert_footprint_mm=self._insert_footprint(),
             insert_stretch=self._insert_stretch(),
             component_scales=self.component_scales,
+            femur_mesh=self._femur,
+            tibia_mesh=self._tibia,
         )
         # The scene holds uncut bones until Commit runs, so it does not yet match the
         # plan's resections.

@@ -31,7 +31,8 @@ def manager(raw_session, tmp_path, monkeypatch):
     """
     from tka_planner.server import sessions as sessions_module
 
-    def fake_open(cls, folder, *, side, library=None, landmarks=None):
+    def fake_open(cls, folder, *, side, library=None, landmarks=None, **options):
+        raw_session.opened_with = options
         raw_session.build()
         return raw_session
 
@@ -753,3 +754,19 @@ def test_toggling_the_planes_and_axes_changes_visibility(api, session_id):
         api, f"/api/sessions/{session_id}/controls", {"changes": {"show_planes": True}}
     )
     assert shown["delta"]["visibility"]["femoral_distal"] is True
+
+
+def test_opening_passes_the_island_option_and_an_entered_femur_length(api, folder,
+                                                                     raw_session):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "remove_large_islands": True,
+        "femur_length_mm": "455"})
+    assert status == 200, payload
+    assert raw_session.opened_with == {"remove_large_islands": True,
+                                       "femur_length_mm": 455.0}
+
+
+def test_an_entered_femur_length_must_be_a_number(api, folder):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "femur_length_mm": "long"})
+    assert status == 400

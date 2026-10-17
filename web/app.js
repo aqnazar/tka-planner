@@ -321,6 +321,20 @@ function renderFindings(findings) {
       });
       summary.append(show);
     }
+    // A detached piece large enough to be anatomy is kept unless the operator says it
+    // is not: re-open the case with every detached piece removed.
+    if (finding.code === "MESH_LARGE_ISLAND" && state.opened) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "show";
+      remove.textContent = "Remove";
+      remove.title = "Re-open the case with every detached piece of the bones removed";
+      remove.addEventListener("click", (event) => {
+        event.preventDefault();
+        busy(() => openCase({ ...state.opened, removeLargeIslands: true }));
+      });
+      summary.append(remove);
+    }
     const message = document.createElement("div");
     message.className = "message";
     message.textContent = finding.message;
@@ -471,12 +485,16 @@ async function busy(work) {
   }
 }
 
-async function openCase({ folder, side, library }) {
+async function openCase({ folder, side, library, femurLength = "",
+                         removeLargeIslands = false }) {
   const payload = await api("POST", "/api/sessions", {
     folder,
     side,
     library: library || null,
+    femur_length_mm: femurLength === "" ? null : Number(femurLength),
+    remove_large_islands: removeLargeIslands,
   });
+  state.opened = { folder, side, library, femurLength };
   state.sessionId = payload.session_id;
   state.schema = await api("GET", "/api/schema");
   buildPanel();
@@ -491,6 +509,7 @@ el("open-form").addEventListener("submit", (event) => {
     folder: el("folder").value.trim(),
     side: el("side").value,
     library: el("library").value.trim(),
+    femurLength: el("femur-length").value.trim(),
   }));
 });
 

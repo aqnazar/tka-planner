@@ -26,16 +26,17 @@ __all__ = ["build_scene", "resolve_component_meshes", "INSERT_SPACER"]
 INSERT_SPACER = "TibialInsertSpacer"
 
 # One colour per category, carried over from the Blender scene so the two look alike
-# while both exist: bone grey, implant blue, cutting-block green, shell red, plane cyan,
-# axis orange, landmark yellow. Cut bone keeps its own warmer grey, so a resected
-# surface still reads as bone rather than as implant.
+# while both exist: bone grey, implant blue, cutting-block green, shell deep orange,
+# plane cyan, axis orange, landmark yellow. Cut bone keeps its own warmer grey, so a
+# resected surface still reads as bone rather than as implant. The shell was red until
+# 2026-10-17, which the fit map also uses for overhang (author's ruling: orange).
 BONE_COLOUR = (0.62, 0.62, 0.62)
 RESECTED_COLOUR = (0.55, 0.52, 0.50)
 IMPLANT_COLOUR = (0.18, 0.38, 0.85)
 PLANE_COLOUR = (0.25, 0.80, 0.85)
 AXIS_COLOUR = (0.95, 0.55, 0.10)
 BLOCK_COLOUR = (0.30, 0.70, 0.35)
-SHELL_COLOUR = (0.85, 0.18, 0.18)
+SHELL_COLOUR = (0.93, 0.42, 0.05)
 # Landmark colour is yellow throughout, per-status shade rather than a different hue,
 # so provenance still reads at a glance without leaving the yellow family the category
 # is known by.
@@ -68,8 +69,14 @@ def build_scene(
     insert_footprint_mm: tuple | None = None,
     insert_stretch: dict | None = None,
     component_scales: dict | None = None,
+    femur_mesh: Mesh | None = None,
+    tibia_mesh: Mesh | None = None,
 ) -> Scene:
     """Build the full scene from an already-computed plan.
+
+    ``femur_mesh`` and ``tibia_mesh`` are the bones as measured -- with the detached
+    pieces quality control removed -- so the scene shows and cuts what was measured.
+    Without them the files are read as they are.
 
     ``components`` maps a component name to ``{"path": ..., "scale": ..., "group": ...}``
     as :func:`resolve_component_meshes` returns, so the implants appear seated on their
@@ -79,11 +86,11 @@ def build_scene(
 
     scene.add(
         Node(name="Femur", set_id=FEMORAL, colour=BONE_COLOUR, tags={"bone": True}),
-        read_stl(femur_path),
+        femur_mesh if femur_mesh is not None else read_stl(femur_path),
     )
     scene.add(
         Node(name="Tibia", set_id=TIBIAL, colour=BONE_COLOUR, tags={"bone": True}),
-        read_stl(tibia_path),
+        tibia_mesh if tibia_mesh is not None else read_stl(tibia_path),
     )
 
     # Planes and axes are always built and their toggles set visibility, rather than

@@ -67,6 +67,8 @@ __all__ = [
     "arc_coverage",
     "head_centre_landmark",
     "functional_head_centre_set",
+    "femur_length_check",
+    "FEMUR_LENGTH_DISAGREEMENT_MM",
 ]
 
 SPHERE_METHOD = "hip_centre.sphere.v1"
@@ -531,6 +533,47 @@ def _check_rigid(transform: np.ndarray) -> np.ndarray:
     return transform
 
 
+# A pivoted femur length further than this from the entered one is flagged. Pelvic motion
+# moves the fitted centre without raising the residual (see RefusalPolicy); much of that
+# shift lies along the femur, where it changes the length, so an independent length is
+# the one check that can see it. 10 mm is a proposal pending the phantom (E6c).
+FEMUR_LENGTH_DISAGREEMENT_MM = 10.0
+
+
+def femur_length_check(centre_lps, knee_centre_lps=None, *, femur_length_mm=None,
+                       centre_sd_mm: float | None = None) -> dict:
+    """What an entered femur length says about a fitted hip centre.
+
+    With the knee centre, the fit gives a femur length of its own, compared with the
+    entered one. With an entered length, the fit's predicted centre uncertainty becomes
+    an axis uncertainty for this patient, ``atan(sd / L)``, instead of one computed on
+    a nominal 430 mm femur.
+    """
+    record: dict = {}
+    warnings = []
+    if femur_length_mm is not None:
+        record["femur_length_entered_mm"] = round(float(femur_length_mm), 2)
+        if centre_sd_mm is not None:
+            record["axis_sd_bound_deg"] = round(float(np.degrees(np.arctan2(
+                centre_sd_mm, femur_length_mm))), 4)
+    if knee_centre_lps is not None:
+        pivoted = float(np.linalg.norm(np.asarray(centre_lps, float)
+                                       - np.asarray(knee_centre_lps, float)))
+        record["femur_length_pivot_mm"] = round(pivoted, 2)
+        if femur_length_mm is not None:
+            difference = pivoted - float(femur_length_mm)
+            record["femur_length_difference_mm"] = round(difference, 2)
+            if abs(difference) > FEMUR_LENGTH_DISAGREEMENT_MM:
+                warnings.append(
+                    f"the pivoted femur length {pivoted:.0f} mm differs from the entered "
+                    f"{femur_length_mm:.0f} mm by {difference:+.0f} mm; pelvic motion "
+                    f"during the pivot moves the centre this way without raising the "
+                    f"residual -- repeat the pivot with the pelvis held")
+    if warnings:
+        record["warnings"] = warnings
+    return record
+
+
 def head_centre_landmark(
     fit: HipCentreFit,
     tracker_to_lps: np.ndarray,
@@ -538,6 +581,8 @@ def head_centre_landmark(
     registration: str = "",
     registration_rms_mm: float | None = None,
     policy: RefusalPolicy = DEFAULT_POLICY,
+    femur_length_mm: float | None = None,
+    knee_centre_lps=None,
 ) -> Landmark:
     """The fitted centre as the ``femur.head_centre`` landmark, in the CT's LPS frame.
 
@@ -556,6 +601,9 @@ def head_centre_landmark(
 
     The fit is re-checked against ``policy``, so a centre computed under the permissive
     policy for study cannot enter a plan by accident.
+
+    ``femur_length_mm`` is an entered femur length and ``knee_centre_lps`` the knee
+    centre in the CT; either, or both, add :func:`femur_length_check` to the record.
     """
     policy.check(fit)
     transform = _check_rigid(tracker_to_lps)
@@ -574,6 +622,9 @@ def head_centre_landmark(
     }
     if registration_rms_mm is not None:
         metadata["registration_rms_mm"] = round(float(registration_rms_mm), 4)
+    metadata.update(femur_length_check(position, knee_centre_lps,
+                                       femur_length_mm=femur_length_mm,
+                                       centre_sd_mm=fit.centre_sd_mm))
     return Landmark(
         id="femur.head_centre",
         position_mm=position,
@@ -592,13 +643,16 @@ def functional_head_centre_set(
     registration: str = "",
     registration_rms_mm: float | None = None,
     policy: RefusalPolicy = DEFAULT_POLICY,
+    femur_length_mm: float | None = None,
+    knee_centre_lps=None,
 ) -> LandmarkSet:
     """A one-landmark LPS set, ready for
     :func:`~tka_planner.core.landmarks.overlay_landmarks` onto a knee's landmarks,
     where it replaces the ``OUT_OF_SCAN`` head centre of a knee-only scan."""
     landmark = head_centre_landmark(fit, tracker_to_lps, registration=registration,
                                     registration_rms_mm=registration_rms_mm,
-                                    policy=policy)
+                                    policy=policy, femur_length_mm=femur_length_mm,
+                                    knee_centre_lps=knee_centre_lps)
     return LandmarkSet(case_id, side, "LPS", [landmark],
                        source={"kind": "functional_hip_centre",
                                "fit": fit.to_dict(),

@@ -32,7 +32,8 @@ import numpy as np
 
 from .geometry import fit_sphere_robust, regional_mask
 from .landmarks import CoordinateSystem, LandmarkSet
-from .meshio import Mesh, face_components, weld_vertices
+from .islands import find_islands, keep_faces, smaller_than_patella
+from .meshio import Mesh, weld_vertices
 from .sides import LPS_PATIENT_LEFT, LPS_SUPERIOR, Side
 
 __all__ = [
@@ -41,13 +42,15 @@ __all__ = [
     "QCReport",
     "MeshQuality",
     "assess_mesh_quality",
-    "separate_detached_fragments",
+    "clean_islands",
+    "check_repairable",
     "assess_femur_coverage",
     "assess_tibia_coverage",
     "check_plausible_bone_scale",
     "check_landmarks_on_mesh",
     "check_laterality",
     "check_scan_orientation",
+    "check_entered_femur_length",
 ]
 
 
@@ -59,12 +62,15 @@ PLAUSIBLE_BONE_LENGTH_MM = (60.0, 600.0)
 PLAUSIBLE_EPICONDYLAR_WIDTH_MM = (35.0, 130.0)
 LANDMARK_MESH_MARGIN_MM = 5.0
 
-# A detached piece of a bone mesh is set aside when it is smaller than this share of the
-# triangles and lies further than this outside the main body's extent. The cohort's own
+# A removed piece further than this outside the main body's extent would have moved one
+# of the bone's extremes, so its removal is a warning rather than a note. The cohort's own
 # specks are single collapsed points inside the bone, or 0.4 mm below it; the one that
-# mattered was 80 triangles 37 mm above a tibia. See separate_detached_fragments.
-DETACHED_FRAGMENT_MAX_SHARE = 0.01
+# mattered was 80 triangles 37 mm above a tibia. See clean_islands.
 DETACHED_FRAGMENT_GAP_MM = 2.0
+
+# An entered femur length (hip centre to knee centre) outside this range is a typing
+# error or a wrong unit, not a femur: adult femora run about 380-530 mm.
+PLAUSIBLE_ENTERED_FEMUR_LENGTH_MM = (300.0, 650.0)
 
 # Length below which the femoral head cannot be present. The head-to-condyle distance
 # *is* the femur's length, 400-500 mm in adults, so any scan containing both must be at
@@ -316,15 +322,15 @@ def assess_mesh_quality(
     return quality, report
 
 
-def separate_detached_fragments(
+def clean_islands(
     mesh: Mesh,
     bone: str,
     *,
     welded: Mesh | None = None,
-    max_share: float = DETACHED_FRAGMENT_MAX_SHARE,
-    min_gap_mm: float = DETACHED_FRAGMENT_GAP_MM,
+    remove_large: bool = False,
+    gap_mm: float = DETACHED_FRAGMENT_GAP_MM,
 ) -> tuple[Mesh, Mesh, QCReport]:
-    """Set aside specks of surface that lie apart from the bone, outside its extent.
+    """Remove the pieces of a bone mesh too small to be anatomy; report the rest.
 
     The landmark estimators read a bone's extremes -- the top of the tibia is the
     highest vertex, and the plateau, spines and tubercle are all searched below it. A
@@ -334,73 +340,130 @@ def separate_detached_fragments(
     insertion were placed on it, and the tibial frame was refused as if two landmarks
     had been swapped.
 
-    A piece is set aside only when it is both small (under ``max_share`` of the
-    triangles) and outside the main body's bounding box by more than ``min_gap_mm`` --
-    that is, when it would move an extreme. Specks inside the bone's extent cannot, and
-    are left alone; so are large pieces, which may be anatomy and are not this
-    function's to judge. Each removal is a warning in the report, so it is never silent.
+    Every piece other than the main body that is smaller than the smallest adult
+    patella along all three of its own axes is removed (see
+    :mod:`tka_planner.core.islands`). The removal is a warning when a removed piece
+    lay more than ``gap_mm`` outside the bone, where it would have moved an extreme,
+    and a note otherwise. A larger piece may be anatomy -- a patella or a fibular head
+    in the mask, or a cavity wall exported as a shell -- and is kept with a warning,
+    unless ``remove_large`` asks for every piece but the main body to go.
 
     ``welded`` is the welded copy of ``mesh`` if the caller has one (mesh quality needs
     it too, and welding is the expensive step). Returns the mesh, its welded copy and the
-    report; with nothing set aside they are the very objects passed in, so a clean mesh
+    report; with nothing removed they are the very objects passed in, so a clean mesh
     is measured exactly as before.
     """
     report = QCReport()
     welded = weld_vertices(mesh) if welded is None else welded
     if len(welded.faces) != len(mesh.faces):
         raise ValueError("The welded mesh must have the same faces as the mesh.")
-    labels = face_components(welded)
-    if len(labels) == 0 or labels.max() == 0:
+    labels, pieces = find_islands(welded)
+    if not pieces:
         return mesh, welded, report
 
-    main_points = welded.vertices[np.unique(welded.faces[labels == 0])]
-    low, high = main_points.min(axis=0), main_points.max(axis=0)
-    counts = np.bincount(labels)
-    drop = np.zeros(len(counts), dtype=bool)
-    outside = np.zeros(len(counts))
-    for piece in range(1, len(counts)):
-        if counts[piece] >= max_share * len(labels):
-            continue
-        points = welded.vertices[np.unique(welded.faces[labels == piece])]
-        outside[piece] = float(np.max(np.concatenate(
-            [low - points.min(axis=0), points.max(axis=0) - high, [0.0]])))
-        drop[piece] = outside[piece] > min_gap_mm
-    if not drop.any():
+    small = [p for p in pieces if smaller_than_patella(p)]
+    large = [p for p in pieces if not smaller_than_patella(p)]
+    removed = small + (large if remove_large else [])
+
+    if small:
+        n_triangles = sum(p.n_triangles for p in small)
+        beyond = max(p.outside_mm for p in small)
+        moved = beyond > gap_mm
+        report.add(
+            "MESH_DETACHED_FRAGMENT",
+            Severity.WARNING if moved else Severity.INFO,
+            f"The {bone} mesh held {len(small)} detached piece(s) smaller than the "
+            f"smallest adult patella ({n_triangles} triangles, "
+            f"{n_triangles / len(labels):.3%} of the surface); they were removed. "
+            + (f"One lay {beyond:.0f} mm outside the bone, where it would have been "
+               f"taken for the bone's extreme: check the segmentation." if moved
+               else "All lay within the bone's extent."),
+            bone=bone, n_fragments=len(small), n_triangles=n_triangles,
+            max_outside_mm=round(beyond, 1),
+        )
+    for piece in large:
+        where = ("inside the bone's extent (a cavity wall or an internal shell?)"
+                 if piece.inside else
+                 f"{piece.outside_mm:.0f} mm outside the bone (a patella, a fibula or a "
+                 f"neighbouring bone in the mask?)")
+        size = " x ".join(f"{e:.0f}" for e in piece.extents_mm)
+        report.add(
+            "MESH_LARGE_ISLAND_REMOVED" if remove_large else "MESH_LARGE_ISLAND",
+            Severity.WARNING,
+            f"The {bone} mesh holds a separate piece of {piece.n_triangles} triangles, "
+            f"{size} mm, {abs(piece.volume_cm3):.1f} cm3, lying {where}. "
+            + ("It was removed, as asked." if remove_large else
+               "It is too large to be dismissed as debris and was kept; it is measured "
+               "and cut with the bone. Re-open the case with detached pieces removed "
+               "if it is not part of the bone."),
+            bone=bone, removable=not remove_large, location_mm=list(piece.centre_mm),
+            **piece.to_dict(),
+        )
+    if not removed:
         return mesh, welded, report
 
+    drop = np.zeros(len(pieces) + 1, dtype=bool)
+    drop[[p.label for p in removed]] = True
     keep = ~drop[labels]
     n_dropped = int((~keep).sum())
-    report.add(
-        "MESH_DETACHED_FRAGMENT", Severity.WARNING,
-        f"The {bone} mesh holds {int(drop.sum())} detached fragment(s) of "
-        f"{n_dropped} triangles ({n_dropped / len(labels):.3%} of the surface) lying up "
-        f"to {outside[drop].max():.0f} mm outside the bone. They were set aside before "
-        f"measuring, since the bone's extremes would otherwise be taken from them. "
-        f"Check the segmentation.",
-        bone=bone, n_fragments=int(drop.sum()), n_triangles=n_dropped,
-        max_outside_mm=round(float(outside[drop].max()), 1),
-    )
-    return _keep_faces(mesh, keep), _keep_faces(welded, keep), report
+    return (keep_faces(mesh, keep, detached_triangles_removed=n_dropped),
+            keep_faces(welded, keep, detached_triangles_removed=n_dropped), report)
 
 
-def _keep_faces(mesh: Mesh, keep: np.ndarray) -> Mesh:
-    """The mesh without the faces not kept, and without vertices only they used.
+def check_entered_femur_length(length_mm: float | None) -> QCReport:
+    """An entered femur length must be a length a femur can have.
 
-    Vertex order is preserved, so every search that breaks ties by index breaks them
-    the same way on what remains.
+    A knee-only scan cannot give the femur's length: the hip is not in it. The
+    author's ruling (2026-10-15) is that it may be entered, from a long-leg film or a
+    scanogram, and it is then recorded as entered, never as measured.
     """
-    faces = mesh.faces[keep]
-    used = np.unique(faces)
-    index = np.full(len(mesh.vertices), -1, dtype=np.int64)
-    index[used] = np.arange(len(used))
-    return Mesh(
-        vertices=mesh.vertices[used],
-        faces=index[faces],
-        source_path=mesh.source_path,
-        sha256=mesh.sha256,
-        metadata={**mesh.metadata,
-                  "detached_triangles_removed": int(len(mesh.faces) - len(faces))},
-    )
+    report = QCReport()
+    if length_mm is None:
+        return report
+    low, high = PLAUSIBLE_ENTERED_FEMUR_LENGTH_MM
+    if not (np.isfinite(length_mm) and low <= length_mm <= high):
+        report.add(
+            "FEMUR_LENGTH_IMPLAUSIBLE", Severity.ERROR,
+            f"The entered femur length {length_mm:g} mm is outside {low:g}-{high:g} mm. "
+            f"Enter the hip-centre to knee-centre distance in millimetres.",
+            femur_length_mm=length_mm,
+        )
+    else:
+        report.add(
+            "FEMUR_LENGTH_ENTERED", Severity.INFO,
+            f"Femur length {length_mm:g} mm was entered, not measured: the scan does "
+            f"not reach the hip.",
+            femur_length_mm=length_mm,
+        )
+    return report
+
+
+def check_repairable(mesh: Mesh, bone: str) -> QCReport:
+    """Repair a mesh as the kernel will, and refuse it now if repair cannot close it.
+
+    The repair is the kernel's own (:func:`tka_planner.geom.repair.prepare_for_kernel`)
+    and its result is kept, so the first Commit reuses it rather than repeating it.
+    """
+    from tka_planner.geom.repair import kernel_ready, prepare_for_kernel
+
+    report = QCReport()
+    fixed, actions = prepare_for_kernel(mesh)
+    if kernel_ready(fixed):
+        report.add(
+            "MESH_REPAIRED", Severity.WARNING,
+            f"The {bone} mesh was not a closed surface; it was repaired before cutting "
+            f"({'; '.join(actions)}). The repair touches only the defects listed.",
+            bone=bone, actions=list(actions),
+        )
+    else:
+        undone = "; ".join(actions) or "nothing could be done"
+        report.add(
+            "MESH_UNREPAIRABLE", Severity.ERROR,
+            f"The {bone} mesh is not a closed surface and could not be repaired "
+            f"({undone}). It cannot be cut reliably; fix the segmentation and re-export.",
+            bone=bone, actions=list(actions),
+        )
+    return report
 
 
 # ----------------------------------------------------------------------

@@ -295,3 +295,42 @@ class TestIntoThePlan:
                                                       "origin": "synthetic"}
         assert mldfa.external_sources == {}
         assert "Source:" not in _metric_rows(metrics)
+
+
+class TestEnteredFemurLength:
+    """A knee-only scan cannot give the femur's length; the author asked that it can be
+    entered (2026-10-15). Entered, it turns the fit's uncertainty into this patient's
+    axis uncertainty, and an independent length is the one check pelvic motion fails."""
+
+    def test_the_axis_bound_uses_the_entered_length(self):
+        from tka_planner.core.hip_centre import femur_length_check
+
+        record = femur_length_check([0, 0, 0], femur_length_mm=400.0, centre_sd_mm=2.0)
+        assert record["femur_length_entered_mm"] == 400.0
+        assert record["axis_sd_bound_deg"] == pytest.approx(
+            np.degrees(np.arctan(2.0 / 400.0)), abs=1e-4)
+        assert "warnings" not in record
+
+    def test_a_pivoted_length_far_from_the_entered_one_is_flagged(self):
+        from tka_planner.core.hip_centre import femur_length_check
+
+        record = femur_length_check([0, 0, 450.0], [0, 0, 0], femur_length_mm=430.0)
+        assert record["femur_length_pivot_mm"] == 450.0
+        assert record["femur_length_difference_mm"] == 20.0
+        assert "pelvic motion" in record["warnings"][0]
+
+    def test_a_pivoted_length_that_agrees_is_not_flagged(self):
+        from tka_planner.core.hip_centre import femur_length_check
+
+        record = femur_length_check([0, 0, 434.0], [0, 0, 0], femur_length_mm=430.0)
+        assert record["femur_length_difference_mm"] == 4.0
+        assert "warnings" not in record
+
+
+@pytest.mark.parametrize("length, code", [(None, None), (455.0, "FEMUR_LENGTH_ENTERED"),
+                                          (45.5, "FEMUR_LENGTH_IMPLAUSIBLE")])
+def test_an_entered_femur_length_is_checked_and_recorded_as_entered(length, code):
+    from tka_planner.core.qc import check_entered_femur_length
+
+    report = check_entered_femur_length(length)
+    assert [f.code for f in report.findings] == ([code] if code else [])

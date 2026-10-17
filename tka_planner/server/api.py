@@ -128,6 +128,8 @@ class Api:
         entry = self.manager.open(
             folder, side=body.get("side", "left"), library=body.get("library"),
             landmarks=body.get("landmarks"),
+            remove_large_islands=bool(body.get("remove_large_islands", False)),
+            femur_length_mm=_optional_float(body.get("femur_length_mm")),
         )
         return self.snapshot(entry)
 
@@ -270,3 +272,13 @@ def _delta_payload(entry, delta) -> dict:
 
 def _segments(path: str) -> list:
     return [part for part in str(path).split("?")[0].split("/") if part]
+
+
+def _optional_float(value) -> float | None:
+    """A number from a request body, where empty means not given."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, f"Not a number: {value!r}") from None
