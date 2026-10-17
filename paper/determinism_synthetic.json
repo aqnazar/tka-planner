@@ -6,19 +6,19 @@
   "numpy": "2.4.6",
   "manifold3d": "3.5.3",
   "hashes": {
-    "plan.json": "14d4ed98779e5ff178417fd9dd56c4570f4ba3fab76a0873f0b2382aed916393",
-    "section/inputs": "bdbe7d90dbf50e88aa7e5ea6e52a070c5c4768bf844ab8802184c00c4554d06f",
-    "section/frames": "5ad01454ad6b64064a163b83b624fd744cf62d545ebb42b3b1b79f4ada9ee291",
-    "section/metrics": "2dd52566eb5f0aadec98e30d60110617acb0c537553d9bf6a0bcb861fff31cb1",
-    "section/surgical_plan": "f53fbfcf47d852ece70219c4781db2339ee04a009a2d6f0e0be4b16015229d87",
-    "section/sizing": "fb72c791c2150a545ec39bd62f1af052a74c0ed4645a03983711cd1d1b0ffadf",
-    "section/implant_spec": "cfb06c669e99f897eb96ce4aec481e3ea386d1f4d5b1639f6991a04e1bd98921",
-    "section/fit": "b634edca3dd862ed6f07535539bb241b2d193ce8bd34d139889245e46f6a0f6b",
+    "plan.json": "9852aff7412b2a5cd60b6ffd59f8fc17b30e5b32abb1797dcabdd75b6d33bf4c",
+    "section/inputs": "7f92979a75b5b476574d05ca2e4b2bd1f9e7ecb88c2956aace8c8b51fa4aa7d7",
+    "section/frames": "1d2aa537852b13fa45400514de8b71c7450889c61d7afa1d26318a7f2441f331",
+    "section/metrics": "54115ea171b4fe169e177e26b1c36cd579ff8c5776c4c967ad88c13b2271c47e",
+    "section/surgical_plan": "76da0b5d45011a26a26a41cbd3a7c64c0c3b9f6a39422be1eff8186e3fa7bb9d",
+    "section/sizing": "0756a8ce9fc4b0b600ca130a16864909568dbd78ff47cb7681465c8b556880e2",
+    "section/implant_spec": "20e5b272f95a18b8575fc9038d18848b9d4099ff279ea171ee008d30f9df553c",
+    "section/fit": "1362d3d00dc734470cac4e5744d1d4e170e774eb2610b7984a2bbdaa80597923",
     "section/quality_control": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
     "section/landmarks": "165da7e0ad10b712720c73b27d09d070c4be106ee8c81998a0872510c833806c",
-    "geometry/Femur": "9de8155759296676d84c02505f38370bd663d970fcd7c2f291736b2744c0a9a6",
-    "geometry/Femur.Shell": "8a6477dfdde87057098ba6640f9f54fbaa495dd4952facc4bf56d6aea7dcb718",
-    "geometry/Tibia": "3c0eee292a09fe6922e6eec6c3a169f0a35325bc9df9f0c2362e77a39efa7474",
-    "geometry/Tibia.Shell": "5528be138edfba7af557d5792af30af5a0857af840260c51d779990783541b65"
+    "geometry/Femur": "5ef872442a2de877de46e0c931d114f1b8a6bdcd00ff705822741759b40f42e4",
+    "geometry/Femur.Shell": "2d56a7fcb6bd536c20f54e3fd6066b6c51375d9d276349b0018d9e88fd9e6d85",
+    "geometry/Tibia": "a64265cf8cf6d48cdc6330604c8df63786a7c1661b4f358c8f9001b991003ec9",
+    "geometry/Tibia.Shell": "d67ef09d5fb4c53898c5334e997c13b49fa3ded82eddb5e4dd973cc1feaa1fca"
   }
 }
