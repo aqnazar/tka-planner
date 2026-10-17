@@ -15,6 +15,14 @@
   pure AP translation of the femur on the tibia is swept on the hinge, and the slope of
   maximum flexion against posterior femoral translation at the limit is compared with
   Banks et al. 2003 (1.4 deg per mm).
+* **E10d** -- why the E10c slope is what it is (author ruling #24): the contact that
+  stops flexion seen from the hinge (its distance ``r`` from the flexion axis, against
+  the lever-arm prediction of about 57.3/r deg per mm), the offset slope under
+  rollback and paradoxical anterior sliding, its dependence on tibial slope, and the
+  two ways of changing the offset (component moved with the femur re-seated, against a
+  thicker posterior condyle with the bone fixed). The 6.1 deg/mm usually attributed to
+  Bellemans 2002 is from secondary citations and is treated as unverified; Massin and
+  Gournay 2006 (about 3.3 deg/mm from a geometric model) is the other comparison.
 
 **Stop rule (author ruling #26).** No search stops at a chosen angle: each runs until
 the patient's own scanned models make blocking contact, bounded only by the end of the
@@ -461,7 +469,12 @@ def run_e10c(ctx: Context) -> None:
     ctx.note("Slope of modelled maximum flexion against planned posterior condylar "
              f"offset, per knee (component moved {offsets[0]:+.0f} to "
              f"{offsets[-1]:+.0f} mm along its AP axis; censored points excluded). "
-             f"Bellemans 2002: about {BELLEMANS_DEG_PER_MM} deg/mm (R^2 = 0.58).")
+             f"Bellemans 2002: about {BELLEMANS_DEG_PER_MM} deg/mm, a figure found only "
+             "in secondary citations and not verified against the paper (which reports "
+             "a correlation, and impingement of the posterior femur on the insert's "
+             f"posterior edge in 72% of knees); Massin and Gournay 2006: about "
+             f"{MASSIN_DEG_PER_MM:.1f} deg/mm from a geometric model. E10d explains "
+             "the modelled slope.")
     for name in SCENARIOS:
         values = [s["deg_per_mm"] for s in slopes if s["trajectory"] == name
                   and s["deg_per_mm"] is not None]
@@ -502,3 +515,339 @@ def run_e10c(ctx: Context) -> None:
     figure.savefig(ctx.path("e10c_slopes.png"), dpi=150)
     figure.savefig(ctx.path("e10c_slopes.svg"))
     plt.close(figure)
+
+
+# ----------------------------------------------------------------------
+# E10d
+# ----------------------------------------------------------------------
+
+DEG_PER_RAD = float(np.degrees(1.0))
+E10D_OFFSETS_MM = (-2.0, 0.0, 2.0)
+TIBIAL_SLOPE_DELTAS_DEG = (-3.0, 0.0, 3.0, 6.0)
+# Femoral AP translation on the tibia at 109 deg (hinge plus a pure translation): -6 is
+# 6 mm of rollback, +3 a paradoxical anterior slide.
+ROLL_TRANSLATIONS_MM = (-6.0, 3.0)
+THICKENINGS_MM = (-2.0, 0.0, 2.0)
+MASSIN_DEG_PER_MM = 10.0 / 3.0
+BELLEMANS_2005_DEG_PER_SLOPE_DEG = 1.7
+MASSIN_DEG_PER_SLOPE_DEG = 1.0
+
+
+def _thicker_posterior_condyle(model, thicken_mm: float, posterior):
+    """The flexion model with the femoral component's posterior condyles ``thicken_mm``
+    thicker and the bone left where it is.
+
+    A posterior condyle thickened by a uniform posterior shift of its surface moves the
+    centre of its arc, and so the joint it bears, posteriorly by the same amount: in
+    flexion the tibia is pushed that far back, along the component's AP axis. The
+    bearing passes from the distal to the posterior condyle as the knee flexes, so the
+    push is ramped in over the first 90 deg (``min(1, flexion / 90)``); past 90 deg it
+    is whole, which is where every limit lies. The component's own solid is not
+    re-shaped, so its posterior lip against the insert's is not re-tested: a stated
+    approximation, harmless where the limit is bone against bone or insert against bone.
+    """
+    from dataclasses import fields
+
+    from tka_planner.pipeline import FlexionModel
+
+    class Pushed(FlexionModel):
+        def pose(self, trajectory, flexion_deg):
+            base = FlexionModel.pose(self, trajectory, flexion_deg)
+            shift = np.eye(4)
+            ramp = min(1.0, max(0.0, float(flexion_deg) / 90.0))
+            shift[:3, 3] = thicken_mm * ramp * np.asarray(posterior, dtype=float)
+            return shift @ base
+
+    return Pushed(**{f.name: getattr(model, f.name) for f in fields(model)})
+
+
+def _limit(model, trajectory):
+    from tka_planner.core.kinematics import scenario, search_max_flexion
+
+    s = model.settings
+    t = scenario(trajectory)
+    return search_max_flexion(lambda a: model.contacts(t, a), trajectory=t.name,
+                              start_deg=s.start_deg, stop_deg=s.stop_deg,
+                              step_deg=s.step_deg, resolution_deg=s.resolution_deg)
+
+
+def _lever_row(model, limit, anterior_world) -> dict:
+    """The contact that stops flexion, seen from the hinge, and the slope the lever
+    arm predicts for it.
+
+    For a contact at distance ``r`` from the flexion axis, moving the femoral surface by
+    ``d`` mm along the AP axis ``a`` moves the angle at which the tibia reaches it by
+    ``d (a.n) / (r (t.n))`` rad, where ``n`` is the contact normal and ``t`` the
+    direction the tibial point travels as the knee flexes; when ``a``, ``n`` and ``t``
+    line up this is ``d / r``: ``57.3 / r`` deg per mm.
+    """
+    if limit.censored or not limit.contacts:
+        return {"stop_reason": limit.stop_reason}
+    contact = max(limit.contacts, key=lambda c: c.volume_mm3)
+    d = contact.diagnostics
+    basis = model.femoral_frame.matrix[:3, :3]
+    origin = model.pivot[:3, 3]
+    axis = model.pivot[:3, 0] / np.linalg.norm(model.pivot[:3, 0])
+    from_hinge = np.asarray(d["from_hinge_mm"], dtype=float)
+    centre = origin + basis @ from_hinge
+    radius = float(d["hinge_radius_mm"])
+    travel = np.cross(axis, centre - origin)
+    travel = (travel / np.linalg.norm(travel)) @ basis
+    a = np.asarray(anterior_world, dtype=float) @ basis
+    row = {
+        "stop_reason": limit.stop_reason,
+        "max_flexion_deg": limit.flexion_limit_deg,
+        "pair": contact.pair,
+        "compartment": d.get("compartment"),
+        "contact_anterior_of_hinge_mm": round(float(from_hinge[0]), 2),
+        "contact_proximal_of_hinge_mm": round(float(from_hinge[2]), 2),
+        "r_mm": radius,
+        "slope_57_3_over_r": round(DEG_PER_RAD / radius, 3),
+    }
+    normal = d.get("thin_direction")
+    if normal is not None:
+        n = np.asarray(normal, dtype=float)
+        along = abs(float(travel @ n))
+        row["normal_vs_travel_deg"] = round(float(np.degrees(np.arccos(min(1.0, along)))),
+                                            1)
+        if along > 1e-3:
+            row["slope_with_normal"] = round(
+                DEG_PER_RAD * abs(float(a @ n)) / (radius * along), 3)
+    return row
+
+
+def _component_reach(model, anterior_world) -> dict:
+    """How close to the flexion axis any femoral contact could lie: the femoral
+    component's posterior condyle (its posterior-most point behind the hinge) and the top
+    of its posterior condyles (their most proximal point behind the hinge)."""
+    vertices = model.femoral_component.to_mesh().vertices
+    origin = model.pivot[:3, 3]
+    local = (vertices - origin) @ model.femoral_frame.matrix[:3, :3]
+    posterior = local[:, 0] < 0.0
+    behind = float(-((vertices - origin) @ np.asarray(anterior_world, dtype=float)).min())
+    return {
+        "posterior_condyle_behind_hinge_mm": round(behind, 2),
+        "posterior_condyle_top_above_hinge_mm": round(
+            float(local[posterior, 2].max()), 2) if posterior.any() else None,
+    }
+
+
+@experiment("E10d", "Why the modelled offset slope is what it is (ruling #24)")
+def run_e10d(ctx: Context) -> None:
+    from tka_planner.core.condylar_offset import planned_condylar_offset
+    from tka_planner.core.kinematics import NEUTRAL, with_parameters
+    from tka_planner.core.planning import Adjustments
+    from tka_planner.pipeline import flexion_model, plan_case
+
+    library = _library(ctx)
+    offsets = QUICK_OFFSETS_MM if ctx.quick else E10D_OFFSETS_MM
+    rolls = {f"AP{t:+.0f}": with_parameters(
+        NEUTRAL, name=f"AP{t:+.0f}", label="hinge plus AP translation",
+        ap_translation_mm=t, reference_flexion_deg=109.0) for t in ROLL_TRANSLATIONS_MM}
+    trajectories = {**{name: name for name in SCENARIOS}, **rolls}
+    lever_rows, sweep, slopes, slope_rows, method_rows, reach_rows = [], [], [], [], [], []
+
+    for case, m in _accepted(ctx):
+        base_plan, sizing = plan_case(m, philosophy="mechanical", library=library)
+        anterior = np.asarray(base_plan.components["femoral_component"],
+                              dtype=float)[:3, 0]
+        anterior = anterior / np.linalg.norm(anterior)
+
+        # 1. The offset sweep under every trajectory, and the lever at the plan.
+        pco_at = {}
+        for offset in offsets:
+            model = flexion_model(m, base_plan, sizing, library, femoral_offset_mm=offset)
+            if model is None:
+                break
+            component = model.femoral_component.to_mesh().vertices + offset * anterior
+            pco_at[offset] = planned_condylar_offset(
+                m.femur.vertices, component, m.landmarks,
+                m.femoral_frame)["radiographic"]["planned_mm"]
+            if offset == 0.0:
+                reach_rows.append({"case": case.case_id,
+                                   **_component_reach(model, anterior)})
+                plan_model = model
+            for name, trajectory in trajectories.items():
+                limit = _limit(model, trajectory)
+                sweep.append({"case": case.case_id, "trajectory": name,
+                              "offset_mm": offset, "pco_mm": pco_at[offset],
+                              "max_flexion_deg": limit.flexion_limit_deg,
+                              "stop_reason": limit.stop_reason,
+                              "pair": limit.first_pair})
+                if offset == 0.0:
+                    lever_rows.append({"case": case.case_id, "trajectory": name,
+                                       **_lever_row(model, limit, anterior)})
+        pco_per_mm = None
+        if len(pco_at) >= 2:
+            xs = sorted(pco_at)
+            pco_per_mm = (pco_at[xs[0]] - pco_at[xs[-1]]) / (xs[-1] - xs[0])
+        for name in trajectories:
+            sel = [r for r in sweep if r["case"] == case.case_id
+                   and r["trajectory"] == name and r["max_flexion_deg"] is not None]
+            slope, r2 = _slope([r["pco_mm"] for r in sel],
+                               [r["max_flexion_deg"] for r in sel])
+            if len(sel) == 2:
+                slope = ((sel[1]["max_flexion_deg"] - sel[0]["max_flexion_deg"])
+                         / (sel[1]["pco_mm"] - sel[0]["pco_mm"]))
+            slopes.append({"case": case.case_id, "trajectory": name,
+                           "n_points": len(sel), "measured_deg_per_mm": slope,
+                           "r2": r2})
+
+        # 2. Tibial slope: maximum flexion and the offset slope at each.
+        for delta in TIBIAL_SLOPE_DELTAS_DEG:
+            plan = base_plan if delta == 0.0 else plan_case(
+                m, philosophy="mechanical", library=library,
+                adjustments=Adjustments(tibial_slope_delta_deg=delta))[0]
+            points = []
+            for offset in (offsets[0], 0.0, offsets[-1]):
+                if delta == 0.0:
+                    found = [r for r in sweep if r["case"] == case.case_id
+                             and r["trajectory"] == "S3" and r["offset_mm"] == offset]
+                    theta = found[0]["max_flexion_deg"] if found else None
+                    pair = found[0]["pair"] if found else None
+                else:
+                    model = flexion_model(m, plan, sizing, library,
+                                          femoral_offset_mm=offset)
+                    limit = _limit(model, "S3")
+                    theta, pair = limit.flexion_limit_deg, limit.first_pair
+                points.append((offset, theta, pair))
+            mid = points[1]
+            ends = [p for p in (points[0], points[2]) if p[1] is not None]
+            offset_slope = None
+            if len(ends) == 2 and pco_per_mm:
+                offset_slope = -(ends[1][1] - ends[0][1]) / (
+                    (ends[1][0] - ends[0][0]) * pco_per_mm)
+            slope_rows.append({"case": case.case_id, "tibial_slope_delta_deg": delta,
+                               "tibial_slope_deg": round(plan.tibial_slope_deg, 2),
+                               "max_flexion_s3_deg": mid[1], "pair": mid[2],
+                               "offset_slope_deg_per_mm": offset_slope})
+
+        # 3. How offset is changed: component moved (femur re-seated and re-cut) against
+        #    a thicker posterior condyle with the bone fixed.
+        for thicken in THICKENINGS_MM:
+            for name in ("S3", "S2"):
+                pushed = _thicker_posterior_condyle(plan_model, thicken, -anterior)
+                limit = _limit(pushed, name)
+                method_rows.append({
+                    "case": case.case_id, "trajectory": name, "thicken_mm": thicken,
+                    "pco_change_mm": thicken, "max_flexion_deg": limit.flexion_limit_deg,
+                    "stop_reason": limit.stop_reason, "pair": limit.first_pair})
+
+    ctx.table("e10d_lever", lever_rows, digits=3)
+    ctx.table("e10d_offset_sweep", sweep, digits=3)
+    ctx.table("e10d_offset_slopes", slopes, digits=3)
+    ctx.table("e10d_tibial_slope", slope_rows, digits=3)
+    ctx.table("e10d_method", method_rows, digits=3)
+    ctx.table("e10d_component_reach", reach_rows, digits=2)
+
+    ctx.note("Why the modelled slope of maximum flexion against posterior condylar "
+             "offset is what it is (author ruling #24); mechanical plans, offsets "
+             f"{', '.join(f'{o:+.0f}' for o in offsets)} mm. Hypothesis: a contact at "
+             "distance r from the flexion axis moves by dPCO/r rad per mm of offset, so "
+             "the slope is about 57.3/r deg/mm (with the contact normal n and the "
+             "tibial point's direction of travel t: 57.3 |a.n| / (r |t.n|)).")
+    for case_id in sorted({r["case"] for r in lever_rows}):
+        for row in [r for r in lever_rows if r["case"] == case_id]:
+            measured = next((s["measured_deg_per_mm"] for s in slopes
+                             if s["case"] == case_id
+                             and s["trajectory"] == row["trajectory"]), None)
+            if row.get("r_mm") is None:
+                ctx.note(f"- {case_id} {row['trajectory']}: no contact in the scanned "
+                         "models; no lever.")
+                continue
+            ratio = (None if measured is None else measured / row["slope_57_3_over_r"])
+            ctx.note(
+                f"- {case_id} {row['trajectory']}: {row['pair']} ({row['compartment']}) "
+                f"at {row['max_flexion_deg']:.1f} deg, "
+                f"{row['contact_proximal_of_hinge_mm']:.0f} mm proximal and "
+                f"{row['contact_anterior_of_hinge_mm']:+.0f} mm anterior of the hinge, "
+                f"r = {row['r_mm']:.1f} mm; 57.3/r = {row['slope_57_3_over_r']:.2f}, "
+                f"with the normal {row.get('slope_with_normal', float('nan')):.2f}; "
+                "measured "
+                + ("n/a" if measured is None else f"{measured:.2f}")
+                + " deg/mm"
+                + ("" if ratio is None else f" (measured / (57.3/r) = {ratio:.2f})")
+                + ".")
+    for row in reach_rows:
+        behind = row["posterior_condyle_behind_hinge_mm"]
+        ctx.note(f"- {row['case']}: the component's posterior condyle lies "
+                 f"{behind:.1f} mm behind the hinge, so no contact on the posterior femur "
+                 f"can be nearer the axis than that: the steepest slope rigid geometry "
+                 f"allows there is about 57.3/{behind:.0f} = {DEG_PER_RAD / behind:.1f} "
+                 f"deg/mm. Bellemans' 6.1 deg/mm would need r = "
+                 f"{DEG_PER_RAD / BELLEMANS_DEG_PER_MM:.1f} mm; Massin's "
+                 f"{MASSIN_DEG_PER_MM:.1f} deg/mm, r = "
+                 f"{DEG_PER_RAD / MASSIN_DEG_PER_MM:.1f} mm.")
+    for case_id in sorted({r["case"] for r in slope_rows}):
+        sel = [r for r in slope_rows if r["case"] == case_id
+               and r["max_flexion_s3_deg"] is not None]
+        per_degree, _ = _slope([r["tibial_slope_deg"] for r in sel],
+                               [r["max_flexion_s3_deg"] for r in sel])
+        ctx.note(f"- {case_id} tibial slope (S3): max flexion "
+                 + ", ".join(f"{r['tibial_slope_deg']:.1f} deg -> "
+                             + ("none" if r["max_flexion_s3_deg"] is None
+                                else f"{r['max_flexion_s3_deg']:.1f}")
+                             for r in slope_rows if r["case"] == case_id)
+                 + "; " + ("n/a" if per_degree is None else f"{per_degree:.2f}")
+                 + " deg of flexion per deg of slope (Bellemans 2005 cadaver "
+                 f"{BELLEMANS_2005_DEG_PER_SLOPE_DEG}, Massin about "
+                 f"{MASSIN_DEG_PER_SLOPE_DEG}); offset slope at each tibial slope "
+                 + ", ".join("n/a" if r["offset_slope_deg_per_mm"] is None
+                             else f"{r['offset_slope_deg_per_mm']:.2f}"
+                             for r in slope_rows if r["case"] == case_id)
+                 + " deg/mm.")
+    for case_id in sorted({r["case"] for r in slopes}):
+        ctx.note(f"- {case_id} offset slope by trajectory (deg/mm): "
+                 + ", ".join(f"{s['trajectory']} "
+                             + ("n/a" if s["measured_deg_per_mm"] is None
+                                else f"{s['measured_deg_per_mm']:.2f}")
+                             for s in slopes if s["case"] == case_id)
+                 + " (AP-6: 6 mm rollback at 109 deg; AP+3: 3 mm paradoxical anterior "
+                 "slide).")
+    for case_id in sorted({r["case"] for r in method_rows}):
+        for name in ("S3", "S2"):
+            sel = [r for r in method_rows if r["case"] == case_id
+                   and r["trajectory"] == name and r["max_flexion_deg"] is not None]
+            slope, _ = _slope([r["pco_change_mm"] for r in sel],
+                              [r["max_flexion_deg"] for r in sel])
+            moved = next((s["measured_deg_per_mm"] for s in slopes
+                          if s["case"] == case_id and s["trajectory"] == name), None)
+            ctx.note(f"- {case_id} {name}: thicker posterior condyle, bone fixed: "
+                     + ("n/a" if slope is None else f"{slope:.2f}")
+                     + " deg/mm; component moved: "
+                     + ("n/a" if moved is None else f"{moved:.2f}") + " deg/mm.")
+
+    # What geometry alone can and cannot produce, from the numbers above.
+    paired = []
+    for row in lever_rows:
+        measured = next((s["measured_deg_per_mm"] for s in slopes
+                         if s["case"] == row["case"]
+                         and s["trajectory"] == row["trajectory"]), None)
+        if row.get("r_mm") is not None and measured is not None:
+            paired.append((row["r_mm"], measured * row["r_mm"] / DEG_PER_RAD))
+    if paired:
+        r = [p[0] for p in paired]
+        ratio = [p[1] for p in paired]
+        tops = [row["posterior_condyle_top_above_hinge_mm"] for row in reach_rows
+                if row["posterior_condyle_top_above_hinge_mm"] is not None]
+        behind = [row["posterior_condyle_behind_hinge_mm"] for row in reach_rows]
+        ctx.note(
+            "Summary. In this model flexion stops where the posterior edge of the insert "
+            "(or the posterior tibia) meets uncovered posterior femoral bone "
+            f"{min(r):.0f} to {max(r):.0f} mm from the flexion axis"
+            + (f", well above the top of the component's posterior condyle (which ends "
+               f"{min(tops):.1f} to {max(tops):.1f} mm above the hinge)" if tops else "")
+            + ". The lever-arm rule 57.3/r reproduces the measured slopes (measured / "
+            f"predicted {_summary_stats(ratio)}): the slope is set by where the contact "
+            "is, not by how the offset is changed (moving the component and thickening "
+            "the posterior condyle give the same slope), and rollback, which moves the "
+            "contact farther out, lowers it. Geometry alone cannot give 6.1 deg/mm: that "
+            f"needs r = {DEG_PER_RAD / BELLEMANS_DEG_PER_MM:.1f} mm, inside the posterior "
+            f"condyle, which lies {min(behind):.0f} to {max(behind):.0f} mm behind the "
+            "axis; even Massin's 3.3 deg/mm (r = "
+            f"{DEG_PER_RAD / MASSIN_DEG_PER_MM:.0f} mm) is out of reach of a rigid "
+            "hinge about the epicondylar axis. A slope that steep would need a different "
+            "mechanism: the offset changing the kinematics themselves (rollback, or the "
+            "flexion axis moving with the offset), soft tissue or thigh-calf contact "
+            "ending flexion first, or the published figure being a between-group "
+            "difference rather than a within-knee slope.")
