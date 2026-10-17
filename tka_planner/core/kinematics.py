@@ -61,6 +61,24 @@ function returning the contacts at an angle, so it is tested here on a toy geome
 a known answer and driven by the real collision check in
 :func:`tka_planner.pipeline.flexion_case`. A coarse sweep can step over a contact that
 comes and goes within one step; the step is part of the result so a reader can see it.
+
+Where the search stops (author ruling #26)
+------------------------------------------
+The stop angle is not a parameter that sets the result. Each search runs until the
+patient's own models make blocking contact, and the only bound on it is the end of the
+motion itself: at :data:`FOLD_DEG` (180 deg) the tibia lies folded onto the femur, and
+beyond it the prescribed rotation would carry the tibia through the femur's own axis, so
+no anatomical limit can lie past it. That bound is a safety stop, not a modelling choice:
+on a scan that holds the bones near the joint the parts always meet before it (at 180
+deg the tibial plateau occupies the space of the distal femoral metaphysis).
+
+A search that does reach the bound without a blocking contact is reported with
+``stop_reason`` :data:`STOP_NO_CONTACT` ("no contact in the scanned models") and
+``censored`` true: its ``max_flexion_deg`` is the bound, which is a lower bound of the
+geometry that was there, never a flexion value. Why nothing touched is a property of the
+models (how far each bone was scanned from the joint, and whether the bone that would
+meet lies inside the scan), which :func:`tka_planner.pipeline.flexion_case` measures
+and records beside the search; this module knows nothing of meshes.
 """
 
 from __future__ import annotations
@@ -83,7 +101,18 @@ __all__ = [
     "search_max_flexion",
     "envelope",
     "with_parameters",
+    "FOLD_DEG",
+    "STOP_CONTACT",
+    "STOP_NO_CONTACT",
 ]
+
+#: The end of the flexion motion: the tibia folded onto the femur. The search's only
+#: bound (see "Where the search stops" above).
+FOLD_DEG = 180.0
+#: ``FlexionLimit.stop_reason`` when a blocking contact ended the search.
+STOP_CONTACT = "contact"
+#: ``FlexionLimit.stop_reason`` when the search reached its bound with nothing touching.
+STOP_NO_CONTACT = "no_contact_in_scanned_models"
 
 
 @dataclass(frozen=True)
@@ -314,6 +343,12 @@ class FlexionLimit:
     found at most ``resolution_deg`` later. ``censored`` means nothing was hit by
     ``stop_deg``, so the limit is at least that.
 
+    ``stop_reason`` says which: :data:`STOP_CONTACT` when a blocking contact ended the
+    search, :data:`STOP_NO_CONTACT` when it reached ``stop_deg`` (normally
+    :data:`FOLD_DEG`, the end of the motion) with nothing touching. In the second case
+    ``max_flexion_deg`` is the bound, not a flexion value, and :attr:`flexion_limit_deg`
+    is ``None``; ``censored`` is true exactly then.
+
     Pairs already blocked at the starting angle cannot limit flexion they never
     allowed, so a plan problem at extension is reported (``blocked_at_start``) rather
     than read as a flexion limit of zero. Such a pair is set aside only until the sweep
@@ -336,6 +371,15 @@ class FlexionLimit:
     evaluations: int = 0
 
     @property
+    def stop_reason(self) -> str:
+        return STOP_NO_CONTACT if self.censored else STOP_CONTACT
+
+    @property
+    def flexion_limit_deg(self) -> float | None:
+        """The flexion at which the models meet, or ``None`` when they never did."""
+        return None if self.censored else float(self.max_flexion_deg)
+
+    @property
     def first_pair(self) -> str | None:
         """The pair that stops flexion; the deepest overlap if several do at once."""
         if not self.contacts:
@@ -347,6 +391,9 @@ class FlexionLimit:
             "trajectory": self.trajectory,
             "max_flexion_deg": round(float(self.max_flexion_deg), 3),
             "censored": self.censored,
+            "stop_reason": self.stop_reason,
+            "flexion_limit_deg": (None if self.flexion_limit_deg is None
+                                  else round(self.flexion_limit_deg, 3)),
             "first_pair": self.first_pair,
             "contacts": [c.to_dict() for c in self.contacts],
             "blocked_at_start": [c.to_dict() for c in self.blocked_at_start],
@@ -364,7 +411,7 @@ def search_max_flexion(
     *,
     trajectory: str = "",
     start_deg: float = 0.0,
-    stop_deg: float = 170.0,
+    stop_deg: float = FOLD_DEG,
     step_deg: float = 5.0,
     resolution_deg: float = 0.5,
 ) -> FlexionLimit:
@@ -373,9 +420,17 @@ def search_max_flexion(
 
     ``contacts_at(angle)`` returns the :class:`Contact` list at an angle; only those
     whose :attr:`Contact.blocks` is true stop flexion.
+
+    ``stop_deg`` defaults to :data:`FOLD_DEG`, the end of the motion, so the search
+    ends where the models meet rather than at a chosen angle; the last coarse step is
+    shortened to land on it exactly. A bound past the fold is refused: the motion there
+    is not a knee's.
     """
     if step_deg <= 0.0 or resolution_deg <= 0.0:
         raise ValueError("The step and the resolution must be positive.")
+    if stop_deg > FOLD_DEG:
+        raise ValueError(f"The search cannot run past {FOLD_DEG:g} deg, where the tibia "
+                         "lies folded onto the femur.")
     evaluations = 0
 
     deepest = None
@@ -396,6 +451,8 @@ def search_max_flexion(
 
     clear = float(start_deg)
     angles = np.arange(start_deg + step_deg, stop_deg + 1e-9, step_deg)
+    if stop_deg > start_deg and (not len(angles) or angles[-1] < stop_deg - 1e-9):
+        angles = np.append(angles, float(stop_deg))
     for angle in angles:
         found_here = blocking(angle)
         # A pair set aside at extension is taken back once it has been seen clear.
@@ -447,6 +504,10 @@ def envelope(limits: dict) -> dict:
         "max_trajectory": high,
         "spread_deg": round(float(values[high] - values[low]), 3),
         "any_censored": any(limit.censored for limit in limits.values()),
+        # The scenarios whose search ended at the bound with nothing touching: the end
+        # of the envelope they set is a bound of the scanned geometry, not a flexion.
+        "no_contact_trajectories": sorted(name for name, limit in limits.items()
+                                          if limit.censored),
     }
 
 

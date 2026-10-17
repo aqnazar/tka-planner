@@ -60,7 +60,7 @@ the same refusals.
 | E7b | Implant fit on the cuts: chart size vs uniform scale vs patient-specific (and the Fusion-regenerated parts, with `TKA_PATIENT_BUILDS`) | cohort |
 | E8 | Geometry kernel: manifold3d against Blender's exact solver (gate cases, every installed Blender, cohort resections), repair statistics, refused defects | cohort optional; Blender optional (`TKA_BLENDER`) |
 | E9 | Per-stage time per knee, commit time against triangle count, plan determinism in and across processes | cohort optional; synthetic fixture |
-| E10a | Impingement-limited maximum flexion per knee, MA and KA plans, trajectories S1-S3, and the envelope | cohort + implant library |
+| E10a | Impingement-limited maximum flexion per knee, MA and KA plans, trajectories S1-S3, and the envelope; each search runs until the scanned models touch (bounded only by the fold, 180 deg), and one that never does is reported as no contact, with the reason from the scan extents | cohort + implant library |
 | E10b | Posterior condylar offset per compartment: preoperative, planned (patient-specific and catalogue), change | cohort + implant library |
 | E10c | Slope of modelled flexion against offset (component moved -3 to +3 mm) and against posterior femoral translation, against Bellemans 2002 and Banks 2003 | cohort + implant library |
 | E12 | Paper 1 pipeline (frozen legacy script, headless Blender) vs the current planner; reproduction of the archived Paper 1 runs | cohort, Blender, legacy library |

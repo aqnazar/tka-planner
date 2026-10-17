@@ -95,6 +95,8 @@ __all__ = [
     "FlexionModel",
     "flexion_model",
     "flexion_case",
+    "scan_extent",
+    "no_contact_reason",
 ]
 
 # How the components are shaped. A patient-specific implant takes its width and depth
@@ -1094,20 +1096,37 @@ class FlexionSettings:
     contact from impingement between the femoral component and the insert (see
     :class:`FlexionModel`). ``None``, the default, lets overlap in the articular region
     never stop flexion; a number makes it stop when deeper than the plan's own seating
-    by more than that. The crop boxes are in the femoral and tibial frames' axes,
-    centred on the hinge.
+    by more than that.
+
+    **Where a search stops** (author ruling #26). ``stop_deg`` is the end of the motion,
+    180 deg, where the tibia lies folded onto the femur
+    (:data:`~tka_planner.core.kinematics.FOLD_DEG`); it is a safety bound, not a
+    parameter of the result, since the scanned bones meet before it. A search that
+    reaches it untouched is reported as "no contact in the scanned models", with the
+    reason measured from the models (:func:`flexion_case`).
+
+    **What geometry is searched.** The bones are the patient's own scans, not a fixed
+    box around the joint: by default (``None``) each bone is kept over its whole
+    scanned extent, in the femoral and tibial frames' axes about the hinge, except that
+    a bone longer than the other bone's reach from the hinge axis (plus
+    ``reach_margin_mm``, for the trajectories' own translation and axial rotation) is
+    cut there, because a rigid flexion about the hinge keeps every point at its
+    distance from the axis, so nothing farther out can ever be touched. A full-length
+    scan is therefore kept whole only as far as the other bone could reach. A box may
+    still be given as ``((low), (high))`` in mm.
     """
 
     start_deg: float = 0.0
-    stop_deg: float = 170.0
+    stop_deg: float = 180.0
     step_deg: float = 5.0
     resolution_deg: float = 0.5
     min_volume_mm3: float = 1.0
     articular_tolerance_mm: float | None = None
     rim_margin_mm: float = 2.0
     simplify_mm: float = 0.2
-    femur_box_mm: tuple = ((-80.0, -80.0, -60.0), (80.0, 80.0, 90.0))
-    tibia_box_mm: tuple = ((-80.0, -80.0, -100.0), (80.0, 80.0, 40.0))
+    femur_box_mm: tuple | None = None
+    tibia_box_mm: tuple | None = None
+    reach_margin_mm: float = 20.0
 
     def to_dict(self) -> dict:
         return {k: (list(map(list, v)) if isinstance(v, tuple) else v)
@@ -1118,6 +1137,65 @@ def _frame_at(frame: AnatomicalFrame, origin) -> np.ndarray:
     matrix = frame.matrix.copy()
     matrix[:3, 3] = np.asarray(origin, dtype=float)
     return matrix
+
+
+def _radial_reach(points: np.ndarray, origin, direction) -> float:
+    """The largest distance of any point from the hinge axis (mm)."""
+    axis = np.asarray(direction, dtype=float) / np.linalg.norm(direction)
+    d = np.asarray(points, dtype=float) - np.asarray(origin, dtype=float)
+    return float(np.linalg.norm(d - np.outer(d @ axis, axis), axis=1).max())
+
+
+def scan_extent(measurement: CaseMeasurement, origin, direction,
+                settings: FlexionSettings | None = None) -> dict:
+    """How far each scanned bone extends from the joint, and the boxes it is kept in.
+
+    Coordinates are in each bone's frame axes (anterior, patient-left, proximal), mm
+    from the hinge ``origin``. The joint line is each bone's own articular end: the
+    most distal point of the femur, the most proximal point of the tibia. The radial
+    reach is the farthest scanned point from the hinge axis: under a rigid flexion about
+    the hinge every point keeps that distance, so one bone can only ever meet the other
+    within the smaller of the two reaches. These are measurements of the scans, the
+    reason a search that meets nothing gives (:func:`flexion_case`).
+    """
+    settings = settings or FlexionSettings()
+    m = measurement
+    origin = np.asarray(origin, dtype=float)
+    record, boxes = {}, {}
+    reach = {"femur": _radial_reach(m.femur.vertices, origin, direction),
+             "tibia": _radial_reach(m.tibia.vertices, origin, direction)}
+    for name, mesh, frame, given in (
+            ("femur", m.femur, m.femoral_frame, settings.femur_box_mm),
+            ("tibia", m.tibia, m.tibial_frame, settings.tibia_box_mm)):
+        local = (mesh.vertices - origin) @ frame.matrix[:3, :3]
+        low, high = local.min(axis=0), local.max(axis=0)
+        other = reach["tibia" if name == "femur" else "femur"]
+        if given is not None:
+            box = (tuple(map(float, given[0])), tuple(map(float, given[1])))
+        else:
+            # The scan's own extent, one millimetre clear of it, cut at the other bone's
+            # reach along the shaft.
+            box_low, box_high = low - 1.0, high + 1.0
+            bound = other + settings.reach_margin_mm
+            if name == "femur":
+                box_high[2] = min(box_high[2], bound)
+            else:
+                box_low[2] = max(box_low[2], -bound)
+            box = (tuple(round(float(v), 2) for v in box_low),
+                   tuple(round(float(v), 2) for v in box_high))
+        boxes[name] = box
+        shaft = high[2] if name == "femur" else -low[2]
+        record[name] = {
+            "scanned_from_hinge_mm": round(float(shaft), 1),
+            "scanned_from_joint_line_mm": round(float(high[2] - low[2]), 1),
+            "radial_reach_mm": round(reach[name], 1),
+            "box_mm": [list(box[0]), list(box[1])],
+            "box_from_scan": given is None,
+            "kept_from_hinge_mm": round(float(box[1][2] if name == "femur"
+                                              else -box[0][2]), 1),
+        }
+    record["meeting_reach_mm"] = round(min(reach.values()), 1)
+    return {"extent": record, "boxes": boxes}
 
 
 def _cropped_bone(mesh: Mesh, frame: np.ndarray, box) -> "object":
@@ -1177,6 +1255,8 @@ class FlexionModel:
     settings: FlexionSettings
     diagnostics: dict
     baseline_depth_mm: float = 0.0
+    femur_box_mm: tuple | None = None   # the boxes the bones were kept in (scan extent)
+    tibia_box_mm: tuple | None = None
 
     def pose(self, trajectory, flexion_deg: float) -> np.ndarray:
         from .scene.motion import trajectory_pose
@@ -1231,6 +1311,7 @@ class FlexionModel:
             diagnostics = {
                 "crop_limited": self._at_crop(shared.vertices, pose),
                 "compartment": "medial" if location[1] * medial_sign > 0 else "lateral",
+                **self._lever(shared.vertices),
             }
             if pair == "femoral_component_vs_insert":
                 region, depth = self._articular(shared, pose)
@@ -1251,17 +1332,53 @@ class FlexionModel:
             ))
         return found
 
+    def _lever(self, points: np.ndarray) -> dict:
+        """Where an overlap lies relative to the hinge, for reading a limit's
+        sensitivity: its centre in the femoral frame's axes from the hinge (anterior,
+        patient-left, proximal), its distance from the hinge axis, and its thinnest
+        direction (the smallest principal axis of the overlap's surface, an estimate of
+        the contact normal), in the femoral frame's axes."""
+        origin, axis = self.pivot[:3, 3], self.pivot[:3, 0] / np.linalg.norm(
+            self.pivot[:3, 0])
+        centre = points.mean(axis=0)
+        d = centre - origin
+        radius = float(np.linalg.norm(d - (d @ axis) * axis))
+        basis = self.femoral_frame.matrix[:3, :3]
+        out = {"from_hinge_mm": [round(float(v), 2) for v in d @ basis],
+               "hinge_radius_mm": round(radius, 2)}
+        if len(points) >= 4:
+            centred = points - centre
+            _, vectors = np.linalg.eigh(centred.T @ centred)
+            normal = vectors[:, 0] @ basis
+            if normal[0] < 0.0:      # sign-free: report it pointing anteriorly
+                normal = -normal
+            out["thin_direction"] = [round(float(v), 4) for v in normal]
+        return out
+
     def _at_crop(self, points: np.ndarray, pose: np.ndarray) -> bool:
-        """Whether an overlap touches a crop face: if so, the bone beyond the crop could
-        have been hit first, and the result says so."""
+        """Whether an overlap touches a face of the box a bone was kept in (by default
+        the scan's own extent): if so, bone beyond it could have been hit first, and the
+        result says so."""
         s = self.settings
         femoral = (points - self.pivot[:3, 3]) @ self.femoral_frame.matrix[:3, :3]
         tibial_points = (np.c_[points, np.ones(len(points))]
                          @ np.linalg.inv(pose).T)[:, :3]
         tibial = (tibial_points - self.pivot[:3, 3]) @ self.tibial_frame.matrix[:3, :3]
-        for local, (low, high) in ((femoral, s.femur_box_mm), (tibial, s.tibia_box_mm)):
-            near = (np.abs(local - np.asarray(low)) < 1.0) | (
-                np.abs(local - np.asarray(high)) < 1.0)
+        for local, given, kept, end in (
+                (femoral, s.femur_box_mm, self.femur_box_mm, 1),
+                (tibial, s.tibia_box_mm, self.tibia_box_mm, 0)):
+            box = kept or given
+            if box is None:
+                continue
+            low, high = (np.asarray(v, dtype=float) for v in box)
+            if given is None:
+                # A box taken from the scan touches the bone's own surface on every
+                # side but one: only the shaft end (the femur's proximal face, the
+                # tibia's distal one) is where the scan, or the reach, cut the bone.
+                face = high[2] if end else low[2]
+                near = np.abs(local[:, 2] - face) < 1.0
+            else:
+                near = (np.abs(local - low) < 1.0) | (np.abs(local - high) < 1.0)
             if near.any():
                 return True
         return False
@@ -1327,16 +1444,21 @@ def flexion_model(
     t0 = time.perf_counter()
     origin, direction = flexion_axis(plan, m.femoral_frame, m.landmarks)
     pivot = pivot_frame(origin, direction)
+    extent = scan_extent(m, origin, direction, settings)
     femur = _cropped_bone(m.femur, _frame_at(m.femoral_frame, origin),
-                          settings.femur_box_mm)
+                          extent["boxes"]["femur"])
     tibia = _cropped_bone(m.tibia, _frame_at(m.tibial_frame, origin),
-                          settings.tibia_box_mm)
+                          extent["boxes"]["tibia"])
     t_bones = time.perf_counter() - t0
 
     anterior = np.asarray(plan.components["femoral_component"], dtype=float)[:3, 0]
     anterior = anterior / np.linalg.norm(anterior)
     if femoral_offset_mm:
         femur = femur.translated(-float(femoral_offset_mm) * anterior)
+        # The box the femur was kept in moves with it.
+        shift = (-float(femoral_offset_mm) * anterior) @ m.femoral_frame.matrix[:3, :3]
+        low, high = extent["boxes"]["femur"]
+        extent["boxes"]["femur"] = (tuple(np.add(low, shift)), tuple(np.add(high, shift)))
 
     blocks = {}
     for name in ("femoral_cutting_block", "tibial_cutting_block"):
@@ -1356,11 +1478,13 @@ def flexion_model(
         pivot=pivot, femoral_frame=m.femoral_frame, tibial_frame=m.tibial_frame,
         femur=femur, tibia=tibia, femoral_component=component, insert=insert,
         insert_pose=insert_matrix, insert_bounds=bounds, settings=settings,
+        femur_box_mm=extent["boxes"]["femur"], tibia_box_mm=extent["boxes"]["tibia"],
         diagnostics={
             "implant_mode": mode if scales else "catalogue",
             "hinge_origin_mm": [round(float(v), 3) for v in origin],
             "hinge_direction": [round(float(v), 6) for v in direction],
             "femoral_offset_mm": float(femoral_offset_mm),
+            "scan_extent": extent["extent"],
             "triangles": {"femur": femur.n_triangles, "tibia": tibia.n_triangles,
                           "femoral_component": component.n_triangles,
                           "insert": insert.n_triangles},
@@ -1435,12 +1559,21 @@ def flexion_case(
             },
             "seconds": round(time.perf_counter() - t0, 2),
         }
+        if limit.censored:
+            records[trajectory.name]["no_contact"] = no_contact_reason(
+                model, trajectory, limit.stop_deg)
     component = np.asarray(plan.components["femoral_component"], dtype=float)
     return {
         "method": "flexion.impingement_search.v1",
         "provenance": "estimated",
         "note": ("Geometric limit of the parts under a prescribed trajectory: no soft "
                  "tissue, no thigh-calf contact, not contact-solved (WP-D level D1)."),
+        "stop_rule": ("Each search runs until the scanned models make blocking contact, "
+                      f"bounded only by the end of the motion ({settings.stop_deg:g} deg, "
+                      "the tibia folded onto the femur). A search that reaches the bound "
+                      "untouched reports stop_reason 'no_contact_in_scanned_models' and "
+                      "flexion_limit_deg null, with the reason under 'no_contact'."),
+        "scan_extent": model.diagnostics.get("scan_extent"),
         "pairs": list(FLEXION_PAIRS),
         "trajectories": records,
         "envelope": envelope(limits),
@@ -1450,6 +1583,119 @@ def flexion_case(
         "diagnostics": model.diagnostics,
         "femoral_component_anterior": [round(float(v), 6) for v in
                                        component[:3, 0] / np.linalg.norm(component[:3, 0])],
+    }
+
+
+def no_contact_reason(model: FlexionModel, trajectory, angle_deg: float,
+                      search_mm: float = 100.0) -> dict:
+    """Why a search met nothing by ``angle_deg``, measured from the models.
+
+    At the bound the tibial set is posed as the trajectory puts it, and the models are
+    asked where they come closest. ``gaps_mm`` is how close each pair still is
+    (``None``: farther than ``search_mm``). The same is measured against the last
+    ``end_slab_mm`` of each shaft as kept (the femur's proximal end, the tibia's distal
+    end), where the scan -- or the other bone's reach -- cut the bone, and against the
+    rest of that shaft. If the other side comes nearer the shaft's end than anywhere
+    else on it (by more than 0.5 mm), the gap is closing towards the end of the scan and
+    the bone that would close it lies beyond: the reason is ``bone_not_in_scan``.
+    Otherwise the parts come closest inside the scans, so the bone that would meet is in
+    the models and it is the prescribed motion that keeps it clear:
+    ``kept_apart_by_motion``. The scan extents (:func:`scan_extent`)
+    and how far the folded tibia reaches proximally of the hinge are given with it.
+    """
+    from .core.kinematics import scenario
+
+    end_slab_mm = 5.0
+    trajectory = scenario(trajectory)
+    pose = model.pose(trajectory, angle_deg)
+    tibia, insert = model.tibia.transformed(pose), model.insert.transformed(pose)
+    gaps = {}
+    for pair, a, b in (
+        ("insert_vs_femoral_bone", insert, model.femur),
+        ("femoral_component_vs_insert", model.femoral_component, insert),
+        ("femoral_component_vs_tibial_bone", model.femoral_component, tibia),
+        ("tibial_bone_vs_femoral_bone", tibia, model.femur),
+    ):
+        gap = a.min_gap(b, search_mm)
+        gaps[pair] = None if gap is None else round(gap, 2)
+    origin = model.pivot[:3, 3]
+    basis = model.femoral_frame.matrix[:3, :3]
+    folded = np.vstack([tibia.to_mesh().vertices, insert.to_mesh().vertices])
+    reach = float(((folded - origin) @ basis)[:, 2].max())
+
+    # Each shaft's last few millimetres as kept, against the rest of it: if the other
+    # side comes nearer the end than anywhere else on that bone, the gap is closing
+    # towards the end of the scan.
+    def nearest(solids, others):
+        found = [a.min_gap(b, search_mm) for a in solids for b in others]
+        return min((g for g in found if g is not None), default=None)
+
+    ends, interiors = {}, {}
+    if model.femur_box_mm is not None:
+        low, high = (np.asarray(v, dtype=float) for v in model.femur_box_mm)
+        frame = _frame_at(model.femoral_frame, origin)
+        cut = high[2] - end_slab_mm
+        slab = model.femur.cropped(frame, (low[0], low[1], cut), high)
+        rest = model.femur.cropped(frame, low, (high[0], high[1], cut))
+        if not slab.is_empty():
+            ends["femur"] = nearest([tibia, insert], [slab])
+            interiors["femur"] = (None if rest.is_empty()
+                                  else nearest([tibia, insert], [rest]))
+    if model.tibia_box_mm is not None:
+        low, high = (np.asarray(v, dtype=float) for v in model.tibia_box_mm)
+        frame = _frame_at(model.tibial_frame, origin)
+        cut = low[2] + end_slab_mm
+        slab = model.tibia.cropped(frame, low, (high[0], high[1], cut))
+        rest = model.tibia.cropped(frame, (low[0], low[1], cut), high)
+        if not slab.is_empty():
+            femoral_side = [model.femur, model.femoral_component]
+            ends["tibia"] = nearest([slab.transformed(pose)], femoral_side)
+            interiors["tibia"] = nearest(
+                [insert] + ([] if rest.is_empty() else [rest.transformed(pose)]),
+                femoral_side)
+
+    extent = model.diagnostics.get("scan_extent") or {}
+    closest = min(((g, p) for p, g in gaps.items() if g is not None), default=None)
+    at_end = [bone for bone, g in ends.items() if g is not None
+              and (interiors.get(bone) is None or g < interiors[bone] - 0.5)]
+    words = [f"No blocking contact in the scanned models by {angle_deg:g} deg."]
+    if closest is not None:
+        words.append(f"There the closest pair ({closest[1]}) is still "
+                     f"{closest[0]:.1f} mm apart")
+    else:
+        words.append(f"There no pair is within {search_mm:g} mm")
+    if at_end:
+        bone = at_end[0]
+        record = extent.get(bone, {})
+        words[-1] += (f"; the gap closes towards the "
+                      f"{'proximal' if bone == 'femur' else 'distal'} end of the {bone} "
+                      f"as scanned ({ends[bone]:.1f} mm there, against "
+                      + ("nothing nearer" if interiors.get(bone) is None
+                         else f"{interiors[bone]:.1f} mm")
+                      + f" on the rest of it; scanned {record.get('scanned_from_hinge_mm')}"
+                      f" mm from the hinge, kept to {record.get('kept_from_hinge_mm')} "
+                      "mm): the bone that would close it lies beyond the scan.")
+    else:
+        words[-1] += (", inside both scans (femur scanned "
+                      f"{extent.get('femur', {}).get('scanned_from_hinge_mm')} mm above "
+                      f"the hinge, tibia {extent.get('tibia', {}).get('scanned_from_hinge_mm')}"
+                      " mm below it): the bone that would meet is in the models, and the "
+                      "prescribed motion keeps it clear.")
+    return {
+        "reason": "bone_not_in_scan" if at_end else "kept_apart_by_motion",
+        "at_deg": float(angle_deg),
+        "gaps_mm": gaps,
+        "gaps_to_shaft_end_mm": {k: (None if v is None else round(v, 2))
+                                 for k, v in ends.items()},
+        "gaps_to_rest_of_shaft_mm": {k: (None if v is None else round(v, 2))
+                                     for k, v in interiors.items()},
+        "folded_tibia_reach_from_hinge_mm": round(reach, 1),
+        "femur_scanned_from_hinge_mm": extent.get("femur", {}).get(
+            "scanned_from_hinge_mm"),
+        "femur_kept_from_hinge_mm": extent.get("femur", {}).get("kept_from_hinge_mm"),
+        "tibia_scanned_from_hinge_mm": extent.get("tibia", {}).get(
+            "scanned_from_hinge_mm"),
+        "text": " ".join(words),
     }
 
 

@@ -127,6 +127,12 @@ class Solid:
             return self
         return Solid(self._m.simplify(float(tolerance_mm)))
 
+    def min_gap(self, other: "Solid", search_mm: float) -> float | None:
+        """The smallest distance between the two surfaces, or ``None`` when it is more
+        than ``search_mm`` (0 when they touch or overlap)."""
+        gap = float(self._m.min_gap(other._m, float(search_mm)))
+        return None if gap >= search_mm else gap
+
     def to_mesh(self) -> Mesh:
         return ManifoldKernel._from_manifold(self._m, Mesh(
             vertices=np.zeros((0, 3)), faces=np.zeros((0, 3), dtype=np.int64)))

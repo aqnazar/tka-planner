@@ -176,8 +176,24 @@ def test_the_flexion_search_runs_end_to_end_and_writes_into_the_plan(session, tm
                            settings=FlexionSettings(step_deg=20.0, resolution_deg=2.0))
     assert set(flexion["trajectories"]) == {"S1", "S2", "S3"}
     for record in flexion["trajectories"].values():
-        assert 0.0 <= record["max_flexion_deg"] <= 170.0
+        assert 0.0 <= record["max_flexion_deg"] <= 180.0
         assert record["parameters"]["name"] == record["trajectory"]
+        # The stop reason and the reported limit agree with the old censored flag.
+        if record["censored"]:
+            assert record["stop_reason"] == "no_contact_in_scanned_models"
+            assert record["flexion_limit_deg"] is None
+            assert record["no_contact"]["reason"] in ("bone_not_in_scan",
+                                                      "kept_apart_by_motion")
+        else:
+            assert record["stop_reason"] == "contact"
+            assert record["flexion_limit_deg"] == record["max_flexion_deg"]
+            assert "hinge_radius_mm" in record["contacts"][0]["diagnostics"]
+    assert flexion["settings"]["stop_deg"] == 180.0
+    extent = flexion["scan_extent"]
+    for bone in ("femur", "tibia"):
+        assert extent[bone]["box_from_scan"]
+        assert extent[bone]["kept_from_hinge_mm"] <= extent[bone][
+            "scanned_from_hinge_mm"] + 1.01
     assert flexion["envelope"]["min_deg"] <= flexion["envelope"]["max_deg"]
     document = plan_document(session.measurement, session.plan, session.sizing,
                              flexion=flexion)

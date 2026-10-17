@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from tka_planner.core.kinematics import (
+    FOLD_DEG,
     NEUTRAL,
     SCENARIOS,
     Contact,
@@ -187,6 +188,44 @@ def test_the_search_finds_a_known_contact_angle_to_its_resolution():
 def test_nothing_hit_is_reported_as_censored():
     limit = search_max_flexion(lambda a: [], stop_deg=150.0)
     assert limit.censored and limit.max_flexion_deg == 150.0
+    assert limit.stop_reason == "no_contact_in_scanned_models"
+    assert limit.flexion_limit_deg is None
+
+
+def test_by_default_the_search_runs_to_the_fold_not_to_a_chosen_angle():
+    """Ruling #26: the stop angle is the end of the motion (180 deg), so a contact the
+    old 170 deg ceiling would have censored is found."""
+    limit = search_max_flexion(lambda a: [_contact("wall", a)] if a >= 176.2 else [])
+    assert limit.stop_deg == FOLD_DEG == 180.0
+    assert not limit.censored and limit.stop_reason == "contact"
+    assert 175.7 <= limit.max_flexion_deg < 176.2
+    assert limit.flexion_limit_deg == limit.max_flexion_deg
+    record = limit.to_dict()
+    assert record["stop_reason"] == "contact"
+    assert record["flexion_limit_deg"] == record["max_flexion_deg"]
+    assert record["search"]["stop_deg"] == 180.0
+
+
+def test_nothing_hit_by_the_fold_is_no_contact_and_never_a_flexion_value():
+    seen = []
+    limit = search_max_flexion(lambda a: seen.append(a) or [])
+    assert seen[-1] == 180.0
+    record = limit.to_dict()
+    # Backward compatible: the old keys keep their meaning (a lower bound, censored).
+    assert record["censored"] and record["max_flexion_deg"] == 180.0
+    assert record["stop_reason"] == "no_contact_in_scanned_models"
+    assert record["flexion_limit_deg"] is None
+
+
+def test_the_last_step_lands_on_the_bound():
+    seen = []
+    search_max_flexion(lambda a: seen.append(a) or [], step_deg=7.0)
+    assert seen[-1] == 180.0 and seen[-2] == 175.0
+
+
+def test_a_bound_past_the_fold_is_refused():
+    with pytest.raises(ValueError, match="folded"):
+        search_max_flexion(lambda a: [], stop_deg=190.0)
 
 
 def test_articulation_does_not_stop_flexion():
@@ -231,6 +270,9 @@ def test_the_envelope_is_the_spread_over_scenarios():
     spread = envelope(limits)
     assert spread["min_trajectory"] == "S2" and spread["max_trajectory"] == "S1"
     assert spread["spread_deg"] == pytest.approx(20.0, abs=1.0)
+    assert spread["no_contact_trajectories"] == []
+    limits["S1"] = search_max_flexion(lambda a: [])
+    assert envelope(limits)["no_contact_trajectories"] == ["S1"]
 
 
 # ----------------------------------------------------------------------

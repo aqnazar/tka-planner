@@ -16,6 +16,15 @@
   maximum flexion against posterior femoral translation at the limit is compared with
   Banks et al. 2003 (1.4 deg per mm).
 
+**Stop rule (author ruling #26).** No search stops at a chosen angle: each runs until
+the patient's own scanned models make blocking contact, bounded only by the end of the
+motion (180 deg, the tibia folded onto the femur), and the bones are the whole scans,
+cut only beyond the other bone's reach from the hinge axis. A search that reaches the
+bound untouched has no flexion value; it is reported as "no contact in the scanned
+models", with the reason measured from the models (how far each bone was scanned, and
+whether the gap is closing towards the end of a scan). See
+:func:`tka_planner.pipeline.no_contact_reason`.
+
 Every flexion number here is a geometric limit of the parts under a prescribed motion
 -- no soft tissue, no thigh-calf contact -- so it is expected to exceed what patients
 reach (Banks: 109 +- 11 deg for CR fixed-bearing knees). The comparisons in E10c are of
@@ -70,10 +79,35 @@ def _contact_columns(record: dict) -> dict:
         "contact_anterior_mm": anterior,
         "contact_left_mm": left,
         "contact_proximal_mm": proximal,
+        "contact_hinge_radius_mm": first["diagnostics"].get("hinge_radius_mm"),
         "overlap_mm3": first["volume_mm3"],
         "crop_limited": first["diagnostics"].get("crop_limited"),
         "pairs_at_limit": " ".join(sorted({c["pair"] for c in contacts})),
     }
+
+
+def _no_contact_columns(record: dict) -> dict:
+    """Why a search met nothing (ruling #26), from :func:`no_contact_reason`."""
+    reason = record.get("no_contact")
+    if not reason:
+        return {}
+    gaps = [g for g in reason["gaps_mm"].values() if g is not None]
+    return {
+        "no_contact_reason": reason["reason"],
+        "closest_gap_at_bound_mm": min(gaps) if gaps else None,
+        "folded_tibia_reach_mm": reason["folded_tibia_reach_from_hinge_mm"],
+        "no_contact_text": reason["text"],
+    }
+
+
+def _extent_row(case, extent: dict) -> dict:
+    row = {"case": case.case_id, "side": case.side}
+    for bone in ("femur", "tibia"):
+        for key in ("scanned_from_hinge_mm", "scanned_from_joint_line_mm",
+                    "radial_reach_mm", "kept_from_hinge_mm"):
+            row[f"{bone}_{key}"] = extent[bone][key]
+    row["meeting_reach_mm"] = extent["meeting_reach_mm"]
+    return row
 
 
 def _summary_stats(values) -> str:
@@ -104,7 +138,7 @@ def run_e10a(ctx: Context) -> None:
     from tka_planner.pipeline import flexion_case, flexion_model, plan_case
 
     library = _library(ctx)
-    rows, envelopes, settings = [], [], None
+    rows, envelopes, extents, settings = [], [], [], None
     for case, m in _accepted(ctx):
         for philosophy in PHILOSOPHIES:
             t0 = time.perf_counter()
@@ -127,9 +161,14 @@ def run_e10a(ctx: Context) -> None:
                 rows.append({
                     "case": case.case_id, "side": case.side, "philosophy": philosophy,
                     "trajectory": name, "status": record["parameters"]["status"],
-                    "max_flexion_deg": record["max_flexion_deg"],
+                    # Ruling #26: a search that met nothing has no flexion value; the
+                    # bound it reached is in searched_to_deg.
+                    "max_flexion_deg": record["flexion_limit_deg"],
                     "censored": record["censored"],
+                    "stop_reason": record["stop_reason"],
+                    "searched_to_deg": record["search"]["stop_deg"],
                     **_contact_columns(record),
+                    **_no_contact_columns(record),
                     "blocked_at_start": " ".join(
                         c["pair"] for c in record["blocked_at_start"]) or None,
                     "never_cleared": " ".join(record["never_cleared"]) or None,
@@ -144,6 +183,8 @@ def run_e10a(ctx: Context) -> None:
                     "evaluations": record["search"]["evaluations"],
                 })
             env = result["envelope"]
+            if philosophy == PHILOSOPHIES[0]:
+                extents.append(_extent_row(case, result["scan_extent"]))
             envelopes.append({
                 "case": case.case_id, "side": case.side, "philosophy": philosophy,
                 **env,
@@ -156,13 +197,20 @@ def run_e10a(ctx: Context) -> None:
             })
     ctx.table("e10a_max_flexion", rows, digits=2)
     ctx.table("e10a_envelope", envelopes, digits=2)
+    ctx.table("e10a_scan_extent", extents, digits=1)
 
     ctx.note("Impingement-limited maximum flexion (deg), geometric limit of the parts "
-             "under each prescribed trajectory; search 0 to "
-             f"{settings['stop_deg'] if settings else '?'} deg, step "
-             f"{settings['step_deg'] if settings else '?'} deg, bisected to "
-             f"{settings['resolution_deg'] if settings else '?'} deg. Censored values "
-             "are lower bounds (nothing touched by the stop angle).")
+             "under each prescribed trajectory. Stop rule (author ruling #26): each "
+             "search runs until the patient's own scanned models make blocking contact, "
+             "bounded only by the end of the motion, "
+             f"{settings['stop_deg'] if settings else '?'} deg (tibia folded onto the "
+             "femur; past it the motion would carry the tibia through the femur's axis). "
+             f"Step {settings['step_deg'] if settings else '?'} deg, bisected to "
+             f"{settings['resolution_deg'] if settings else '?'} deg. The bones are the "
+             "whole scans, each cut only beyond the other bone's reach from the hinge "
+             "axis (e10a_scan_extent). A search that reaches the bound untouched is "
+             "reported as 'no contact in the scanned models', with no flexion value, "
+             "and the reason measured from the models.")
     for philosophy in PHILOSOPHIES:
         for name in SCENARIOS:
             sel = [r for r in rows if r["philosophy"] == philosophy
@@ -173,10 +221,23 @@ def run_e10a(ctx: Context) -> None:
                 if r["first_pair"]:
                     pairs[r["first_pair"]] = pairs.get(r["first_pair"], 0) + 1
             ctx.note(f"- {philosophy} {name}: "
-                     f"{_summary_stats(r['max_flexion_deg'] for r in sel)}; "
-                     f"censored {censored}; first pair "
+                     f"{_summary_stats(r['max_flexion_deg'] for r in sel)} "
+                     "(contact-limited searches only); no contact in the scanned "
+                     f"models {censored}; first pair "
                      + (", ".join(f"{k} {v}" for k, v in sorted(pairs.items()))
                         or "none"))
+    for r in rows:
+        if r["censored"]:
+            ctx.note(f"  - {r['case']} {r['philosophy']} {r['trajectory']}: "
+                     f"{r['no_contact_text']}")
+    for e in extents:
+        ctx.note(f"- {e['case']} scan: femur {e['femur_scanned_from_joint_line_mm']:.0f} "
+                 f"mm above its distal condyles ({e['femur_scanned_from_hinge_mm']:.0f} "
+                 f"mm above the hinge), tibia {e['tibia_scanned_from_joint_line_mm']:.0f}"
+                 f" mm below its highest point ({e['tibia_scanned_from_hinge_mm']:.0f} mm "
+                 f"below the hinge); kept in the model to "
+                 f"{e['femur_kept_from_hinge_mm']:.0f} and "
+                 f"{e['tibia_kept_from_hinge_mm']:.0f} mm from the hinge.")
     # MA against KA, paired by knee.
     for name in SCENARIOS:
         diffs = []
@@ -210,8 +271,8 @@ def run_e10a(ctx: Context) -> None:
              f"{sum(d > 2.0 for d in depths)} of {len(depths)} searches.")
     cropped = [r for r in rows if r.get("crop_limited")]
     if cropped:
-        ctx.note(f"- {len(cropped)} limiting contacts touch the crop box: the bone "
-                 "beyond the crop could have touched first.")
+        ctx.note(f"- {len(cropped)} limiting contacts touch the end of a shaft as "
+                 "scanned (or as kept): bone beyond it could have touched first.")
 
 
 # ----------------------------------------------------------------------
@@ -352,9 +413,10 @@ def run_e10c(ctx: Context) -> None:
                     "pco_medial_mm": pco["medial"]["planned_mm"],
                     "pco_lateral_mm": pco["lateral"]["planned_mm"],
                     "pco_radiographic_mm": pco["radiographic"]["planned_mm"],
-                    "max_flexion_deg": record["max_flexion_deg"],
+                    "max_flexion_deg": record["flexion_limit_deg"],
                     "censored": record["censored"],
-                    "first_pair": record["first_pair"],
+                    "stop_reason": record["stop_reason"],
+                    **_contact_columns(record),
                 })
             if offset == 0.0:
                 for t_ref in BANKS_TRANSLATIONS_MM:
@@ -368,7 +430,9 @@ def run_e10c(ctx: Context) -> None:
                     banks_rows.append({
                         "case": case.case_id, "side": case.side,
                         "ap_translation_at_109_mm": t_ref,
-                        "max_flexion_deg": theta, "censored": record["censored"],
+                        "max_flexion_deg": record["flexion_limit_deg"],
+                        "censored": record["censored"],
+                        "stop_reason": record["stop_reason"],
                         "posterior_translation_at_limit_mm":
                             round(-t_ref * theta / 109.0, 3),
                         "first_pair": record["first_pair"],

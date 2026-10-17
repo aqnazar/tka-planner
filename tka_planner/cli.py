@@ -192,8 +192,12 @@ def _measure(args: argparse.Namespace) -> int:
     if flexion is not None:
         print()
         for name, record in flexion["trajectories"].items():
-            bound = ">=" if record["censored"] else "  "
-            print(f"  max flexion {name}  {bound}{record['max_flexion_deg']:6.1f} deg"
+            if record["censored"]:
+                print(f"  max flexion {name}  no contact in the scanned models by "
+                      f"{record['max_flexion_deg']:.0f} deg ("
+                      f"{record.get('no_contact', {}).get('reason', 'no reason')})")
+                continue
+            print(f"  max flexion {name}    {record['max_flexion_deg']:6.1f} deg"
                   + (f"  first contact: {record['first_pair']}"
                      if record["first_pair"] else ""))
     print()
