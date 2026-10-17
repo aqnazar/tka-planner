@@ -825,6 +825,12 @@ already made. On REF_KJ2 a commit took 11.2 s every time before; the first now t
 re-commits in 2.0 s. Opening a case costs 1–4 s more; the geometry is unchanged.
 Bone shells are drawn deep orange (they were red, which the fit map uses for overhang).
 
+*A limitation:* neither solver checks that a surface does not pass through itself. A
+self-intersecting segmentation is closed and manifold, so it passes the repair and both
+manifold3d and Blender's exact solver cut it without complaint, and what they return is
+not defined. The cohort's bones have not been tested for it; a segmentation tool's own
+export is trusted on this point, and the paper says so.
+
 **Blender's exact solver is kept as a cross-check**, behind an optional extra, never
 imported at runtime. Four cases are cut in Blender once and committed as STL, and the
 gate asserts the two solvers agree on volume, surface area, bounding box and a symmetric
