@@ -166,7 +166,7 @@ TRIAL_SCHEMA = (
     {"name": "trajectory", "label": "Trajectory", "kind": "choice",
      "choices": [["S3", "S3 Neutral hinge"],
                  ["S2", "S2 Observed CR (anterior slide)"],
-                 ["S1", "S1 Native-like (placeholder)"]],
+                 ["S1", "S1 Native (fitted to published numbers)"]],
      "help": "How the femur moves on the tibia as the knee flexes. S3 is the pure "
              "hinge about the transepicondylar axis. S2 adds the paradoxical anterior "
              "slide and small internal rotation measured in cruciate-retaining knees "

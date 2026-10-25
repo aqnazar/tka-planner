@@ -146,7 +146,8 @@ def test_a_plan_records_its_trajectory_and_every_scenario(session):
     kinematics = document["kinematics"]
     assert kinematics["trajectory"] == "S2"
     assert set(kinematics["scenarios"]) == {"S1", "S2", "S3"}
-    assert kinematics["scenarios"]["S1"]["status"] == "placeholder"
+    assert kinematics["scenarios"]["S1"]["status"] == "literature"
+    assert kinematics["scenarios"]["S1"]["knots"]
     assert kinematics["flexion"] is None
 
 

@@ -600,9 +600,29 @@ more than their mean (Bellemans 2002: medial contact 1.97 mm anterior, SD 4.46):
 
 | | Scenario | Parameters | Source |
 |---|---|---|---|
-| S1 | Native-like: medial pivot, lateral rollback | 20° internal rotation at 120°, pivot 20 mm medial, no translation | **Placeholder**, to be fitted (Iwaki, Pinskerova and Freeman 2000 is the candidate) |
+| S1 | Native: medial pivot, lateral rollback | pivot 26.4 mm medial (the medial condyle's centre, for centres 52.8 mm apart); knots 20° internal rotation, no translation at 120°, and 33.4°, −4.8 mm at 162°; linear between knots and from extension, held beyond 162° | Fitted to published numbers (below) |
 | S2 | Observed CR: paradoxical anterior slide | 2.7° internal rotation and 1.12 mm anterior at the joint centre, at 109° | Bellemans 2002 means (medial 1.97, lateral 0.27 mm anterior, 2.7° internal); 109° is Banks 2003's CR mean maximum flexion standing in for Bellemans' own |
 | S3 | Neutral hinge | none | Level D0, unchanged |
+
+**S1 is fitted to the numbers read in the sources** (author ruling 2026-10-25), not to a
+table. Pinskerova et al. 2004 (JBJS Br 86:925): in the unloaded living knee the medial
+flexion facet's centre does not move from 30° to 120°, the lateral one moves about 15 mm
+back from 20° to 120°, and the tibia has turned about 20° internally by 110–120°.
+Nakagawa et al. 2000 (JBJS Br 82:1199): from 120° to 162° a further 4 mm back medially and
+15 mm laterally. With the pivot on the medial centre and the two centres 2d apart, the
+lateral one goes back 2d (sin φ₁₂₀ − sin φ₂₀) between 20° and 120°; 20° at 120° and 15 mm
+back give 2d = 52.8 mm, so the pivot lies 26.4 mm medial of the axis midpoint. The earlier
+placeholder (20 mm) gave 12–14 mm and left the medial centre 0.5–2 mm out. A straight line
+from extension to 20° at 120° adds only about 5 mm of lateral rollback by 162°, against
+15 observed, so S1 has a second knot: −4.8 mm of translation (4.0 mm at the medial
+centre after the rotation) and 33.4° of rotation at 162°, which puts the lateral centre a
+further 15 mm back. That 33.4° is derived (the sources give displacements, not the angle)
+and holds only as long as the motion is rigid; beyond 162° nothing was measured and the
+values are held. The pivot is for a 52.8 mm centre spacing and is not scaled to each knee,
+which matters for knees much wider or narrower than the 80–90 mm femurs it was fitted
+for. Iwaki, Pinskerova and Freeman 2000 (JBJS Br 82:1189), the cadaver study the
+placeholder named, was not used; Hill et al. 2000 (JBJS Br 82:1196), the living-knee MRI
+paper in the same issue, has no numbers in its abstract.
 
 S3 composes to exactly the matrix Reduce mode has always produced; a test asserts
 equality, not closeness. The scenario is a trial control in the application and every

@@ -29,7 +29,11 @@ frame, made of
   be either sign.
 
 Both grow linearly with flexion, at the rate set by their value at
-``reference_flexion_deg``, and continue at that rate beyond it. Applying the motion at
+``reference_flexion_deg``, and continue at that rate beyond it. A trajectory may instead
+give ``knots``: (flexion, rotation, translation) triples between which both are
+interpolated linearly from the origin, held at the last knot's values beyond it. The
+native-like scenario S1 uses them, because a native knee's lateral condyle keeps rolling
+back after 120 degrees, faster than a straight line from extension allows. Applying the motion at
 rest and then flexing makes the rotation about the tibia's own long axis wherever
 flexion has carried it, which is the joint-coordinate-system order (Grood and Suntay
 1983): flexion about a femoral axis, rotation about a tibial one.
@@ -138,8 +142,17 @@ class Trajectory:
     reference_flexion_deg: float = 90.0
     status: str = "model"
     source: str = ""
+    # (flexion deg, internal rotation deg, femoral AP translation mm), rising in flexion.
+    # When given they replace the straight line from extension (see the module docstring).
+    knots: tuple = ()
 
     def __post_init__(self):
+        if self.knots:
+            angles = [k[0] for k in self.knots]
+            if any(len(k) != 3 for k in self.knots) or angles[0] <= 0.0 or any(
+                    b <= a for a, b in zip(angles, angles[1:])):
+                raise ValueError("Trajectory knots must be (flexion, rotation, "
+                                 "translation) triples at rising positive flexion.")
         if self.reference_flexion_deg <= 0.0:
             raise ValueError("The reference flexion angle must be positive.")
         if self.status not in ("model", "literature", "placeholder", "custom"):
@@ -147,10 +160,19 @@ class Trajectory:
 
     @property
     def is_neutral(self) -> bool:
-        return self.axial_rotation_deg == 0.0 and self.ap_translation_mm == 0.0
+        return (self.axial_rotation_deg == 0.0 and self.ap_translation_mm == 0.0
+                and not self.knots)
 
     def at(self, flexion_deg: float) -> tuple[float, float]:
         """``(internal rotation deg, femoral AP translation mm)`` at an angle."""
+        if self.knots:
+            angles = np.array([0.0] + [k[0] for k in self.knots])
+            rotations = np.array([0.0] + [k[1] for k in self.knots])
+            translations = np.array([0.0] + [k[2] for k in self.knots])
+            theta = float(flexion_deg)
+            # np.interp holds the end values beyond the last knot, as documented.
+            return (float(np.interp(theta, angles, rotations)),
+                    float(np.interp(theta, angles, translations)))
         fraction = float(flexion_deg) / self.reference_flexion_deg
         return self.axial_rotation_deg * fraction, self.ap_translation_mm * fraction
 
@@ -176,6 +198,7 @@ class Trajectory:
             "reference_flexion_deg": self.reference_flexion_deg,
             "status": self.status,
             "source": self.source,
+            **({"knots": [list(k) for k in self.knots]} if self.knots else {}),
             "sign_convention": (
                 "axial rotation + internal tibial rotation (femoral external rotation "
                 "on the tibia); pivot + medial of the flexion-axis midpoint; AP "
@@ -188,7 +211,8 @@ class Trajectory:
     def from_dict(cls, record: dict) -> "Trajectory":
         keys = ("name", "label", "axial_rotation_deg", "pivot_ml_mm",
                 "ap_translation_mm", "reference_flexion_deg", "status", "source")
-        return cls(**{k: record[k] for k in keys if k in record})
+        knots = tuple(tuple(float(x) for x in k) for k in record.get("knots", ()))
+        return cls(**{k: record[k] for k in keys if k in record}, knots=knots)
 
 
 NEUTRAL = Trajectory(
@@ -221,22 +245,40 @@ OBSERVED_CR = Trajectory(
            "maximum flexion, which is to be checked against the paper.",
 )
 
-# PLACEHOLDER. A medial pivot with lateral rollback, the native-knee pattern Bellemans
-# cites (Iwaki, Pinskerova and Freeman 2000). The numbers are not fitted to anything:
-# they give a medial condyle that stays put and a lateral one that rolls back about
-# 15 mm by 120 degrees, the order of magnitude that literature describes. They are to
-# be replaced by a least-squares fit to a chosen dataset (developer question X-11).
+# The native knee: a medial pivot with lateral rollback, fitted (author ruling 2026-10-25)
+# to the numbers read in the sources, not to a table. All of it is the rigid transverse
+# motion of the tibia about a pivot on the medial condyle's centre, so the medial centre
+# stays where it is and the lateral one is carried back by the rotation:
+#
+# * Pinskerova et al. 2004 (JBJS Br 86:925): the medial flexion facet centre does not
+#   move from 30 to 120 degrees; the lateral one moves about 15 mm back from 20 to 120;
+#   the tibia has turned internally about 20 degrees by 110-120 degrees.
+# * Nakagawa et al. 2000 (JBJS Br 82:1199): from 120 to 162 degrees a further 4 mm back
+#   medially and 15 mm back laterally.
+#
+# With the pivot at the medial centre and the centres 2d apart, the lateral centre moves
+# back 2d (sin phi(120) - sin phi(20)) between 20 and 120 degrees. For 20 degrees at
+# 120 and 15 mm back, 2d = 52.8 mm: the pivot is 26.4 mm medial of the axis midpoint, a
+# centre spacing in line with a femur 80-90 mm wide. A straight line from extension to
+# 20 degrees at 120 gives only 5 mm more by 162 degrees, against 15 observed, so the
+# motion carries a second knot: the medial centre translates -4.8 mm (4 mm after the
+# rotation's cos) and the rotation reaches 33.4 degrees, which puts the lateral centre
+# a further 15 mm back (derived, not measured: the sources give displacements, not
+# the angle at 162). Beyond 162 the motion is held, since nothing was measured there.
+# The pivot is for a 52.8 mm centre spacing; scaling it to each knee is not done.
 NATIVE_LIKE = Trajectory(
     name="S1",
-    label="Native-like: medial pivot, lateral rollback (PLACEHOLDER)",
+    label="Native: medial pivot, lateral rollback (fitted to published numbers)",
     axial_rotation_deg=20.0,
-    pivot_ml_mm=20.0,
+    pivot_ml_mm=26.4,
     ap_translation_mm=0.0,
     reference_flexion_deg=120.0,
-    status="placeholder",
-    source="PLACEHOLDER, to be fitted: medial pivot about 20 mm medial of the centre, "
-           "20 deg internal tibial rotation by 120 deg (lateral rollback about 15 mm). "
-           "Candidate source: Iwaki, Pinskerova and Freeman 2000.",
+    status="literature",
+    source="Fitted to Pinskerova 2004 (JBJS Br 86:925: medial centre still 30-120 deg, "
+           "lateral 15 mm back 20-120, about 20 deg tibial rotation by 110-120) and "
+           "Nakagawa 2000 (JBJS Br 82:1199: a further 4 mm medially and 15 mm laterally "
+           "from 120 to 162); second knot at 162 deg derived; held beyond it.",
+    knots=((120.0, 20.0, 0.0), (162.0, 33.4, -4.8)),
 )
 
 SCENARIOS: dict[str, Trajectory] = {t.name: t for t in (NATIVE_LIKE, OBSERVED_CR, NEUTRAL)}

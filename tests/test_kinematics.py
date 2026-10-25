@@ -85,12 +85,38 @@ def test_a_trajectory_needs_the_tibial_directions(pivot):
 
 
 @pytest.mark.parametrize("side", ["left", "right"])
-def test_the_native_like_scenario_rolls_the_lateral_condyle_back(side):
+def test_the_native_scenario_reproduces_the_published_displacements(side):
+    """S1 is fitted to Pinskerova 2004 and Nakagawa 2000: with the condyle centres 52.8 mm
+    apart, the medial centre stays put 30-120 deg and the lateral one goes back 15 mm
+    from 20 to 120, then a further 4 mm medially and 15 mm laterally to 162."""
     s1 = SCENARIOS["S1"]
-    medial = _femur_moves(s1, 120.0, side, +22.0)
-    lateral = _femur_moves(s1, 120.0, side, -22.0)
-    assert lateral < -10.0          # lateral rollback, femur moving posteriorly
-    assert abs(medial) < 1.0        # the medial pivot stays put
+    d = s1.pivot_ml_mm                          # the pivot is the medial centre
+    assert d == pytest.approx(26.4)
+
+    def moved(angle, ml):
+        return _femur_moves(s1, angle, side, ml)
+
+    assert moved(120.0, +d) - moved(30.0, +d) == pytest.approx(0.0, abs=0.01)
+    assert moved(120.0, -d) - moved(20.0, -d) == pytest.approx(-15.0, abs=0.1)
+    assert moved(162.0, +d) - moved(120.0, +d) == pytest.approx(-4.0, abs=0.1)
+    assert moved(162.0, -d) - moved(120.0, -d) == pytest.approx(-15.0, abs=0.2)
+    assert s1.at(120.0)[0] == pytest.approx(20.0)           # about 20 deg by 120
+
+
+def test_the_native_scenario_holds_its_last_values_beyond_162_degrees():
+    s1 = SCENARIOS["S1"]
+    assert s1.at(170.0) == s1.at(180.0) == s1.at(162.0)
+    assert s1.at(0.0) == (0.0, 0.0)
+    # Continuous through the first knot, and linear from extension to it.
+    assert s1.at(60.0)[0] == pytest.approx(10.0)
+    assert s1.at(120.0) == (20.0, 0.0)
+
+
+def test_knots_must_rise_in_flexion():
+    with pytest.raises(ValueError, match="knots"):
+        Trajectory("T", "bad", knots=((90.0, 10.0, 0.0), (60.0, 20.0, 0.0)))
+    with pytest.raises(ValueError, match="knots"):
+        Trajectory("T", "bad", knots=((0.0, 10.0, 0.0),))
 
 
 @pytest.mark.parametrize("side", ["left", "right"])
@@ -156,9 +182,11 @@ def test_scenarios_round_trip_through_a_plan_record():
         assert scenario(trajectory.to_dict()) == trajectory
 
 
-def test_the_placeholder_says_so():
-    assert SCENARIOS["S1"].status == "placeholder"
-    assert "PLACEHOLDER" in SCENARIOS["S1"].label
+def test_the_native_scenario_is_labelled_literature_and_cites_its_sources():
+    s1 = SCENARIOS["S1"]
+    assert s1.status == "literature" and "PLACEHOLDER" not in s1.label
+    assert "Pinskerova 2004" in s1.source and "Nakagawa 2000" in s1.source
+    assert all(s.status != "placeholder" for s in SCENARIOS.values())
 
 
 def test_an_unknown_scenario_is_refused():
