@@ -84,6 +84,7 @@ __all__ = [
     "fit_case_with_grids",
     "findings_case",
     "resection_table_case",
+    "phantom_femur_case",
     "box_design",
     "femoral_cut_box_case",
     "implant_spec_case",
@@ -591,6 +592,19 @@ def _femur_samples(femur: Mesh) -> np.ndarray:
 
 
 _SAMPLES: dict = {}
+
+
+def phantom_femur_case(measurement: CaseMeasurement, *, sex: str | None = None) -> dict:
+    """The schematic femur drawn from the entered length (see ``core.phantom_femur``).
+
+    Needs ``femur_length_mm`` in ``measurement.entered``. The width the length is checked
+    against is the planner's own femoral ML.
+    """
+    from .core.phantom_femur import build_phantom_femur
+
+    return build_phantom_femur(
+        measurement.femoral_frame, measurement.entered["femur_length_mm"],
+        width_mm=measurement.femoral_measure.ml_mm, sex=sex).to_dict()
 
 
 def resection_table_case(measurement: CaseMeasurement, plan: SurgicalPlan,
@@ -1812,6 +1826,10 @@ def plan_document(
             "scenarios": {name: t.to_dict() for name, t in SCENARIOS.items()},
             "flexion": flexion,
         },
+        # Only when a femur length was entered, so a plan without one is byte-for-byte
+        # what it was before the phantom existed.
+        **({"phantom_femur": phantom_femur_case(m)}
+           if m.entered.get("femur_length_mm") is not None else {}),
         "intended_use": INTENDED_USE,
     }
 

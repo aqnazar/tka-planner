@@ -65,6 +65,7 @@ BOTH_BONES = frozenset({
 NO_BONES = frozenset({
     "insert_thickness_delta_mm", "show_planes", "show_axes",
     "show_landmarks", "isolate_landmarks", "show_cutting_blocks", "show_fit_map",
+    "show_phantom",
 })
 # Controls that move a component without moving a resection plane.
 COMPONENT_ONLY = ("_shift_", "_rotation_")
@@ -106,6 +107,8 @@ class Controls:
     # of the bone they are cutting. Off by default: the first thing a plan should show
     # is the anatomy and where the implant sits on it.
     show_cutting_blocks: bool = False
+    # The phantom femur, drawn only when a femur length was entered.
+    show_phantom: bool = True
     # The fit on each cut as a colour map, drawn once Commit has measured it.
     show_fit_map: bool = True
 
@@ -250,6 +253,17 @@ class PlanningSession:
     # Plan mode
     # ------------------------------------------------------------------
 
+    def _phantom(self):
+        """The schematic femur at the entered length, or ``None`` without one."""
+        length = self.measurement.entered.get("femur_length_mm")
+        if length is None:
+            return None
+        from tka_planner.core.phantom_femur import build_phantom_femur
+
+        return build_phantom_femur(
+            self._femoral_frame, length,
+            width_mm=self.measurement.femoral_measure.ml_mm)
+
     def build(self) -> SceneDelta:
         """Compute the plan and build the scene. The equivalent of pressing Plan."""
         self.plan, self.sizing = self._plan()
@@ -265,6 +279,8 @@ class PlanningSession:
             show_axes=self.controls.show_axes,
             show_landmarks=self.controls.show_landmarks,
             show_cutting_blocks=self.controls.show_cutting_blocks,
+            phantom=self._phantom(),
+            show_phantom=self.controls.show_phantom,
             insert_thickness_mm=self._insert_thickness(),
             insert_footprint_mm=self._insert_footprint(),
             insert_stretch=self._insert_stretch(),
@@ -313,6 +329,7 @@ class PlanningSession:
                 ("show_planes", "plane"),
                 ("show_axes", "axis"),
                 ("show_cutting_blocks", "cutting_block"),
+                ("show_phantom", "phantom"),
             ):
                 if control not in changes:
                     continue

@@ -742,6 +742,32 @@ is flagged, because pelvic motion moves the fitted centre without raising the re
 much of it along the femur, and an independent length is the check that can see it. The
 10 mm is a proposal pending the phantom.
 
+**The phantom femur.** With a length entered, the app and `plan.json` (`phantom_femur`)
+also carry a schematic of the femur the scan does not hold, as if the whole bone had been
+scanned: a head sphere, a neck and a shaft, in the scan's own frame (method
+`phantom_femur.v1`, quality `assumed`, never `measured`). It changes no metric: the head
+is placed at the entered length along the femoral frame's own mechanical axis. The shaft
+axis leans laterally from it by the anatomical-mechanical angle (6.0°; 5.7 ± 1.2, 6.46 ±
+1.26, 6.0–6.2 in three measured series), and the neck meets the shaft at 123.2° (3D CT of
+247 patients, Yang and Qian 2025), so its length follows from the offset (L sin 6°, 43 mm
+at 410 mm) and not from a second source. The head's diameter is the sex-specific mean when
+the sex is given (49.65 male, 44.41 female) and otherwise 0.100 of the femur's maximum
+length (49/464 and 44/434 in 170 dry femora, Mall 2000), the maximum length being the
+entered one plus 40 mm. That 40 mm is this project's own estimate; no published conversion
+between hip-to-knee and maximum length was found, and it is to be calibrated on full-femur
+scans before the paper prints it. The entered length is also checked against the femoral
+width (FL = 187.8 + 3.39 EB, SEE 16.4 mm, 50 dry femora, Abledu 2016) and flagged beyond
+two SEE, as a check for a typing error or the wrong length definition; the planner's ML is
+not the dry-bone epicondylar breadth, so the flag is informational. The head centre's
+error that the priors leave is stated with the phantom: 9 mm mediolateral (the angle's
+spread over the length), 6 mm anteroposterior (the offset's lever through the anteversion's
+7.5° spread), 5 mm along the axis (the length's own reading), about 12 mm combined at
+410 mm, one SD, not counting the error of carrying the shaft axis up from a distal scan,
+which is unpublished. The phantom's axis is a population prior and carries no patient
+varus or valgus; it cannot support an alignment decision, and the app says so beside it.
+Anteversion, the trochanters and the shaft's bow are not drawn. The literature basis, with
+the status of every number, is in `PHANTOM_FEMUR_RESEARCH_2026-10-25.md`.
+
 **Orientation gate.** The landmark searches run in each bone's own axes but take their
 signs from the scanner, so a knee lying too far from LPS is refused, as an error, before
 any landmark is found: a bone's long axis more than **45°** from scanner superior

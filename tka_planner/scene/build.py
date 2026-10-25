@@ -36,6 +36,9 @@ IMPLANT_COLOUR = (0.18, 0.38, 0.85)
 PLANE_COLOUR = (0.25, 0.80, 0.85)
 AXIS_COLOUR = (0.95, 0.55, 0.10)
 BLOCK_COLOUR = (0.30, 0.70, 0.35)
+# The phantom femur is not anatomy, so it takes no bone or implant colour: a pale violet,
+# drawn translucent, that nothing else in the scene uses.
+PHANTOM_COLOUR = (0.62, 0.55, 0.85)
 SHELL_COLOUR = (0.93, 0.42, 0.05)
 # Landmark colour is yellow throughout, per-status shade rather than a different hue,
 # so provenance still reads at a glance without leaving the yellow family the category
@@ -65,6 +68,8 @@ def build_scene(
     show_axes: bool = True,
     show_landmarks: bool = False,
     show_cutting_blocks: bool = True,
+    phantom=None,
+    show_phantom: bool = True,
     insert_thickness_mm: float | None = None,
     insert_footprint_mm: tuple | None = None,
     insert_stretch: dict | None = None,
@@ -129,6 +134,27 @@ def build_scene(
             ),
             gm.cylinder(AXIS_RADIUS_MM, abs(length)),
         )
+
+    if phantom is not None:
+        # Already in the scan's frame, so the node sits at the origin with its mesh.
+        from tka_planner.geom.phantom import phantom_mesh
+
+        scene.add(
+            Node(
+                name="PhantomFemur",
+                set_id=FEMORAL,
+                rest=np.eye(4),
+                colour=PHANTOM_COLOUR,
+                alpha=0.45,
+                visible=show_phantom,
+                tags={"phantom": True, "schematic": True},
+            ),
+            phantom_mesh(phantom),
+        )
+        scene.notes.append(
+            "Phantom femur: a schematic drawn from the entered femur length and "
+            "population priors, not measured anatomy (hip-centre error about "
+            f"{phantom.budget['combined']:g} mm, one SD).")
 
     if landmarks is not None:
         # One shared sphere, instanced by rest transform. The Blender builder made a

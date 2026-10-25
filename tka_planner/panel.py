@@ -127,6 +127,10 @@ CONTROL_SCHEMA = (
             {"name": "show_planes", "label": "Cut planes", "kind": "bool"},
             {"name": "show_axes", "label": "Axes", "kind": "bool"},
             {"name": "show_landmarks", "label": "Landmarks", "kind": "bool"},
+            {"name": "show_phantom", "label": "Phantom femur", "kind": "bool",
+             "help": "A schematic femur (shaft, neck, head sphere) drawn from the "
+                     "entered femur length and population averages. It is not "
+                     "measured anatomy; it appears only when a length was entered."},
             {"name": "show_cutting_blocks", "label": "Cutting blocks", "kind": "bool",
              "help": "Show the instrument that would realise the cut. It is the size "
                      "of the block rather than of the resection, so it stands in "
