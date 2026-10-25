@@ -172,6 +172,9 @@ def run_e10a(ctx: Context) -> None:
                     # Ruling #26: a search that met nothing has no flexion value; the
                     # bound it reached is in searched_to_deg.
                     "max_flexion_deg": record["flexion_limit_deg"],
+                    # Shown, never fitted: the usual extreme, as a bound (ruling 2026-10-25).
+                    "reported_flexion_deg": record["reported_flexion_deg"],
+                    "reported_is_bound": record["reported_is_bound"],
                     "censored": record["censored"],
                     "stop_reason": record["stop_reason"],
                     "searched_to_deg": record["search"]["stop_deg"],
@@ -231,7 +234,7 @@ def run_e10a(ctx: Context) -> None:
             ctx.note(f"- {philosophy} {name}: "
                      f"{_summary_stats(r['max_flexion_deg'] for r in sel)} "
                      "(contact-limited searches only); no contact in the scanned "
-                     f"models {censored}; first pair "
+                     f"models {censored} (shown as >= 170 deg, never fitted); first pair "
                      + (", ".join(f"{k} {v}" for k, v in sorted(pairs.items()))
                         or "none"))
     for r in rows:

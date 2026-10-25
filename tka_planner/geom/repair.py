@@ -28,7 +28,7 @@ from collections import OrderedDict, deque
 
 import numpy as np
 
-from tka_planner.core.islands import find_islands, keep_faces, smaller_than_patella
+from tka_planner.core.islands import find_islands, is_debris, keep_faces
 from tka_planner.core.meshio import Mesh, weld_vertices
 
 __all__ = ["HOLE_FILL_MAX_MM", "is_manifold", "edge_report", "repair", "kernel_ready",
@@ -103,7 +103,8 @@ def repair(mesh: Mesh, *, max_hole_mm: float = HOLE_FILL_MAX_MM
 
     In order: weld; drop degenerate and duplicated faces. If that leaves a closed,
     consistently wound manifold, stop there. Otherwise, in up to ``REPAIR_ROUNDS``
-    rounds: remove pieces smaller than the smallest adult patella; cut out the faces
+    rounds: remove debris pieces (longest side under 20 mm or
+    volume under 5 cm3); cut out the faces
     meeting at any non-manifold edge; wind every face consistently, the main body
     outward; close each hole up to ``max_hole_mm`` across with a fan around its
     centroid. No existing vertex is moved (welding keeps each first occurrence), so the
@@ -264,8 +265,8 @@ def _repair(mesh: Mesh, *, max_hole_mm: float = HOLE_FILL_MAX_MM
 
     n = changed["islands_removed"]
     if n:
-        actions.append(f"removed {n} detached piece{'s' if n != 1 else ''} smaller "
-                       f"than a patella ({changed['island_faces_removed']} faces)")
+        actions.append(f"removed {n} detached piece{'s' if n != 1 else ''} that "
+                       f"were debris (under 20 mm long or 5 cm3) ({changed['island_faces_removed']} faces)")
     if changed["nonmanifold_faces_removed"]:
         actions.append(f"cut out {changed['nonmanifold_faces_removed']} faces at "
                        f"non-manifold edges")
@@ -314,11 +315,11 @@ def _consistently_wound(faces: np.ndarray) -> bool:
 
 
 def _drop_small_islands(vertices, faces, like: Mesh):
-    """Remove every piece but the main body that is smaller than a patella."""
+    """Remove every piece but the main body that is debris."""
     welded = Mesh(vertices=vertices, faces=faces, source_path=like.source_path,
                   sha256=like.sha256, metadata=like.metadata)
     labels, pieces = find_islands(welded)
-    small = [p.label for p in pieces if smaller_than_patella(p)]
+    small = [p.label for p in pieces if is_debris(p)]
     if not small:
         return vertices, faces, 0, 0
     drop = np.zeros(len(pieces) + 1, dtype=bool)

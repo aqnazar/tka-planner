@@ -32,7 +32,7 @@ import numpy as np
 
 from .geometry import fit_sphere_robust, regional_mask
 from .landmarks import CoordinateSystem, LandmarkSet
-from .islands import find_islands, keep_faces, smaller_than_patella
+from .islands import find_islands, is_debris, keep_faces
 from .meshio import Mesh, weld_vertices
 from .sides import LPS_PATIENT_LEFT, LPS_SUPERIOR, Side
 
@@ -340,9 +340,8 @@ def clean_islands(
     insertion were placed on it, and the tibial frame was refused as if two landmarks
     had been swapped.
 
-    Every piece other than the main body that is smaller than the smallest adult
-    patella along all three of its own axes is removed (see
-    :mod:`tka_planner.core.islands`). The removal is a warning when a removed piece
+    Every piece other than the main body that is debris (longest side under 20 mm, or
+    a closed piece under 5 cm3; see :mod:`tka_planner.core.islands`) is removed. The removal is a warning when a removed piece
     lay more than ``gap_mm`` outside the bone, where it would have moved an extreme,
     and a note otherwise. A larger piece may be anatomy -- a patella or a fibular head
     in the mask, or a cavity wall exported as a shell -- and is kept with a warning,
@@ -361,8 +360,8 @@ def clean_islands(
     if not pieces:
         return mesh, welded, report
 
-    small = [p for p in pieces if smaller_than_patella(p)]
-    large = [p for p in pieces if not smaller_than_patella(p)]
+    small = [p for p in pieces if is_debris(p)]
+    large = [p for p in pieces if not is_debris(p)]
     removed = small + (large if remove_large else [])
 
     if small:
@@ -372,8 +371,8 @@ def clean_islands(
         report.add(
             "MESH_DETACHED_FRAGMENT",
             Severity.WARNING if moved else Severity.INFO,
-            f"The {bone} mesh held {len(small)} detached piece(s) smaller than the "
-            f"smallest adult patella ({n_triangles} triangles, "
+            f"The {bone} mesh held {len(small)} detached piece(s) too small to be "
+            f"anatomy (under 20 mm long or 5 cm3; {n_triangles} triangles, "
             f"{n_triangles / len(labels):.3%} of the surface); they were removed. "
             + (f"One lay {beyond:.0f} mm outside the bone, where it would have been "
                f"taken for the bone's extreme: check the segmentation." if moved

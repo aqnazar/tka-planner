@@ -217,6 +217,19 @@ def test_nothing_hit_by_the_fold_is_no_contact_and_never_a_flexion_value():
     assert record["flexion_limit_deg"] is None
 
 
+def test_no_contact_is_shown_as_the_usual_extreme_but_only_as_a_bound():
+    """Author ruling 2026-10-25: show 170 deg, flagged, and never fit it."""
+    from tka_planner.core.kinematics import USUAL_EXTREME_DEG
+    record = search_max_flexion(lambda a: []).to_dict()
+    assert USUAL_EXTREME_DEG == 170.0
+    assert record["reported_flexion_deg"] == 170.0 and record["reported_is_bound"]
+    assert record["flexion_limit_deg"] is None            # what the fits read
+    touched = search_max_flexion(lambda a: [_contact("wall", a)] if a >= 120.0 else [])
+    shown = touched.to_dict()
+    assert not shown["reported_is_bound"]
+    assert shown["reported_flexion_deg"] == shown["flexion_limit_deg"]
+
+
 def test_the_last_step_lands_on_the_bound():
     seen = []
     search_max_flexion(lambda a: seen.append(a) or [], step_deg=7.0)

@@ -102,6 +102,7 @@ __all__ = [
     "envelope",
     "with_parameters",
     "FOLD_DEG",
+    "USUAL_EXTREME_DEG",
     "STOP_CONTACT",
     "STOP_NO_CONTACT",
 ]
@@ -109,6 +110,10 @@ __all__ = [
 #: The end of the flexion motion: the tibia folded onto the femur. The search's only
 #: bound (see "Where the search stops" above).
 FOLD_DEG = 180.0
+#: What a search that met no contact is reported as, for display and for tables (author
+#: ruling 2026-10-25): the usual extreme of knee flexion, the fixed stop the search had
+#: before ruling #26. It is only ever shown as a bound ("at least"), never fitted.
+USUAL_EXTREME_DEG = 170.0
 #: ``FlexionLimit.stop_reason`` when a blocking contact ended the search.
 STOP_CONTACT = "contact"
 #: ``FlexionLimit.stop_reason`` when the search reached its bound with nothing touching.
@@ -380,6 +385,22 @@ class FlexionLimit:
         return None if self.censored else float(self.max_flexion_deg)
 
     @property
+    def reported_flexion_deg(self) -> float:
+        """The flexion to show: the limit, or :data:`USUAL_EXTREME_DEG` as a bound.
+
+        A search that met nothing still gets a number to read, as the author asked, but
+        :attr:`reported_is_bound` is then true and the number is not a measurement:
+        every fit and every statistic uses :attr:`flexion_limit_deg`, which is ``None``.
+        """
+        if self.censored:
+            return USUAL_EXTREME_DEG
+        return float(self.max_flexion_deg)
+
+    @property
+    def reported_is_bound(self) -> bool:
+        return self.censored
+
+    @property
     def first_pair(self) -> str | None:
         """The pair that stops flexion; the deepest overlap if several do at once."""
         if not self.contacts:
@@ -394,6 +415,8 @@ class FlexionLimit:
             "stop_reason": self.stop_reason,
             "flexion_limit_deg": (None if self.flexion_limit_deg is None
                                   else round(self.flexion_limit_deg, 3)),
+            "reported_flexion_deg": round(self.reported_flexion_deg, 3),
+            "reported_is_bound": self.reported_is_bound,
             "first_pair": self.first_pair,
             "contacts": [c.to_dict() for c in self.contacts],
             "blocked_at_start": [c.to_dict() for c in self.blocked_at_start],

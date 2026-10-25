@@ -705,16 +705,20 @@ occasionally a whole patella. Every landmark search reads the bone's extremes, s
 beyond the bone becomes its top or its edge (one cohort tibia had an 80-triangle sliver
 37 mm above the plateau, which became the "top of the tibia"); and the kernel cuts every
 piece, so a broken speck refuses the cut of an otherwise clean bone (the P007R femur: six
-zero-size pieces, 96 triangles, inside the bone). Every piece but the main body that fits
-inside the smallest adult patella along all three of its own principal axes — 14 × 23 ×
-25 mm, from the thinnest published cohort's mean less two SD (Muhamed 2017) and the
-smallest height and width reported in 713 female TKA knees (Kim 2009) — is removed: a
-warning if it lay more than 2 mm outside the bone, where it would have moved an extreme, a
-note otherwise. A larger piece may be anatomy and is kept, with a warning saying where it
+zero-size pieces, 96 triangles, inside the bone). Every piece but the main body that is debris — longest side
+under 20 mm, or, for a closed piece, enclosed volume (absolute, so a cavity wall counts
+by its size) under 5 cm³ — is removed: a warning if it lay more than 2 mm outside the
+bone, where it would have moved an extreme, a note otherwise. An open piece encloses
+nothing, so it is judged by its longest side alone. Both limits lie well below the
+smallest adult patella (14 × 23 × 25 mm: Muhamed 2017, mean less two SD of the thinnest
+cohort; Kim 2009, smallest height and width in 713 female TKA knees). A larger piece may
+be anatomy and is kept, with a warning saying where it
 lies (inside the bone's extent, a cavity; outside, a patella, fibula or neighbouring
 bone); `--remove-islands`, or the finding's Remove button in the app, removes every piece
 but the main body. This replaces the earlier rule (pieces under 1 % of the triangles and
-more than 2 mm outside), at the author's ruling (2026-10-15). On the cohort it changes
+more than 2 mm outside) at the author's ruling (2026-10-15), and the first form of the new
+rule (a piece inside the smallest patella's extents along all three of its own axes) at
+the author's ruling of 2026-10-25, which kept a thin plate or long sliver however light. On the cohort it changes
 one knee's measurement: P007L's femur carried an 8-triangle speck of zero size 0.39 mm
 below the bone, which the earlier rule kept (it was within 2 mm) and which had been taken
 as the distal medial condyle; measured from the condyle itself, mLDFA and aLDFA move by
@@ -802,7 +806,7 @@ guarding against.
 Because segmentations are not reliably manifold, a repair pass runs first. Weld, then drop
 degenerate and duplicated faces; if that leaves a closed, consistently wound manifold,
 nothing more is done (every cohort bone, once the detached pieces are gone). Otherwise, in
-up to three rounds: remove pieces smaller than a patella (*Detached pieces*, under
+up to three rounds: remove debris pieces (*Detached pieces*, under
 Quality control); cut out every face on an edge that three or more faces share, since no
 rule for which of them to keep is principled; wind every face consistently, the main body
 outward and other pieces relative to their own seed, so a cavity wall exported facing

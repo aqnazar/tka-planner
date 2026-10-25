@@ -12,9 +12,10 @@ import numpy as np
 import pytest
 
 from tka_planner.core.islands import (
-    SMALLEST_PATELLA_MM,
+    DEBRIS_LONGEST_SIDE_MM,
+    DEBRIS_VOLUME_CM3,
     find_islands,
-    smaller_than_patella,
+    is_debris,
 )
 from tka_planner.core.meshio import Mesh, face_components, weld_vertices
 from tka_planner.core.qc import Severity, clean_islands
@@ -61,17 +62,56 @@ def test_a_piece_is_measured_along_its_own_axes():
     plate = Mesh(vertices=plate.vertices @ turn.T + [0, 0, 80.0], faces=plate.faces)
     _, [piece] = find_islands(weld_vertices(soup(bone(), plate)))
     assert piece.extents_mm == pytest.approx((2.0, 10.0, 20.0), abs=1e-6)
-    assert smaller_than_patella(piece)
+    assert piece.closed
+    assert is_debris(piece)         # 0.4 cm3: light, though as long as the limit
 
 
-def test_the_patella_bound_is_a_box_the_piece_must_fit_in_every_way():
+def test_a_long_light_sliver_is_debris_by_volume():
     long_sliver = gm.box(1.0)
     long_sliver = Mesh(vertices=long_sliver.vertices * [1.0, 1.0, 40.0],
                        faces=long_sliver.faces)
     _, [piece] = find_islands(weld_vertices(soup(bone(), shifted(long_sliver,
                                                                  (0, 0, 90.0)))))
-    assert piece.extents_mm[2] > max(SMALLEST_PATELLA_MM)
-    assert not smaller_than_patella(piece)
+    assert piece.extents_mm[2] > DEBRIS_LONGEST_SIDE_MM
+    assert piece.volume_cm3 < DEBRIS_VOLUME_CM3
+    assert is_debris(piece)
+
+
+def test_the_limits_are_the_authors():
+    assert (DEBRIS_LONGEST_SIDE_MM, DEBRIS_VOLUME_CM3) == (20.0, 5.0)
+
+
+def test_a_compact_closed_piece_under_the_volume_is_debris_whatever_its_length():
+    """A 19 mm cube: short on every side, so debris on both counts."""
+    cube = gm.box(19.0)
+    _, [piece] = find_islands(weld_vertices(soup(bone(), shifted(cube, (0, 0, 90.0)))))
+    assert is_debris(piece)
+
+
+def test_a_thick_piece_over_both_limits_is_not_debris():
+    block = gm.box(1.0)
+    block = Mesh(vertices=block.vertices * [20.0, 20.0, 25.0], faces=block.faces)
+    _, [piece] = find_islands(weld_vertices(soup(bone(), shifted(block, (0, 0, 90.0)))))
+    assert piece.volume_cm3 == pytest.approx(10.0, abs=1e-6)
+    assert not is_debris(piece)
+
+
+def test_an_open_sheet_is_judged_by_its_length_alone():
+    """Half a cube is open: its signed volume is meaningless, so only length counts."""
+    sheet = gm.box(1.0)
+    sheet = Mesh(vertices=sheet.vertices * [60.0, 60.0, 1.0], faces=sheet.faces[:-2])
+    _, [piece] = find_islands(weld_vertices(soup(bone(), shifted(sheet, (0, 0, 90.0)))))
+    assert not piece.closed
+    assert piece.extents_mm[2] > DEBRIS_LONGEST_SIDE_MM
+    assert not is_debris(piece)
+
+
+def test_a_cavity_is_judged_by_the_size_of_its_volume_not_its_sign():
+    small = gm.uv_sphere(5.0, segments=24, rings=16)      # 0.5 cm3, inward
+    small = Mesh(vertices=small.vertices * 4.0, faces=small.faces[:, ::-1])   # 20 mm radius
+    _, [piece] = find_islands(weld_vertices(soup(bone(), small)))
+    assert piece.volume_cm3 < 0 and abs(piece.volume_cm3) > DEBRIS_VOLUME_CM3
+    assert not is_debris(piece)
 
 
 def test_a_speck_beyond_the_bone_is_removed_with_a_warning():
@@ -118,7 +158,7 @@ def test_a_collapsed_speck_of_zero_size_is_removed():
     assert report.findings[0].severity is Severity.INFO
 
 
-def test_a_piece_larger_than_a_patella_is_kept_and_reported_where_it_is():
+def test_a_piece_over_the_limits_is_kept_and_reported_where_it_is():
     other = gm.uv_sphere(20.0, segments=24, rings=16)
     mesh = soup(bone(), shifted(other, (0.0, 0.0, 100.0)))
     cleaned, _, report = clean_islands(mesh, "tibia")

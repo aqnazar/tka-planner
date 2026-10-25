@@ -7,11 +7,13 @@ The pieces matter twice. Every landmark search reads the bone's extremes, so a p
 beyond the bone becomes the bone's top or its edge; and the boolean kernel cuts every
 piece it is handed, so a broken speck can refuse a cut of an otherwise clean bone.
 
-The rule is the author's: a piece smaller than the smallest possible adult patella
-cannot be any anatomy a knee plan needs, and is removed; anything larger may be, and is
-kept and reported, with an option to remove it. "Smaller" means it fits inside the
-smallest patella's extents along every one of its own principal axes, so a thin plate
-or a long sliver is not removed merely because it is light.
+The rule is the author's (2026-10-25): a piece is debris, and removed, when its longest
+side is under 20 mm or its volume is under 5 cm3; anything bigger may be anatomy, and is
+kept and reported, with an option to remove it. Volume is the absolute enclosed volume
+and counts only for a closed piece (an open shell encloses nothing, so its signed volume
+says nothing about its size); an open piece is judged by its longest side alone. This
+replaced the first rule (fits inside the smallest adult patella along all three of its
+own axes, 14 x 23 x 25 mm), which kept a thin plate or a long sliver however light.
 """
 
 from __future__ import annotations
@@ -22,17 +24,17 @@ import numpy as np
 
 from .meshio import Mesh, face_components
 
-__all__ = ["SMALLEST_PATELLA_MM", "Island", "find_islands", "smaller_than_patella",
-           "keep_faces"]
+__all__ = ["DEBRIS_LONGEST_SIDE_MM", "DEBRIS_VOLUME_CM3", "Island", "find_islands",
+           "is_debris", "keep_faces"]
 
-# The extents of the smallest adult patella, thinnest first: thickness, height, width.
-# Thickness: the smallest published cohort's mean less two SD (16.2 - 2 x 0.9 mm, MRI,
-# 70 women; Muhamed et al., Anat Cell Biol 2017;50:99). Height and width: the smallest
-# single values reported in 713 female Korean TKA knees (23 and 25 mm; Kim et al.,
-# Clin Orthop 2009;467:1007), the width measured after the patellar cut and so an
-# underestimate. Iranpour et al. (Clin Orthop 2008;466:1198, 3D CT) report minima of
-# 18.4, 24.3 and 36.8 mm.
-SMALLEST_PATELLA_MM = (14.0, 23.0, 25.0)
+# A piece is debris when its longest side is under DEBRIS_LONGEST_SIDE_MM or, if it is
+# closed, its volume is under DEBRIS_VOLUME_CM3. Both are well below the smallest adult
+# patella (extents of 14 x 23 x 25 mm: Muhamed et al., Anat Cell Biol 2017;50:99, mean
+# less two SD of the thinnest cohort; Kim et al., Clin Orthop 2009;467:1007, smallest
+# height and width among 713 female TKA knees), so no patella, fibular head or other
+# piece of anatomy a knee plan needs is lost to either.
+DEBRIS_LONGEST_SIDE_MM = 20.0
+DEBRIS_VOLUME_CM3 = 5.0
 
 
 @dataclass(frozen=True)
@@ -41,7 +43,8 @@ class Island:
 
     ``extents_mm`` are the piece's lengths along its own principal axes, shortest first.
     ``volume_cm3`` is the signed enclosed volume: negative for a closed shell facing
-    inwards, which is how a cavity inside a bone is exported. ``outside_mm`` is how far
+    inwards, which is how a cavity inside a bone is exported; it means nothing unless
+    ``closed``. ``outside_mm`` is how far
     the piece reaches beyond the main body's bounding box (0 inside it).
     """
 
@@ -51,6 +54,7 @@ class Island:
     volume_cm3: float
     outside_mm: float
     centre_mm: tuple
+    closed: bool = True
 
     @property
     def inside(self) -> bool:
@@ -63,6 +67,7 @@ class Island:
             "volume_cm3": round(self.volume_cm3, 3),
             "outside_mm": round(self.outside_mm, 1),
             "centre_mm": [round(c, 1) for c in self.centre_mm],
+            "closed": self.closed,
         }
 
 
@@ -93,13 +98,16 @@ def find_islands(welded: Mesh) -> tuple[np.ndarray, list[Island]]:
             volume_cm3=_signed_volume(vertices, piece_faces) / 1000.0,
             outside_mm=outside,
             centre_mm=tuple(float(c) for c in points.mean(axis=0)),
+            closed=_closed(piece_faces),
         ))
     return labels, pieces
 
 
-def smaller_than_patella(island: Island, smallest=SMALLEST_PATELLA_MM) -> bool:
-    """True when the piece fits inside the smallest adult patella along every axis."""
-    return all(e <= s for e, s in zip(island.extents_mm, sorted(smallest)))
+def is_debris(island: Island) -> bool:
+    """True when the piece is too small to be anatomy: see the module docstring."""
+    if island.extents_mm[-1] < DEBRIS_LONGEST_SIDE_MM:
+        return True
+    return island.closed and abs(island.volume_cm3) < DEBRIS_VOLUME_CM3
 
 
 def keep_faces(mesh: Mesh, keep: np.ndarray, **metadata) -> Mesh:
@@ -131,6 +139,14 @@ def _principal_extents(points: np.ndarray) -> tuple:
     extents = projected.max(axis=0) - projected.min(axis=0)
     extents = np.concatenate([extents, np.zeros(3 - len(extents))])
     return tuple(float(e) for e in np.sort(extents))
+
+
+def _closed(faces: np.ndarray) -> bool:
+    """Every edge of the piece is shared by exactly two of its faces."""
+    edges = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]],
+                                    faces[:, [2, 0]]]), axis=1)
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    return bool(np.all(counts == 2))
 
 
 def _signed_volume(vertices: np.ndarray, faces: np.ndarray) -> float:
