@@ -763,7 +763,15 @@ error that the priors leave is stated with the phantom: 9 mm mediolateral (the a
 spread over the length), 6 mm anteroposterior (the offset's lever through the anteversion's
 7.5° spread), 5 mm along the axis (the length's own reading), about 12 mm combined at
 410 mm, one SD, not counting the error of carrying the shaft axis up from a distal scan,
-which is unpublished. The phantom's axis is a population prior and carries no patient
+which is unpublished. We measured it on the one full-length femur we have (REF_KJ2, head
+sphere fitted on the mesh, diameter 44.9 mm, hip-to-knee length 418.8 mm): with the scan
+cropped to 140, 180, 230 and 300 mm of femur above the knee, the frame's axis fell 3.2,
+1.7, 2.0 and 2.4° from the true knee-to-head line, and the phantom's head, placed at the
+true length, fell 23, 12, 15 and 17 mm from the fitted head. That is one knee, so it
+supports the stated order of magnitude and nothing finer; it is to be repeated on more
+full-length femurs before a figure is quoted. On the full-length scan itself the frame's
+axis is 6.9° off (the head 51 mm), because an axis taken along a whole bowed diaphysis
+is not the one a distal scan gives; that case is not what the phantom is for. The phantom's axis is a population prior and carries no patient
 varus or valgus; it cannot support an alignment decision, and the app says so beside it.
 Anteversion, the trochanters and the shaft's bow are not drawn. The literature basis, with
 the status of every number, is in `PHANTOM_FEMUR_RESEARCH_2026-10-25.md`.
