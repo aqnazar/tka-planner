@@ -1600,6 +1600,22 @@ def flexion_case(
     }
 
 
+def _min_gap_staged(a, b, search_mm: float):
+    """:meth:`Solid.min_gap` with the search radius widened in steps.
+
+    The kernel's cost grows with the radius it is asked to search, and most gaps are small,
+    so ask within 10 mm, then 30, then the full radius. The answer is the same as asking
+    at the full radius: a gap found within a smaller radius is the minimum.
+    """
+    for radius in (10.0, 30.0):
+        if radius >= search_mm:
+            break
+        gap = a.min_gap(b, radius)
+        if gap is not None:
+            return gap
+    return a.min_gap(b, search_mm)
+
+
 def no_contact_reason(model: FlexionModel, trajectory, angle_deg: float,
                       search_mm: float = 100.0) -> dict:
     """Why a search met nothing by ``angle_deg``, measured from the models.
@@ -1630,7 +1646,7 @@ def no_contact_reason(model: FlexionModel, trajectory, angle_deg: float,
         ("femoral_component_vs_tibial_bone", model.femoral_component, tibia),
         ("tibial_bone_vs_femoral_bone", tibia, model.femur),
     ):
-        gap = a.min_gap(b, search_mm)
+        gap = _min_gap_staged(a, b, search_mm)
         gaps[pair] = None if gap is None else round(gap, 2)
     origin = model.pivot[:3, 3]
     basis = model.femoral_frame.matrix[:3, :3]
@@ -1641,7 +1657,7 @@ def no_contact_reason(model: FlexionModel, trajectory, angle_deg: float,
     # side comes nearer the end than anywhere else on that bone, the gap is closing
     # towards the end of the scan.
     def nearest(solids, others):
-        found = [a.min_gap(b, search_mm) for a in solids for b in others]
+        found = [_min_gap_staged(a, b, search_mm) for a in solids for b in others]
         return min((g for g in found if g is not None), default=None)
 
     ends, interiors = {}, {}
