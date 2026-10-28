@@ -410,7 +410,8 @@ def clean_islands(
 
 
 def check_entered_femur_length(length_mm: float | None,
-                               length_type: str | None = None) -> QCReport:
+                               length_type: str | None = None,
+                               sex: str | None = None) -> QCReport:
     """An entered femur length must be a length a femur can have.
 
     A knee-only scan cannot give the femur's length: the hip is not in it. The
@@ -425,12 +426,12 @@ def check_entered_femur_length(length_mm: float | None,
     from .phantom_femur import femur_length_record
 
     low, high = PLAUSIBLE_ENTERED_FEMUR_LENGTH_MM
-    length = femur_length_record(length_mm, length_type)
+    length = femur_length_record(length_mm, length_type, sex)
     if length["conversion"] != "none":
         hip_to_knee = length["hip_to_knee_mm"]
         said = (f"{length_mm:g} mm from the head top to the condyles ({hip_to_knee:g} mm "
-                f"hip centre to knee centre, after an assumed {length['offset_mm']:g} mm "
-                f"offset)")
+                f"hip centre to knee centre, after a calibrated {length['offset_mm']:g} "
+                f"mm offset, {length['offset_for']})")
         context = {"femur_length_mm": length_mm, "femur_length_type": length["type"],
                    "hip_to_knee_mm": hip_to_knee}
         if not (np.isfinite(hip_to_knee) and low <= hip_to_knee <= high):

@@ -265,7 +265,7 @@ def measure_meshes(
     side = Side.parse(side)
     entered = entered_femur_record(femur_length_mm, femur_length_type, sex)
     qc = QCReport()
-    qc.extend(check_entered_femur_length(femur_length_mm, femur_length_type))
+    qc.extend(check_entered_femur_length(femur_length_mm, femur_length_type, sex))
     # Detached pieces too small to be anatomy are removed first: every estimator reads
     # the bone's extremes, and a speck beyond the bone becomes one. The weld is shared
     # with the mesh-quality check, which needs it too. A mesh that is not a closed

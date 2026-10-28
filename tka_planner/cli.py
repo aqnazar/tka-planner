@@ -372,8 +372,9 @@ def main(argv: list[str] | None = None) -> int:
         "--femur-length-type", default=None, choices=list(FEMUR_LENGTH_TYPES),
         help="what --femur-length measures: hip_to_knee (hip centre to knee centre, the "
              "default) or head_top_to_condyle (top of the femoral head to the distal "
-             f"condyles, as a scanogram usually gives; converted by subtracting an "
-             f"assumed {HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm)",
+             f"condyles, as a scanogram usually gives; converted by subtracting a "
+             f"calibrated offset, {HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm, or 31.3 / 34.9 mm "
+             f"with --sex female / male)",
     )
     measure.add_argument(
         "--sex", default=None, choices=list(SEXES),

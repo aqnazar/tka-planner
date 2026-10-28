@@ -19,7 +19,8 @@ are named there with their status):
 
 * the entered length is either hip centre to knee centre (``hip_to_knee``, the
   default) or top of the head to the distal condyles (``head_top_to_condyle``, what a
-  scanogram usually gives), which becomes hip-to-knee by losing an assumed 40 mm;
+  scanogram usually gives), which becomes hip-to-knee by losing a calibrated offset,
+  31.3 mm for a woman, 34.9 mm for a man and 32.0 mm with the sex unset;
 * the head centre sits at the hip-to-knee length ``L`` along the frame's mechanical axis;
 * the anatomical (shaft) axis leans laterally from the mechanical one by the
   anatomical-mechanical angle, 6.0 deg (5.7 +- 1.2 Jabalameli 2015; 6.46 +- 1.26
@@ -30,10 +31,11 @@ are named there with their status):
 * the head diameter is the sex-specific mean when the sex is known (male 49.65, female
   44.41 mm, Yang and Qian 2025; 49 and 44 in 170 dry femora, Mall 2000), and otherwise
   0.100 of the femur's maximum length (49/464 male, 44/434 female, Mall 2000), the
-  maximum length being ``L`` plus 40 mm. That 40 mm (``HEAD_TOP_TO_CONDYLE_OFFSET_MM``)
-  is this project's own estimate (head radius plus the knee centre's height above the
-  condyles): no published conversion between hip-to-knee length and maximum length was
-  found, and it is pending calibration on a public full-length femur dataset.
+  maximum length being ``L`` plus the pooled offset. The offset
+  (``HEAD_TOP_TO_CONDYLE_OFFSET_MM`` and its per-sex values) was calibrated on 157
+  whole femurs of two public datasets (HFValid, Aldieri et al. 2025; the VSD lower-body
+  models, Fischer 2023): no published conversion between hip-to-knee length and maximum
+  length was found.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from .geometry import unit
 
 __all__ = [
     "DEFAULT_FEMUR_LENGTH_TYPE", "FEMUR_LENGTH_TYPES", "HEAD_TOP_TO_CONDYLE_OFFSET_MM",
+    "head_top_to_condyle_offset_mm",
     "PHANTOM_METHOD", "PhantomFemur", "SEXES", "build_phantom_femur",
     "entered_femur_record", "femur_length_record", "head_diameter_mm",
     "hip_centre_error_budget_mm",
@@ -76,17 +79,25 @@ SEXES = tuple(HEAD_DIAMETER_BY_SEX_MM)
 #: Head diameter over maximum femur length (Mall 2000: 49/464, 44/434).
 HEAD_TO_MAXIMUM_LENGTH = 0.100
 HEAD_DIAMETER_PAIRED_SD_MM = 3.9
-#: ASSUMED, not published: the head-top-to-condyle length (the femur's maximum length,
-#: what a scanogram usually gives) minus the hip-centre to knee-centre length, about the
-#: head radius plus the knee centre's height above the condyles. No published conversion
-#: was found. It converts an entered ``head_top_to_condyle`` length and, with the sex
-#: unknown, gives the maximum length the head is sized from. Pending calibration on a
-#: public full-length femur dataset; every record that uses it says ``assumed``.
-HEAD_TOP_TO_CONDYLE_OFFSET_MM = 40.0
-HEAD_TOP_TO_CONDYLE_OFFSET_SD_MM = 6.0
+#: CALIBRATED (2026-10-28), no published value exists: the head-top-to-condyle length
+#: (the femur's maximum length, what a scanogram usually gives) minus the hip-centre to
+#: knee-centre length, both along the mechanical axis, the knee centre being the planner's
+#: notch centre: the head radius plus the knee centre's height above the condyles.
+#: Measured on 157 whole femurs: HFValid (Aldieri et al. 2025, doi:10.6092/unibo/amsacta/
+#: 8431; 100 women over 55) and the VSD lower-body models (Fischer, Sci Data 2023,
+#: doi:10.1038/s41597-023-02669-z; 24 women, 33 men). Women 31.3 +- 2.5 mm (n 124), men
+#: 34.9 +- 1.7 (n 33), pooled 32.0 +- 2.8; it replaces an assumed 40 mm. It converts an
+#: entered ``head_top_to_condyle`` length and, with the sex unknown, gives the maximum
+#: length the head is sized from. Neither dataset was selected for knee arthritis.
+HEAD_TOP_TO_CONDYLE_OFFSET_MM = 32.0
+HEAD_TOP_TO_CONDYLE_OFFSET_SD_MM = 2.8
+HEAD_TOP_TO_CONDYLE_OFFSET_BY_SEX_MM = {"male": 34.9, "female": 31.3}
+HEAD_TOP_TO_CONDYLE_OFFSET_SD_BY_SEX_MM = {"male": 1.7, "female": 2.5}
+OFFSET_CALIBRATION = ("calibrated on 157 whole femurs (HFValid, Aldieri 2025; VSD "
+                      "lower body, Fischer 2023)")
 #: What an entered femur length measures. ``hip_to_knee`` (hip centre to knee centre) is
 #: what the planner places the head at and the default; ``head_top_to_condyle`` (top of
-#: the head to the distal condyles) is converted to it with the assumed offset above.
+#: the head to the distal condyles) is converted to it with the calibrated offset above.
 FEMUR_LENGTH_TYPES = ("hip_to_knee", "head_top_to_condyle")
 DEFAULT_FEMUR_LENGTH_TYPE = "hip_to_knee"
 #: How far the tip of the greater trochanter stands above the head centre (Yi, Surg
@@ -190,6 +201,15 @@ def head_diameter_mm(length_mm: float, sex: str | None = None) -> tuple[float, f
     return HEAD_TO_MAXIMUM_LENGTH * maximum, HEAD_DIAMETER_PAIRED_SD_MM
 
 
+def head_top_to_condyle_offset_mm(sex: str | None = None) -> tuple[float, float]:
+    """The calibrated head-top-to-condyle offset and its SD, for the sex or pooled."""
+    sex = _sex(sex)
+    if sex is None:
+        return HEAD_TOP_TO_CONDYLE_OFFSET_MM, HEAD_TOP_TO_CONDYLE_OFFSET_SD_MM
+    return (HEAD_TOP_TO_CONDYLE_OFFSET_BY_SEX_MM[sex],
+            HEAD_TOP_TO_CONDYLE_OFFSET_SD_BY_SEX_MM[sex])
+
+
 def _length_type(value) -> str | None:
     """An entered length type, ``None`` when not given; an unknown one is refused."""
     if value is None or value == "":
@@ -212,27 +232,29 @@ def _sex(value) -> str | None:
     return value
 
 
-def femur_length_record(entered_mm: float, length_type: str | None = None) -> dict:
+def femur_length_record(entered_mm: float, length_type: str | None = None,
+                        sex: str | None = None) -> dict:
     """What an entered femur length was, and the hip-to-knee length it gives.
 
     ``length_type`` is one of :data:`FEMUR_LENGTH_TYPES`, ``None`` meaning hip to knee.
-    A ``head_top_to_condyle`` length loses :data:`HEAD_TOP_TO_CONDYLE_OFFSET_MM`, and the
-    record says the conversion is ``assumed``.
+    A ``head_top_to_condyle`` length loses :func:`head_top_to_condyle_offset_mm` for the
+    sex (pooled when unset), and the record says the conversion is ``calibrated``.
     """
     length_type = _length_type(length_type) or DEFAULT_FEMUR_LENGTH_TYPE
+    sex = _sex(sex)
     entered = float(entered_mm)
     if length_type == "hip_to_knee":
         return {"type": length_type, "entered_mm": entered, "hip_to_knee_mm": entered,
                 "conversion": "none"}
+    offset, sd = head_top_to_condyle_offset_mm(sex)
     return {
         "type": length_type, "entered_mm": entered,
-        "hip_to_knee_mm": entered - HEAD_TOP_TO_CONDYLE_OFFSET_MM,
-        "conversion": "assumed", "offset_mm": HEAD_TOP_TO_CONDYLE_OFFSET_MM,
-        "basis": (f"hip-to-knee = head-top-to-condyle - "
-                  f"{HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm, an assumed offset (head "
-                  f"radius plus the knee centre's height above the condyles), not a "
-                  f"published one; pending calibration on a public full-length femur "
-                  f"dataset"),
+        "hip_to_knee_mm": entered - offset,
+        "conversion": "calibrated", "offset_mm": offset, "offset_sd_mm": sd,
+        "offset_for": sex or "pooled",
+        "basis": (f"hip-to-knee = head-top-to-condyle - {offset:g} mm (sd {sd:g}; "
+                  f"{sex or 'sex unset, pooled'}), the head radius plus the knee centre's "
+                  f"height above the condyles, {OFFSET_CALIBRATION}"),
     }
 
 
@@ -256,7 +278,7 @@ def entered_femur_record(length_mm: float | None, length_type: str | None = None
                 f"they size the phantom femur, which needs the length. Enter the length "
                 f"or leave them unset.")
         return {}
-    length = femur_length_record(length_mm, length_type)
+    length = femur_length_record(length_mm, length_type, sex)
     record = {
         "femur_length_mm": length["hip_to_knee_mm"],
         "femur_length_type": length["type"],
@@ -311,7 +333,7 @@ def build_phantom_femur(frame: AnatomicalFrame, length_mm: float, *,
     if not (np.isfinite(length_mm) and length_mm > 0):
         raise ValueError("The femur length must be a positive number of millimetres.")
     sex = _sex(sex)
-    length = femur_length_record(length_mm, length_type)
+    length = femur_length_record(length_mm, length_type, sex)
     converted = length["conversion"] != "none"
     length_mm = length["hip_to_knee_mm"]
     if not length_mm > 0:
@@ -362,16 +384,15 @@ def build_phantom_femur(frame: AnatomicalFrame, length_mm: float, *,
     if converted:
         placed = (f"the head centre lies {length_mm:g} mm from the knee centre along the "
                   f"frame's mechanical axis: the entered head-top-to-condyle length "
-                  f"{length['entered_mm']:g} mm less an assumed "
-                  f"{HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm (this project's estimate, to be "
-                  f"calibrated; entered, not measured)")
+                  f"{length['entered_mm']:g} mm less {length['offset_mm']:g} mm "
+                  f"({length['offset_for']}; {OFFSET_CALIBRATION}; entered, not "
+                  f"measured)")
         maximum_is = "the entered head-top-to-condyle length itself"
     else:
         placed = (f"the head centre lies {length_mm:g} mm from the knee centre along the "
                   f"frame's mechanical axis (entered, not measured)")
         maximum_is = (f"the entered length plus {HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm "
-                      f"(this project's own estimate, to be calibrated; ratio from PMID "
-                      f"10978643)")
+                      f"(pooled; {OFFSET_CALIBRATION}; ratio from PMID 10978643)")
     assumptions = (
         placed,
         f"anatomical-mechanical angle {AMA_DEG:g} deg, sd {AMA_SD_DEG:g} (measured "

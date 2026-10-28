@@ -27,7 +27,7 @@
     </label>
     <label>Library <input id="library" type="text" placeholder="implant library (optional)" size="24"></label>
     <label title="From a long-leg film or scanogram. A knee-only scan cannot give it; it is recorded as entered.">Femur length <input id="femur-length" type="number" min="300" max="690" step="1" placeholder="mm, optional" style="width:8.5em"></label>
-    <label title="What the femur length measures. A scanogram usually gives the top of the femoral head to the distal condyles; the planner then subtracts an assumed 40 mm (pending calibration) to get hip centre to knee centre, and the plan says so.">measured
+    <label title="What the femur length measures. A scanogram usually gives the top of the femoral head to the distal condyles; the planner then subtracts a calibrated offset (32 mm; 31.3 for a woman, 34.9 for a man) to get hip centre to knee centre, and the plan says so.">measured
       <select id="femur-length-type"><option value="hip_to_knee">hip centre to knee centre</option><option value="head_top_to_condyle">head top to condyles</option></select>
     </label>
     <label title="Sizes the phantom femur's head: male 49.65 mm, female 44.41 mm (3D CT, Yang and Qian 2025). Not given, the head is 0.1 of the maximum femur length. Needs a femur length.">Sex

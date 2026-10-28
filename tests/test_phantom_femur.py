@@ -16,6 +16,7 @@ from tka_planner.core.phantom_femur import (
     AMA_DEG,
     FEMUR_LENGTH_TYPES,
     HEAD_TOP_TO_CONDYLE_OFFSET_MM,
+    head_top_to_condyle_offset_mm,
     NECK_SHAFT_ANGLE_DEG,
     build_phantom_femur,
     entered_femur_record,
@@ -73,7 +74,7 @@ def test_the_head_diameter_comes_from_the_sex_or_the_length():
     assert head_diameter_mm(410.0, "male")[0] == pytest.approx(49.65)
     assert head_diameter_mm(410.0, "female")[0] == pytest.approx(44.41)
     diameter, sd = head_diameter_mm(410.0, None)
-    assert diameter == pytest.approx(0.100 * (410.0 + 40.0))
+    assert diameter == pytest.approx(0.100 * (410.0 + 32.0))
     assert sd == pytest.approx(3.9)
     with pytest.raises(ValueError):
         head_diameter_mm(410.0, "other")
@@ -164,16 +165,29 @@ def test_the_scene_has_a_toggleable_phantom_only_when_a_length_was_entered(sessi
 # ----------------------------------------------------------------------
 
 
-def test_a_head_top_to_condyle_length_loses_the_assumed_forty_millimetres():
+def test_a_head_top_to_condyle_length_loses_the_calibrated_offset():
+    # Calibrated on 157 whole femurs (HFValid, VSD), 2026-10-28: women 31.3, men 34.9,
+    # pooled 32.0 mm; it replaced an assumed 40 mm.
     assert FEMUR_LENGTH_TYPES == ("hip_to_knee", "head_top_to_condyle")
-    assert HEAD_TOP_TO_CONDYLE_OFFSET_MM == 40.0
-    record = femur_length_record(450.0, "head_top_to_condyle")
+    assert HEAD_TOP_TO_CONDYLE_OFFSET_MM == 32.0
+    assert head_top_to_condyle_offset_mm("female") == (31.3, 2.5)
+    assert head_top_to_condyle_offset_mm("male") == (34.9, 1.7)
+    assert head_top_to_condyle_offset_mm(None) == (32.0, 2.8)
+    record = femur_length_record(442.0, "head_top_to_condyle")
     assert record == {
-        "type": "head_top_to_condyle", "entered_mm": 450.0, "hip_to_knee_mm": 410.0,
-        "conversion": "assumed", "offset_mm": 40.0,
-        "basis": record["basis"],
+        "type": "head_top_to_condyle", "entered_mm": 442.0, "hip_to_knee_mm": 410.0,
+        "conversion": "calibrated", "offset_mm": 32.0, "offset_sd_mm": 2.8,
+        "offset_for": "pooled", "basis": record["basis"],
     }
-    assert "assumed" in record["basis"] and "calibrat" in record["basis"]
+    assert "157 whole femurs" in record["basis"] and "pooled" in record["basis"]
+    female = femur_length_record(450.0, "head_top_to_condyle", "female")
+    assert female["hip_to_knee_mm"] == pytest.approx(418.7)
+    assert female["offset_for"] == "female"
+
+
+def test_the_offset_is_refused_for_an_unknown_sex():
+    with pytest.raises(ValueError, match="sex"):
+        head_top_to_condyle_offset_mm("other")
 
 
 def test_a_hip_to_knee_length_is_used_as_entered_and_is_the_default():
@@ -186,7 +200,7 @@ def test_a_hip_to_knee_length_is_used_as_entered_and_is_the_default():
 
 def test_the_phantom_is_placed_at_the_converted_length():
     f = frame(Side.LEFT)
-    converted = build_phantom_femur(f, 450.0, width_mm=80.0,
+    converted = build_phantom_femur(f, 442.0, width_mm=80.0,
                                     length_type="head_top_to_condyle")
     direct = build_phantom_femur(f, 410.0, width_mm=80.0)
     assert np.allclose(converted.head_centre, f.origin + 410.0 * f.z_proximal)
@@ -194,9 +208,9 @@ def test_the_phantom_is_placed_at_the_converted_length():
     assert converted.head_diameter_mm == pytest.approx(direct.head_diameter_mm)
     assert converted.length_check == direct.length_check
     record = converted.to_dict()
-    assert record["entered_length_mm"] == 450.0
+    assert record["entered_length_mm"] == 442.0
     assert record["length"]["hip_to_knee_mm"] == 410.0
-    assert record["length"]["conversion"] == "assumed"
+    assert record["length"]["conversion"] == "calibrated"
     assert "head-top-to-condyle" in record["assumptions"][0]
     assert "entered, not measured" in record["assumptions"][0]
 
@@ -213,11 +227,11 @@ def test_the_sex_sets_the_head_and_its_absence_keeps_the_length_rule():
     unset = build_phantom_femur(f, 410.0)
     assert male.head_diameter_mm == pytest.approx(49.65)      # 49.7 to one decimal
     assert female.head_diameter_mm == pytest.approx(44.41)    # 44.4
-    assert unset.head_diameter_mm == pytest.approx(0.100 * (410.0 + 40.0))
+    assert unset.head_diameter_mm == pytest.approx(0.100 * (410.0 + 32.0))
     # A published mean is reported at its source's precision, not rounded to 49.6.
     assert male.to_dict()["head"]["diameter_mm"] == 49.65
     assert female.to_dict()["head"]["diameter_mm"] == 44.41
-    assert unset.to_dict()["head"]["diameter_mm"] == 45.0
+    assert unset.to_dict()["head"]["diameter_mm"] == 44.2
     assert male.to_dict()["sex"] == "male" and unset.to_dict()["sex"] is None
 
 
@@ -240,10 +254,13 @@ def test_the_entered_record_is_flat_and_says_what_was_entered():
     assert entered_femur_record(410.0) == {
         "femur_length_mm": 410.0, "femur_length_type": "hip_to_knee",
         "femur_length_entered_mm": 410.0, "femur_length_conversion": "none"}
-    assert entered_femur_record(450.0, "head_top_to_condyle", "female") == {
-        "femur_length_mm": 410.0, "femur_length_type": "head_top_to_condyle",
-        "femur_length_entered_mm": 450.0, "femur_length_conversion": "assumed",
-        "femur_length_offset_mm": 40.0, "sex": "female"}
+    record = entered_femur_record(450.0, "head_top_to_condyle", "female")
+    assert record == {
+        "femur_length_mm": record["femur_length_mm"],
+        "femur_length_type": "head_top_to_condyle",
+        "femur_length_entered_mm": 450.0, "femur_length_conversion": "calibrated",
+        "femur_length_offset_mm": 31.3, "sex": "female"}
+    assert record["femur_length_mm"] == pytest.approx(418.7)
 
 
 @pytest.mark.parametrize("length, length_type, sex, match", [
@@ -268,10 +285,10 @@ def test_measuring_refuses_an_unknown_sex_before_reading_the_bones():
 
 
 @pytest.mark.parametrize("length, length_type, code", [
-    (680.0, "head_top_to_condyle", "FEMUR_LENGTH_ENTERED"),       # 640 hip to knee
+    (680.0, "head_top_to_condyle", "FEMUR_LENGTH_ENTERED"),       # 648 hip to knee
     (680.0, "hip_to_knee", "FEMUR_LENGTH_IMPLAUSIBLE"),
-    (700.0, "head_top_to_condyle", "FEMUR_LENGTH_IMPLAUSIBLE"),   # 660 hip to knee
-    (330.0, "head_top_to_condyle", "FEMUR_LENGTH_IMPLAUSIBLE"),   # 290 hip to knee
+    (700.0, "head_top_to_condyle", "FEMUR_LENGTH_IMPLAUSIBLE"),   # 668 hip to knee
+    (330.0, "head_top_to_condyle", "FEMUR_LENGTH_IMPLAUSIBLE"),   # 298 hip to knee
 ])
 def test_the_plausible_range_is_checked_on_the_hip_to_knee_length(length, length_type,
                                                                  code):
@@ -281,7 +298,7 @@ def test_the_plausible_range_is_checked_on_the_hip_to_knee_length(length, length
     assert [f.code for f in report.findings] == [code]
     if length_type == "head_top_to_condyle":
         finding = report.findings[0]
-        assert "head top" in finding.message and "40 mm" in finding.message
+        assert "head top" in finding.message and "32 mm" in finding.message
         assert finding.context["femur_length_type"] == "head_top_to_condyle"
 
 
@@ -301,12 +318,12 @@ def test_a_plan_records_the_length_type_and_the_sex(session):
     document = plan_document(entered, session.plan, session.sizing)
     assert validate_plan_document(document) == []
     assert document["inputs"]["entered"] == {
-        "femur_length_mm": 410.0, "femur_length_type": "head_top_to_condyle",
-        "femur_length_entered_mm": 450.0, "femur_length_conversion": "assumed",
-        "femur_length_offset_mm": 40.0, "sex": "male"}
+        "femur_length_mm": pytest.approx(415.1), "femur_length_type": "head_top_to_condyle",
+        "femur_length_entered_mm": 450.0, "femur_length_conversion": "calibrated",
+        "femur_length_offset_mm": 34.9, "sex": "male"}
     phantom = document["phantom_femur"]
     assert phantom["entered_length_mm"] == 450.0
-    assert phantom["length"]["hip_to_knee_mm"] == 410.0
+    assert phantom["length"]["hip_to_knee_mm"] == pytest.approx(415.1)
     assert phantom["sex"] == "male" and phantom["head"]["diameter_mm"] == 49.65
 
 
@@ -320,7 +337,7 @@ def test_the_scene_phantom_is_the_plan_phantom(session):
     try:
         drawn = session._phantom()
         assert drawn.head_diameter_mm == pytest.approx(44.41)
-        assert drawn.length_mm == 410.0
+        assert drawn.length_mm == pytest.approx(418.7)
         assert drawn.to_dict() == phantom_femur_for(session.measurement).to_dict()
     finally:
         session.measurement.entered.clear()

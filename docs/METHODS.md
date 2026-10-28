@@ -793,15 +793,19 @@ film or scanogram, with what it measures (`--femur-length-type`, or the menu bes
 field): `hip_to_knee`, hip centre to knee centre, the default and the length the planner
 uses; or `head_top_to_condyle`, the top of the femoral head to the distal condyles, which
 is what a scanogram usually gives. A `head_top_to_condyle` length is converted by
-subtracting an assumed 40 mm (`HEAD_TOP_TO_CONDYLE_OFFSET_MM`: about the head radius plus
-the knee centre's height above the condyles). No published conversion between the two
-was found; the 40 mm is this project's assumption, pending calibration on a public
-full-length femur dataset, and every record that uses it says `assumed`. The hip-to-knee
+subtracting an offset, the head radius plus the knee centre's height above the condyles,
+for which no published value was found. It was calibrated on 157 whole femurs of two
+public datasets (HFValid, Aldieri et al. 2025, 100 women over 55; the VSD lower-body
+models, Fischer 2023, 24 women and 33 men), measuring both lengths along the true
+mechanical axis to the planner's own knee centre: 31.3 +- 2.5 mm for women, 34.9 +- 1.7 mm
+for men, 32.0 +- 2.8 mm pooled (`HEAD_TOP_TO_CONDYLE_OFFSET_MM`; the sex's value when a sex
+is entered, the pooled one otherwise). It replaces an assumed 40 mm, which no femur
+reached. Neither dataset was selected for knee arthritis. The hip-to-knee
 length must lie within 300–650 mm (`FEMUR_LENGTH_IMPLAUSIBLE` otherwise; for a converted
 length the finding gives both values). It is recorded in `plan.json` under
 `inputs.entered` and never reported as measured: `femur_length_mm` is the hip-to-knee
 length used, `femur_length_type` and `femur_length_entered_mm` what was typed,
-`femur_length_conversion` `none` or `assumed`, and `femur_length_offset_mm` the offset
+`femur_length_conversion` `none` or `calibrated`, and `femur_length_offset_mm` the offset
 when one was applied. A length type, or a sex (below), given without a length, or any
 value not in the list, is refused rather than ignored. A functional hip centre (camera
 pivoting) uses it twice: the fit's predicted centre uncertainty becomes this patient's
@@ -820,14 +824,15 @@ axis leans laterally from it by the anatomical-mechanical angle (6.0°; 5.7 ± 1
 1.26, 6.0–6.2 in three measured series), and the neck meets the shaft at 123.2° (3D CT of
 247 patients, Yang and Qian 2025), so its length follows from the offset (L sin 6°, 43 mm
 at 410 mm) and not from a second source. The head is placed at the hip-to-knee length, so
-a `head_top_to_condyle` length of 450 mm places it at 410 mm; the phantom record keeps the
+a `head_top_to_condyle` length of 442 mm places it at 410 mm (pooled offset); the phantom record keeps the
 typed value (`entered_length_mm`) and the conversion (`length`). The sex is optional
 (`--sex`, or the menu in the app; recorded as `inputs.entered.sex`): given, the head's
 diameter is the sex-specific mean, 49.65 ± 2.58 mm male and 44.41 ± 2.12 mm female (49.7
 and 44.4 to one decimal; 3D CT of 247 patients, Yang and Qian 2025; Mall 2000 found 49 and
 44 in 170 dry femora), reported at that precision; not given, it is 0.100 of the femur's
 maximum length (49/464 and 44/434, Mall 2000), the maximum length being the hip-to-knee
-length plus the same assumed 40 mm. The entered length is also checked against the femoral
+length plus the pooled 32 mm (on the 157 femurs the sex rule errs +0.1 +- 2.6 mm and this
+rule -0.6 +- 2.4 mm with the old 40 mm, about -1.3 mm with 32). The entered length is also checked against the femoral
 width (FL = 187.8 + 3.39 EB, SEE 16.4 mm, 50 dry femora, Abledu 2016) and flagged beyond
 two SEE, as a check for a typing error or the wrong length definition; the planner's ML is
 not the dry-bone epicondylar breadth, so the flag is informational. The head centre's
@@ -839,9 +844,14 @@ which is unpublished. We measured it on the one full-length femur we have (REF_K
 sphere fitted on the mesh, diameter 44.9 mm, hip-to-knee length 418.8 mm): with the scan
 cropped to 140, 180, 230 and 300 mm of femur above the knee, the frame's axis fell 3.2,
 1.7, 2.0 and 2.4° from the true knee-to-head line, and the phantom's head, placed at the
-true length, fell 23, 12, 15 and 17 mm from the fitted head. That is one knee, so it
-supports the stated order of magnitude and nothing finer; it is to be repeated on more
-full-length femurs before a figure is quoted. On the full-length scan itself the frame's
+true length, fell 23, 12, 15 and 17 mm from the fitted head. Repeated on the 157 public
+femurs (cropped flat along the scanner axis to 140, 200 and 300 mm above the lowest point,
+true length entered), the head fell 29.8 +- 14.0, 13.4 +- 8.2 and 22.8 +- 9.5 mm from the
+fitted head (axis 4.1, 1.9 and 3.3° off), mostly anteroposterior: the canal sections the
+axis is taken through sit at fixed fractions of the scan's height, so a short scan's axis
+follows the metaphyseal flare forward and a long one's follows the shaft's anterior bow
+back. The error is therefore not monotonic in scan length, and it is larger than the
+budget above, which does not contain it. On the full-length scan itself the frame's
 axis is 6.9° off (the head 51 mm), because an axis taken along a whole bowed diaphysis
 is not the one a distal scan gives; that case is not what the phantom is for. The phantom's axis is a population prior and carries no patient
 varus or valgus; it cannot support an alignment decision, and the app says so beside it.
