@@ -77,7 +77,8 @@
    0.0
   ],
   "version": 12,
-  "saved": true
+  "saved": true,
+  "kept": true
  },
  "plate": {
   "sync_added": [],
@@ -124,7 +125,8 @@
    3.97
   ],
   "version": 12,
-  "saved": true
+  "saved": true,
+  "kept": true
  },
  "insert": {
   "sync_added": [],
@@ -210,7 +212,7 @@
   "femoral_offset": {
    "Constraint 1": "d22 = -Tray_Offset_Y",
    "Constraint 2": "d23 = Tray_Offset_X",
-   "profile_plane": "y = -5.33 mm, profile remade (1 profiles, sweeps ['Anterior Sweep', 'Posterior Sweep']; 3 : failed to create offset: VCS_SKETCH_OVER_CONSTRAINTS - S), box above"
+   "profile_plane": "y = -5.33 mm, profile remade (1 profiles, sweeps ['Anterior Sweep', 'Posterior Sweep']), box above"
   },
   "restored": [],
   "repointed": [
@@ -256,32 +258,21 @@
    },
    "none_needed": "Back fillet: no sharp posterior notch corner",
    "smaller": {
-    "Top fillet": "min(Top_Fillet_Radius; 1.5 mm)"
+    "Top fillet": "min(Top_Fillet_Radius; 1 mm)"
    }
   },
-  "health": [
-   [
-    "Anterior Sweep",
-    1,
-    "Profile 1 missing"
-   ],
-   [
-    "Posterior Sweep",
-    1,
-    "Profile 1 missing"
-   ]
-  ],
+  "health": [],
   "bodies": {
    "Body2": {
     "visible": true,
-    "vol": 29225.312,
+    "vol": 29159.268,
     "bb": [
      -35.071,
      -22.35,
      5.0,
      36.6,
      20.35,
-     25.024
+     25.023
     ]
    }
   },
@@ -292,7 +283,7 @@
    -5.81,
    3.97
   ],
-  "version": 17,
+  "version": 19,
   "saved": true
  },
  "block": {
@@ -424,7 +415,8 @@
    0.0
   ],
   "version": 4,
-  "saved": true
+  "saved": true,
+  "kept": true
  },
  "tblock": {
   "sync_added": [],
@@ -490,6 +482,7 @@
    3.97
   ],
   "version": 4,
-  "saved": true
+  "saved": true,
+  "kept": true
  }
 }

@@ -149,7 +149,8 @@ def health(des):
     tl = des.timeline; out = []
     for i in range(tl.count):
         it = tl.item(i)
-        if it.healthState:
+        # A suppressed item (state 3) is a choice, not a fault (plate "Tray offset").
+        if it.healthState and not it.isSuppressed:
             try: m = it.errorOrWarningMessage.split("<")[0][:200]
             except Exception: m = ""
             out.append([it.name, it.healthState, m])
@@ -285,7 +286,10 @@ def build_part(app, df, sets, export, msg, prepare=None, strict=True, finish=Non
         # A warning on the femoral or plate has meant a feature that did not build (the
         # body comes out partial), so those are not saved either. The insert keeps its
         # known Base Sketch warning until its outline is rebuilt.
-        errors = [h for h in rec["health"] if h[1] == 2 or (strict and h[1] == 1)]
+        # A warning on a sweep means it lost its profile and runs on cached geometry, so the
+        # part is wrong even though Fusion calls it a warning: never save or export it.
+        errors = [h for h in rec["health"] if h[1] == 2 or (strict and h[1] == 1)
+                  or (h[1] == 1 and "Sweep" in h[0])]
         if errors:
             rec["saved"] = False
         else:
