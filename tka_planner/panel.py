@@ -170,8 +170,9 @@ TRIAL_SCHEMA = (
      "help": "How the femur moves on the tibia as the knee flexes. S3 is the pure "
              "hinge about the transepicondylar axis. S2 adds the paradoxical anterior "
              "slide and small internal rotation measured in cruciate-retaining knees "
-             "(Bellemans 2002). S1 is a medial pivot with lateral rollback; its numbers "
-             "are placeholders until fitted to native-knee data."},
+             "(Bellemans 2002). S1 is a medial pivot with lateral rollback, fitted to "
+             "native-knee fluoroscopy (Pinskerova 2004, Nakagawa 2000); its pivot is "
+             "scaled to this knee's condyle spacing, an assumption."},
 )
 
 

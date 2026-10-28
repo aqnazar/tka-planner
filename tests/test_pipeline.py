@@ -151,6 +151,98 @@ def test_a_plan_records_its_trajectory_and_every_scenario(session):
     assert kinematics["flexion"] is None
 
 
+def _without(landmarks, *ids):
+    from tka_planner.core.landmarks import LandmarkSet
+
+    return LandmarkSet(landmarks.case_id, landmarks.side, landmarks.coordinate_system,
+                       [one for one in landmarks if one.id not in ids])
+
+
+@pytest.mark.parametrize("width, twist", [(75.0, 0.0), (60.0, 0.0), (75.0, 5.0)])
+def test_the_condyle_centre_spacing_is_the_posterior_condyles_along_the_hinge(
+        width, twist):
+    """On a synthetic knee the posterior condyles are ``width`` apart along a line
+    turned ``twist`` from the epicondylar axis, so along the hinge they are
+    ``width cos(twist)`` apart, and S1's pivot goes to half that."""
+    from tests.synthetic import synthetic_knee
+    from tka_planner.core.frames import build_femoral_frame as femoral_frame
+    from tka_planner.pipeline import condyle_centre_spacing
+
+    landmarks = synthetic_knee(femoral_width_mm=width, condylar_twist_deg=twist)
+    frame = femoral_frame(landmarks)
+    spacing = condyle_centre_spacing(landmarks, frame)
+    expected = width * np.cos(np.radians(twist))
+    assert spacing["centre_spacing_mm"] == pytest.approx(expected, abs=1e-6)
+    assert "posterior condyle" in spacing["measured_from"]
+
+    from tka_planner.core.kinematics import knee_scenarios
+    s1 = knee_scenarios(spacing["centre_spacing_mm"])["S1"]
+    assert s1.pivot_ml_mm == pytest.approx(26.4 * expected / 52.8, abs=1e-6)
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_the_spacing_is_positive_on_both_sides(side):
+    from tests.synthetic import synthetic_knee
+    from tka_planner.core.frames import build_femoral_frame as femoral_frame
+    from tka_planner.pipeline import condyle_centre_spacing
+
+    landmarks = synthetic_knee(side=side, condylar_twist_deg=0.0)
+    spacing = condyle_centre_spacing(landmarks, femoral_frame(landmarks))
+    assert spacing["centre_spacing_mm"] == pytest.approx(75.0, abs=1e-6)
+
+
+def test_a_knee_without_a_posterior_condyle_keeps_the_fitted_pivot_with_a_warning():
+    from types import SimpleNamespace
+
+    from tests.synthetic import synthetic_knee
+    from tka_planner.core.frames import build_femoral_frame as femoral_frame
+    from tka_planner.pipeline import condyle_centre_spacing, scenarios_case
+
+    full = synthetic_knee()
+    landmarks = _without(full, "femur.condyle_posterior_lateral")
+    frame = femoral_frame(full)
+    spacing = condyle_centre_spacing(landmarks, frame)
+    assert spacing["centre_spacing_mm"] is None
+    assert "femur.condyle_posterior_lateral" in spacing["reason"]
+
+    s1 = scenarios_case(SimpleNamespace(landmarks=landmarks, femoral_frame=frame))["S1"]
+    assert s1.pivot_ml_mm == 26.4 and s1.pivot_scaling == "fallback"
+    assert any("femur.condyle_posterior_lateral" in w for w in s1.warnings)
+
+
+def test_a_plan_records_s1_scaled_to_the_knee(session):
+    from tka_planner.pipeline import condyle_centre_spacing
+
+    spacing = condyle_centre_spacing(session.measurement.landmarks,
+                                     session.measurement.femoral_frame)
+    s1 = plan_document(session.measurement, session.plan,
+                       session.sizing)["kinematics"]["scenarios"]["S1"]
+    assert s1["pivot_scaling"]["status"] == "assumed"
+    assert s1["pivot_scaling"]["centre_spacing_mm"] == spacing["centre_spacing_mm"]
+    assert s1["pivot_ml_mm"] == pytest.approx(
+        26.4 * spacing["centre_spacing_mm"] / 52.8)
+    assert s1["status"] == "literature"
+
+
+def test_the_application_trial_flexes_s1_about_the_knees_own_pivot(session):
+    from tka_planner.core.kinematics import SCENARIOS
+    from tka_planner.pipeline import scenarios_case
+    from tka_planner.scene import motion
+
+    session.set_trial(trajectory="S1", flexion_deg=110.0)
+    frame = session._tibial_frame
+
+    def posed(trajectory):
+        return motion.trial_pose(session.scene.pivot, flexion_deg=110.0,
+                                 distal=-frame.z_proximal, trajectory=trajectory,
+                                 anterior=frame.x_anterior, medial=frame.medial)
+
+    scaled = scenarios_case(session.measurement)["S1"]
+    assert scaled.pivot_ml_mm != SCENARIOS["S1"].pivot_ml_mm
+    assert np.array_equal(session.trial_pose_at(110.0), posed(scaled))
+    assert not np.allclose(session.trial_pose_at(110.0), posed(SCENARIOS["S1"]))
+
+
 def test_the_preoperative_offset_is_a_metric_with_provenance(session):
     metric = session.measurement.metrics["pco_medial_mm"].to_dict()
     assert metric["status"] in ("measured", "estimated", "not_computable")
@@ -176,6 +268,12 @@ def test_the_flexion_search_runs_end_to_end_and_writes_into_the_plan(session, tm
                            session.library,
                            settings=FlexionSettings(step_deg=20.0, resolution_deg=2.0))
     assert set(flexion["trajectories"]) == {"S1", "S2", "S3"}
+    # S1 was flexed about this knee's own pivot, and the result says so.
+    s1 = flexion["trajectories"]["S1"]["parameters"]
+    assert s1["pivot_scaling"]["status"] == "assumed"
+    assert s1["pivot_ml_mm"] == pytest.approx(
+        26.4 * s1["pivot_scaling"]["centre_spacing_mm"] / 52.8)
+    assert flexion["warnings"] == []
     for record in flexion["trajectories"].values():
         assert 0.0 <= record["max_flexion_deg"] <= 180.0
         assert record["parameters"]["name"] == record["trajectory"]

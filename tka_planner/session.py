@@ -20,7 +20,9 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 from tka_planner.core.planning import Adjustments
-from tka_planner.pipeline import find_size_chart, measure_case, plan_case
+from tka_planner.pipeline import (
+    find_size_chart, measure_case, plan_case, trajectory_case,
+)
 from tka_planner.scene import build as scene_build
 from tka_planner.scene import motion
 from tka_planner.scene import resect as scene_resect
@@ -429,7 +431,9 @@ class PlanningSession:
             drawer_ap_mm=self.trial.drawer_ap_mm,
             distraction_mm=self.trial.distraction_mm,
             distal=-frame.z_proximal,
-            trajectory=self.trial.trajectory,
+            # Resolved for this knee, as the flexion search and the plan file do: S1's
+            # pivot is scaled to its condyle-centre spacing.
+            trajectory=trajectory_case(self.measurement, self.trial.trajectory),
             anterior=frame.x_anterior,
             medial=frame.medial,
         )

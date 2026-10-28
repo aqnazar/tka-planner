@@ -1271,11 +1271,20 @@ class FlexionModel:
     baseline_depth_mm: float = 0.0
     femur_box_mm: tuple | None = None   # the boxes the bones were kept in (scan extent)
     tibia_box_mm: tuple | None = None
+    # This knee's scenarios, S1 scaled to it (:func:`scenarios_case`); ``None``: the
+    # defined ones.
+    scenarios: dict | None = None
+
+    def trajectory(self, name_or_trajectory):
+        """A scenario name resolved for this knee, or a trajectory passed through."""
+        from .core.kinematics import scenario
+
+        return scenario(name_or_trajectory, self.scenarios)
 
     def pose(self, trajectory, flexion_deg: float) -> np.ndarray:
         from .scene.motion import trajectory_pose
 
-        return trajectory_pose(self.pivot, flexion_deg, trajectory,
+        return trajectory_pose(self.pivot, flexion_deg, self.trajectory(trajectory),
                                anterior=self.tibial_frame.x_anterior,
                                medial=self.tibial_frame.medial)
 
@@ -1493,6 +1502,7 @@ def flexion_model(
         femur=femur, tibia=tibia, femoral_component=component, insert=insert,
         insert_pose=insert_matrix, insert_bounds=bounds, settings=settings,
         femur_box_mm=extent["boxes"]["femur"], tibia_box_mm=extent["boxes"]["tibia"],
+        scenarios=scenarios_case(m),
         diagnostics={
             "implant_mode": mode if scales else "catalogue",
             "hinge_origin_mm": [round(float(v), 3) for v in origin],
@@ -1539,7 +1549,7 @@ def flexion_case(
     """
     import time
 
-    from .core.kinematics import envelope, scenario, search_max_flexion
+    from .core.kinematics import envelope, search_max_flexion
 
     settings = settings or (model.settings if model is not None else FlexionSettings())
     if model is None:
@@ -1549,9 +1559,11 @@ def flexion_case(
         return None
     m = measurement
     lateral_ml, medial_ml = _compartment_ml(m, model.pivot[:3, 3])
-    limits, records = {}, {}
+    limits, records, warnings = {}, {}, []
     for name in trajectories:
-        trajectory = scenario(name)
+        # Resolved for this knee: S1's pivot is scaled to its condyle-centre spacing.
+        trajectory = model.trajectory(name)
+        warnings += [w for w in trajectory.warnings if w not in warnings]
         t0 = time.perf_counter()
         limit = search_max_flexion(
             lambda angle, t=trajectory: model.contacts(t, angle),
@@ -1588,6 +1600,7 @@ def flexion_case(
                       "untouched reports stop_reason 'no_contact_in_scanned_models' and "
                       "flexion_limit_deg null, with the reason under 'no_contact'."),
         "scan_extent": model.diagnostics.get("scan_extent"),
+        "warnings": warnings,
         "pairs": list(FLEXION_PAIRS),
         "trajectories": records,
         "envelope": envelope(limits),
@@ -1633,10 +1646,8 @@ def no_contact_reason(model: FlexionModel, trajectory, angle_deg: float,
     ``kept_apart_by_motion``. The scan extents (:func:`scan_extent`)
     and how far the folded tibia reaches proximally of the hinge are given with it.
     """
-    from .core.kinematics import scenario
-
     end_slab_mm = 5.0
-    trajectory = scenario(trajectory)
+    trajectory = model.trajectory(trajectory)
     pose = model.pose(trajectory, angle_deg)
     tibia, insert = model.tibia.transformed(pose), model.insert.transformed(pose)
     gaps = {}
@@ -1745,6 +1756,75 @@ def _compartment_ml(m: CaseMeasurement, centre) -> tuple[float, float]:
     return values[0], values[1]
 
 
+#: The points whose spacing scales S1's pivot (:func:`condyle_centre_spacing`).
+CENTRE_SPACING_LANDMARKS = ("femur.condyle_posterior_medial",
+                            "femur.condyle_posterior_lateral")
+
+
+def condyle_centre_spacing(landmarks, femoral_frame) -> dict:
+    """How far apart this knee's medial and lateral condyle centres are along the
+    flexion axis (mm): what S1's fitted 52.8 mm stands for.
+
+    S1 was fitted to the motion of the flexion-facet centres (Pinskerova 2004): the
+    centres of the circles the posterior condyles follow from about 20 to 120 deg,
+    one in each condyle's sagittal plane. Along the flexion axis such a centre lies
+    where its condyle's posterior surface does, so the spacing is that of the posterior
+    condyle points (``femur.condyle_posterior_medial`` and ``_lateral``, the most
+    posterior point of each condyle), measured along the hinge's direction, the femoral
+    frame's mediolateral axis (:func:`~tka_planner.scene.motion.flexion_axis`). Not the
+    epicondyles, which lie outside the condyles (the fit puts its centres in a femur 80
+    to 90 mm wide), and not the distal condyle points, which bear in extension.
+
+    ``centre_spacing_mm`` is ``None``, with ``reason``, when either point is missing or
+    the medial one does not lie medial of the lateral one.
+    """
+    record = {"centre_spacing_mm": None, "landmarks": list(CENTRE_SPACING_LANDMARKS),
+              "measured_from": "", "reason": ""}
+    missing = landmarks.missing_of(*CENTRE_SPACING_LANDMARKS)
+    if missing:
+        record["reason"] = f"{', '.join(missing)} not available"
+        return record
+    medial_point, lateral_point = (np.asarray(p, dtype=float)
+                                   for p in landmarks.require(*CENTRE_SPACING_LANDMARKS))
+    spacing = float((medial_point - lateral_point) @ femoral_frame.medial)
+    statuses = sorted({landmarks.get(i).status.value for i in CENTRE_SPACING_LANDMARKS})
+    if not np.isfinite(spacing) or spacing <= 0.0:
+        record["reason"] = (f"the medial posterior condyle lies {-spacing:.1f} mm "
+                            "lateral of the lateral one along the flexion axis")
+        return record
+    record["centre_spacing_mm"] = spacing
+    record["measured_from"] = (
+        f"posterior condyle points ({' and '.join(statuses)}), {spacing:.1f} mm apart "
+        "along the flexion axis (the femoral frame's mediolateral axis)")
+    return record
+
+
+def scenarios_case(measurement: CaseMeasurement) -> dict:
+    """The flexion scenarios for this knee: S1 with its pivot scaled to the knee's
+    condyle-centre spacing (author ruling 2026-10-26; :func:`condyle_centre_spacing`,
+    :func:`~tka_planner.core.kinematics.native_for_knee`), S2 and S3 as defined.
+
+    The one place a knee's scenarios come from, for the flexion search, the plan file
+    and the application's trial alike.
+    """
+    from .core.kinematics import knee_scenarios
+
+    spacing = condyle_centre_spacing(measurement.landmarks, measurement.femoral_frame)
+    return knee_scenarios(spacing["centre_spacing_mm"],
+                          measured_from=spacing["measured_from"],
+                          reason=spacing["reason"])
+
+
+def trajectory_case(measurement: CaseMeasurement, name_or_trajectory):
+    """A scenario name resolved for this knee (:func:`scenarios_case`), or a trajectory
+    passed through unchanged."""
+    from .core.kinematics import scenario
+
+    if not isinstance(name_or_trajectory, str):
+        return scenario(name_or_trajectory)
+    return scenario(name_or_trajectory, scenarios_case(measurement))
+
+
 def discrete_sizing(measurement: CaseMeasurement) -> SizingDecision:
     """The legacy round-down chart size, kept beside every plan for comparison."""
     return select_discrete_size(
@@ -1790,9 +1870,10 @@ def plan_document(
     parameters of every scenario, so a plan says which motion its flexion numbers
     assumed; ``flexion`` is :func:`flexion_case`'s result when it was run.
     """
-    from .core.kinematics import SCENARIOS, scenario
+    from .core.kinematics import scenario
 
     m = measurement
+    scenarios = scenarios_case(m)
     if resection_table is None:
         resection_table = resection_table_case(m, plan)
     if findings is None:
@@ -1838,8 +1919,9 @@ def plan_document(
         "geometry": geometry,
         "geometry_matches_plan": geometry_matches_plan,
         "kinematics": {
-            "trajectory": scenario(trajectory).name,
-            "scenarios": {name: t.to_dict() for name, t in SCENARIOS.items()},
+            "trajectory": scenario(trajectory, scenarios).name,
+            # This knee's: S1's pivot scaled to it, with the spacing and the assumption.
+            "scenarios": {name: t.to_dict() for name, t in scenarios.items()},
             "flexion": flexion,
         },
         # Only when a femur length was entered, so a plan without one is byte-for-byte

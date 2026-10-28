@@ -6,7 +6,7 @@
   "numpy": "2.4.6",
   "manifold3d": "3.5.3",
   "hashes": {
-    "plan.json": "bdad6e5b10d8928ae1563b6d093d50f16a672825473f0c623806076f8c9d3dfd",
+    "plan.json": "a49c54ebb447572394c6fa144415e59cb81b834d3c705a323485032959244761",
     "section/inputs": "7f92979a75b5b476574d05ca2e4b2bd1f9e7ecb88c2956aace8c8b51fa4aa7d7",
     "section/frames": "1d2aa537852b13fa45400514de8b71c7450889c61d7afa1d26318a7f2441f331",
     "section/metrics": "54115ea171b4fe169e177e26b1c36cd579ff8c5776c4c967ad88c13b2271c47e",
