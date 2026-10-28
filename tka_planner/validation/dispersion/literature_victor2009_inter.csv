@@ -1,0 +1,35 @@
+# Literature: Victor 2009 inter-observer (CT), distal condyles from Clave 2024 (CT column, intra-observer)
+# Each row is sourced; the source per row is listed below. Lines are landmark_id,sd_mm or a diagonal covariance
+# (mm^2) in the bone frame: anterior, lateral, proximal (Victor's sagittal, horizontal and mechanical axes).
+# Victor et al. 2009 (Knee 16:358-365) Table 1, inter-observer, 3 observers, 6 cadaver knees, CT surface models:
+# per axis, the mean and SD of the distance of each observer's position from the 3-observer mean;
+# per-observer SD = sqrt(mean^2 + SD^2) * sqrt(3/2). Mapping: epicondyle_lateral=FLE, medial_sulcus=FMS,
+# medial_prominence=FME, condyle_posterior_*=FMCP/FLCP, notch_centre=FKC, trochlear_groove_anterior=FTP,
+# head_centre=FHC, spine_medial/lateral=TKC (the midpoint between the spines; each spine taken as the midpoint's),
+# tubercle_*=TTA, plateau_medial_posterior=TMCP, ankle_centre=TAC.
+# Clave et al. 2024 (EPiC Ser Health Sci 6:20-25) Fig. 2a, one observer, 41 knees, two picks each: mean (SD) of the
+# distance between the picks; per-axis SD of a surface point = sqrt(mean^2 + SD^2) / 2.
+# ASSUMED 2 mm per axis, no published value matches: tibia.pcl_insertion_midpoint, tibia.plateau_medial_lowest, tibia.plateau_lateral_lowest, tibia.plateau_medial_anterior, fibula.head_apex.
+# Distal condyles (no Victor value): Clave 2024 column CT: medial 3.29 (2.43), lateral 3.45 (2.75).
+landmark_id,sd_mm,cov_aa,cov_al,cov_ap,cov_ll,cov_lp,cov_pp
+femur.epicondyle_lateral,,1.5,0,0,0.27,0,22.95
+femur.epicondyle_medial_sulcus,,1.92,0,0,0.075,0,2.04
+femur.epicondyle_medial_prominence,,1.47,0,0,0.375,0,2.775
+femur.condyle_distal_medial,2.045,,,,,,
+femur.condyle_distal_lateral,2.206,,,,,,
+femur.condyle_posterior_medial,,0.195,0,0,0.195,0,2.55
+femur.condyle_posterior_lateral,,0.12,0,0,1.11,0,4.44
+femur.notch_centre,,0.75,0,0,0.51,0,0.48
+femur.trochlear_groove_anterior,,0.48,0,0,1.275,0,3.75
+femur.head_centre,,0.03,0,0,0.03,0,0.12
+tibia.spine_medial,,4.11,0,0,0.51,0,1.275
+tibia.spine_lateral,,4.11,0,0,0.51,0,1.275
+tibia.pcl_insertion_midpoint,2.0,,,,,,
+tibia.tubercle_patellar_tendon_medial_border,,0.195,0,0,2.7,0,10.46
+tibia.tubercle_medial_third,,0.195,0,0,2.7,0,10.46
+tibia.plateau_medial_lowest,2.0,,,,,,
+tibia.plateau_lateral_lowest,2.0,,,,,,
+tibia.plateau_medial_anterior,2.0,,,,,,
+tibia.plateau_medial_posterior,,2.235,0,0,5.655,0,0.78
+tibia.ankle_centre,,0.195,0,0,0.375,0,0.195
+fibula.head_apex,2.0,,,,,,

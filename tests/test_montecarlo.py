@@ -14,9 +14,11 @@ from tka_planner.core.landmarks import REGISTRY
 from tka_planner.core.meshio import Mesh
 from tka_planner.pipeline import measure_from_landmarks
 from tka_planner.validation.montecarlo import (
+    LITERATURE_TABLES,
     PLACEHOLDER_TABLES,
     Dispersion,
     SurfaceModel,
+    literature_dispersion,
     perturb,
     placeholder_dispersion,
     propagate,
@@ -227,3 +229,23 @@ class TestTables:
         assert "femur.condyle_distal_medial" in table.covariances
         # The canal centres are derived, not picked, so no observer table moves them.
         assert "femur.canal_centre_distal" not in table.covariances
+
+    @pytest.mark.parametrize("name", sorted(LITERATURE_TABLES))
+    def test_literature_tables_cover_the_placeholder_rows(self, name):
+        table = literature_dispersion(name)
+        assert not table.placeholder
+        assert set(table.covariances) == set(placeholder_dispersion().covariances)
+        assert "femur.canal_centre_distal" not in table.covariances
+
+    def test_victor_lateral_epicondyle_converted_per_axis(self):
+        # Victor 2009 Table 1, FLE inter-observer: DSAG 0.8 (0.6), DHOR 0.3 (0.3), DFMAx 3.3 (2.1);
+        # per-observer variance = (mean^2 + SD^2) * 3/2 along each bone axis.
+        cov = literature_dispersion("victor2009_inter").covariances["femur.epicondyle_lateral"]
+        expected = [1.5 * (m * m + s * s) for m, s in ((0.8, 0.6), (0.3, 0.3), (3.3, 2.1))]
+        assert np.allclose(np.diag(cov), expected, rtol=1e-3)
+
+    def test_clave_distal_condyle_converted_from_pick_pairs(self):
+        # Clave 2024 Fig. 2a, distal medial point on the mesh: 3.94 (3.30) mm between two picks.
+        table = literature_dispersion("clave2024_intra_mesh")
+        assert table.sd_mm("femur.condyle_distal_medial") == pytest.approx(
+            np.hypot(3.94, 3.30) / 2.0, rel=1e-3)

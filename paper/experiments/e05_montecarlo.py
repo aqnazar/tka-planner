@@ -7,15 +7,20 @@ metrics, sizing and the plan through the application's own pipeline. The automat
 landmark estimator is not re-run per draw: what is measured is the planner's
 sensitivity to where the points are.
 
-**The dispersion is a placeholder.** E3 has not yet measured how far surgeons'
-picks scatter, so the main run uses the shipped table of 2 mm per axis for every
-picked landmark (``placeholder_uniform_2mm.csv``). The intervals below say how the
-planner *would* respond to that much scatter; they are not the planner's uncertainty
-until E3's table replaces it (same CSV format, ``landmark_id,sd_mm``).
+**The dispersion is taken from the literature.** E3 has not measured how far our
+surgeons' picks scatter, so the main run uses ``literature_victor2009_inter.csv``:
+Victor et al. 2009's inter-observer deviations per bone axis (3 observers, CT surface
+models), with the distal condyles, which Victor did not pick, from Clave et al. 2024, and
+five landmarks no study matches held at an assumed 2 mm (the table's comments list each
+row's source and conversion). It replaces the 2 mm placeholder used until 2026-10-28.
+E3's own table, when it exists, goes in the same CSV format.
 
-Variants, at fewer draws: the uniform table with the canal centres also moved by 2 mm,
-since they set both mechanical axes and are otherwise held fixed; and on one knee, free
-3D noise against the default tangent-plane model. (A variant on the landmark
+Variants, at fewer draws: the main table with the canal centres also moved by 2 mm
+(assumed), since they set both mechanical axes and are otherwise held fixed; Clave
+2024's intra-observer scatter of one observer picking on the mesh, larger than Victor's
+on every femoral landmark, as the femur's sensitivity case; the old uniform 2 mm
+placeholder, for comparison with earlier runs; and on one knee, free 3D noise against
+the default tangent-plane model. (A variant on the landmark
 registry's ``observer_sd_mm`` values was dropped on 2026-10-17: they had no recorded
 source, and the author's ruling on question #18 was to drop them.)
 
@@ -96,8 +101,9 @@ def _with_canal_centres(dispersion, sd_mm: float = 2.0):
     for landmark_id in ("femur.canal_centre_distal", "femur.canal_centre_proximal",
                         "tibia.canal_centre_proximal", "tibia.canal_centre_distal"):
         covariances[landmark_id] = sd_mm ** 2 * np.eye(3)
-    return Dispersion(covariances, label=f"{dispersion.label} + canal centres {sd_mm:g} mm",
-                      placeholder=True)
+    return Dispersion(covariances,
+                      label=f"{dispersion.label} + canal centres {sd_mm:g} mm (assumed)",
+                      placeholder=dispersion.placeholder)
 
 
 def _figure(ctx: Context, results) -> bool:
@@ -126,8 +132,8 @@ def _figure(ctx: Context, results) -> bool:
         ax.tick_params(axis="x", labelsize=6)
     for ax in list(axes.flat)[len(shown):]:
         ax.axis("off")
-    fig.suptitle("95% interval of deviation from the nominal plan -- PLACEHOLDER "
-                 "dispersion (2 mm), not measured", fontsize=9)
+    fig.suptitle("95% interval of deviation from the nominal plan -- literature "
+                 "dispersion (Victor 2009 inter-observer), not our own observers", fontsize=9)
     fig.tight_layout()
     for suffix in ("png", "svg"):
         fig.savefig(ctx.path(f"e05_intervals.{suffix}"), dpi=200)
@@ -137,14 +143,17 @@ def _figure(ctx: Context, results) -> bool:
 
 @experiment("E5", "Monte Carlo propagation of landmark picking error")
 def run(ctx: Context) -> None:
-    from tka_planner.validation.montecarlo import placeholder_dispersion, propagate
+    from tka_planner.validation.montecarlo import (
+        literature_dispersion, placeholder_dispersion, propagate)
 
     n = N_QUICK if ctx.quick else N_DRAWS
     n_variant = N_VARIANT_QUICK if ctx.quick else N_VARIANT
     library = library_root()
-    main = placeholder_dispersion("uniform_2mm")
+    main = literature_dispersion("victor2009_inter")
     variants = {
-        "uniform_with_canals": _with_canal_centres(main),
+        "with_canals": _with_canal_centres(main),
+        "clave_mesh": literature_dispersion("clave2024_intra_mesh"),
+        "uniform_2mm_placeholder": placeholder_dispersion("uniform_2mm"),
     }
 
     results, variant_results, knee_rows, interval_rows = [], {k: [] for k in variants}, [], []
@@ -200,9 +209,10 @@ def run(ctx: Context) -> None:
     drew = _figure(ctx, results)
 
     # ---- Summary --------------------------------------------------------------
-    ctx.note("**PLACEHOLDER DISPERSION.** Every interval here comes from an assumed "
-             f"table ({main.label}), not from measured inter-observer data. They become "
-             "the planner's uncertainty only when E3's table replaces it.\n")
+    ctx.note("**LITERATURE DISPERSION.** Every interval here comes from published "
+             f"observer studies ({main.label}), not from our own observers; five "
+             "landmarks with no published match are held at an assumed 2 mm (see the "
+             "table's comments). E3's table replaces it when it exists.\n")
     accepted = [r for r in knee_rows if r["accepted"]]
     ctx.note(f"{len(accepted)} knees propagated, {n} draws each (seed {ctx.seed} + "
              f"per-knee offset), surface model 'tangent' (surface landmarks move within "
@@ -218,7 +228,7 @@ def run(ctx: Context) -> None:
         held = sorted({h for r in accepted for h in r["held_fixed"].split()})
         ctx.note(f"Held fixed (no row in the table): {', '.join(held) or 'none'}. "
                  "With the canal centres fixed both mechanical axes are fixed, so the "
-                 "coronal cut angles barely move; see pooled_uniform_with_canals for the "
+                 "coronal cut angles barely move; see pooled_with_canals for the "
                  "axes' own share.")
         agreement = [r["size_agreement"] for r in accepted]
         ctx.note(f"Chart size unchanged from nominal in {np.mean(agreement):.0%} of draws "
@@ -226,7 +236,8 @@ def run(ctx: Context) -> None:
     ctx.note("\nPooled 95% interval of the deviation from each knee's nominal "
              "(main table):")
     by_name = {r["output"]: r for r in pooled}
-    canal = {r["output"]: r for r in _pooled(variant_results["uniform_with_canals"])}
+    canal = {r["output"]: r for r in _pooled(variant_results["with_canals"])}
+    clave = {r["output"]: r for r in _pooled(variant_results["clave_mesh"])}
     for name in HEADLINE:
         if name in by_name:
             r = by_name[name]
@@ -235,6 +246,10 @@ def run(ctx: Context) -> None:
                 c = canal[name]
                 extra = (f"; with canal centres also moved "
                          f"[{c['deviation_p2_5']:+.2f}, {c['deviation_p97_5']:+.2f}]")
+            if name in clave:
+                c = clave[name]
+                extra += (f"; Clave mesh [{c['deviation_p2_5']:+.2f}, "
+                          f"{c['deviation_p97_5']:+.2f}]")
             ctx.note(f"- {name}: [{r['deviation_p2_5']:+.2f}, {r['deviation_p97_5']:+.2f}] "
                      f"(median per-knee SD {r['median_knee_sd']:.2f}, largest "
                      f"{r['max_knee_sd']:.2f}){extra}")

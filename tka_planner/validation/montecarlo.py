@@ -104,6 +104,12 @@ _TABLE_DIR = Path(__file__).resolve().parent / "dispersion"
 PLACEHOLDER_TABLES = {
     "uniform_2mm": _TABLE_DIR / "placeholder_uniform_2mm.csv",
 }
+# Tables built from published observer studies, until E3 measures our own; each file's
+# comments give the source and conversion of every row, and name the rows still assumed.
+LITERATURE_TABLES = {
+    "victor2009_inter": _TABLE_DIR / "literature_victor2009_inter.csv",
+    "clave2024_intra_mesh": _TABLE_DIR / "literature_clave2024_intra_mesh.csv",
+}
 
 
 # ----------------------------------------------------------------------
@@ -207,6 +213,13 @@ def placeholder_dispersion(name: str = "uniform_2mm") -> Dispersion:
     if name not in PLACEHOLDER_TABLES:
         raise KeyError(f"No placeholder table {name!r}; have {sorted(PLACEHOLDER_TABLES)}.")
     return read_dispersion(PLACEHOLDER_TABLES[name])
+
+
+def literature_dispersion(name: str = "victor2009_inter") -> Dispersion:
+    """One of the shipped tables taken from published observer studies."""
+    if name not in LITERATURE_TABLES:
+        raise KeyError(f"No literature table {name!r}; have {sorted(LITERATURE_TABLES)}.")
+    return read_dispersion(LITERATURE_TABLES[name])
 
 
 # ----------------------------------------------------------------------

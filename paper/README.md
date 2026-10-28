@@ -54,7 +54,7 @@ the same refusals.
 | E0 | Cohort inventory and acceptance | cohort |
 | E1 | Metric accuracy on synthetic knees: anatomy, width, tibial-axis and scanner-pose sweeps; provenance tiers | synthetic |
 | E2 | Metamorphic invariance: mirror + side swap, random rigid motions, scanner rotation about each axis (-30 to +30 deg), decimation (50%, 10%), remeshing, vertex noise; automatic and oracle (carried) landmarks | cohort |
-| E5 | Monte Carlo propagation of landmark picking error (PLACEHOLDER dispersion until E3) | cohort |
+| E5 | Monte Carlo propagation of landmark picking error (literature dispersion, Victor 2009 + Clave 2024, until E3) | cohort |
 | E6c | Functional hip centre from camera-tracked pivoting: accuracy vs arc, noise, samples, pelvic motion (synthetic part) | synthetic |
 | E7a | Sizing measurement: legacy bounding box vs resection cross-section at the planned cuts; chart-size changes | cohort |
 | E7b | Implant fit on the cuts: chart size vs uniform scale vs patient-specific (and the Fusion-regenerated parts, with `TKA_PATIENT_BUILDS`) | cohort |
