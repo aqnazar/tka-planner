@@ -486,15 +486,20 @@ async function busy(work) {
 }
 
 async function openCase({ folder, side, library, femurLength = "",
+                         femurLengthType = "hip_to_knee", sex = "",
                          removeLargeIslands = false }) {
   const payload = await api("POST", "/api/sessions", {
     folder,
     side,
     library: library || null,
     femur_length_mm: femurLength === "" ? null : Number(femurLength),
+    // The type describes the length, so it goes only with one. A sex without a length
+    // is sent as chosen: the server refuses it rather than drop it unseen.
+    femur_length_type: femurLength === "" ? null : femurLengthType,
+    sex: sex || null,
     remove_large_islands: removeLargeIslands,
   });
-  state.opened = { folder, side, library, femurLength };
+  state.opened = { folder, side, library, femurLength, femurLengthType, sex };
   state.sessionId = payload.session_id;
   state.schema = await api("GET", "/api/schema");
   buildPanel();
@@ -510,6 +515,8 @@ el("open-form").addEventListener("submit", (event) => {
     side: el("side").value,
     library: el("library").value.trim(),
     femurLength: el("femur-length").value.trim(),
+    femurLengthType: el("femur-length-type").value,
+    sex: el("sex").value,
   }));
 });
 
