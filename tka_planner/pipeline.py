@@ -1543,6 +1543,11 @@ def flexion_case(
     it touched (femoral frame, mm from the knee centre: anterior, patient-left,
     proximal) and how much. ``None`` with no implant library.
 
+    Scenario names are resolved for this knee (:func:`scenarios_case`): S1 is flexed
+    about its pivot scaled to the knee's condyle-centre spacing, and its ``parameters``
+    record the scaling. ``warnings`` lists what a reader must know, such as an S1 that
+    could not be scaled.
+
     This is a geometric limit: no soft tissue, no thigh-calf contact, and a prescribed
     rather than contact-solved motion. It bounds what the parts allow, not what a
     patient will reach.
