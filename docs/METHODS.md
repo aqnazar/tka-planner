@@ -788,10 +788,22 @@ and refused there (`MESH_UNREPAIRABLE`, an error) only if repair cannot close it
 than accepted and then failing at the first cut, as P007R did.
 
 **An entered femur length.** A knee-only scan cannot give the femur's length, so it may
-be entered (`--femur-length`, or the field beside the case in the app): the hip-centre to
-knee-centre distance from a long-leg film or scanogram. It must lie within 300–650 mm
-(`FEMUR_LENGTH_IMPLAUSIBLE` otherwise), is recorded in `plan.json` under
-`inputs.entered`, and is never reported as measured. A functional hip centre (camera
+be entered (`--femur-length`, or the field beside the case in the app), from a long-leg
+film or scanogram, with what it measures (`--femur-length-type`, or the menu beside the
+field): `hip_to_knee`, hip centre to knee centre, the default and the length the planner
+uses; or `head_top_to_condyle`, the top of the femoral head to the distal condyles, which
+is what a scanogram usually gives. A `head_top_to_condyle` length is converted by
+subtracting an assumed 40 mm (`HEAD_TOP_TO_CONDYLE_OFFSET_MM`: about the head radius plus
+the knee centre's height above the condyles). No published conversion between the two
+was found; the 40 mm is this project's assumption, pending calibration on a public
+full-length femur dataset, and every record that uses it says `assumed`. The hip-to-knee
+length must lie within 300–650 mm (`FEMUR_LENGTH_IMPLAUSIBLE` otherwise; for a converted
+length the finding gives both values). It is recorded in `plan.json` under
+`inputs.entered` and never reported as measured: `femur_length_mm` is the hip-to-knee
+length used, `femur_length_type` and `femur_length_entered_mm` what was typed,
+`femur_length_conversion` `none` or `assumed`, and `femur_length_offset_mm` the offset
+when one was applied. A length type, or a sex (below), given without a length, or any
+value not in the list, is refused rather than ignored. A functional hip centre (camera
 pivoting) uses it twice: the fit's predicted centre uncertainty becomes this patient's
 mechanical-axis uncertainty, atan(sd / L), instead of one on a nominal 430 mm femur; and
 the pivoted length (hip centre to knee centre) is compared with it — more than 10 mm apart
@@ -807,12 +819,15 @@ is placed at the entered length along the femoral frame's own mechanical axis. T
 axis leans laterally from it by the anatomical-mechanical angle (6.0°; 5.7 ± 1.2, 6.46 ±
 1.26, 6.0–6.2 in three measured series), and the neck meets the shaft at 123.2° (3D CT of
 247 patients, Yang and Qian 2025), so its length follows from the offset (L sin 6°, 43 mm
-at 410 mm) and not from a second source. The head's diameter is the sex-specific mean when
-the sex is given (49.65 male, 44.41 female) and otherwise 0.100 of the femur's maximum
-length (49/464 and 44/434 in 170 dry femora, Mall 2000), the maximum length being the
-entered one plus 40 mm. That 40 mm is this project's own estimate; no published conversion
-between hip-to-knee and maximum length was found, and it is to be calibrated on full-femur
-scans before the paper prints it. The entered length is also checked against the femoral
+at 410 mm) and not from a second source. The head is placed at the hip-to-knee length, so
+a `head_top_to_condyle` length of 450 mm places it at 410 mm; the phantom record keeps the
+typed value (`entered_length_mm`) and the conversion (`length`). The sex is optional
+(`--sex`, or the menu in the app; recorded as `inputs.entered.sex`): given, the head's
+diameter is the sex-specific mean, 49.65 ± 2.58 mm male and 44.41 ± 2.12 mm female (49.7
+and 44.4 to one decimal; 3D CT of 247 patients, Yang and Qian 2025; Mall 2000 found 49 and
+44 in 170 dry femora), reported at that precision; not given, it is 0.100 of the femur's
+maximum length (49/464 and 44/434, Mall 2000), the maximum length being the hip-to-knee
+length plus the same assumed 40 mm. The entered length is also checked against the femoral
 width (FL = 187.8 + 3.39 EB, SEE 16.4 mm, 50 dry femora, Abledu 2016) and flagged beyond
 two SEE, as a check for a typing error or the wrong length definition; the planner's ML is
 not the dry-bone epicondylar breadth, so the flag is informational. The head centre's
