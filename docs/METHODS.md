@@ -600,7 +600,7 @@ more than their mean (Bellemans 2002: medial contact 1.97 mm anterior, SD 4.46):
 
 | | Scenario | Parameters | Source |
 |---|---|---|---|
-| S1 | Native: medial pivot, lateral rollback | pivot 26.4 mm medial (the medial condyle's centre, for centres 52.8 mm apart); knots 20° internal rotation, no translation at 120°, and 33.4°, −4.8 mm at 162°; linear between knots and from extension, held beyond 162° | Fitted to published numbers (below) |
+| S1 | Native: medial pivot, lateral rollback | pivot 26.4 mm medial (the medial condyle's centre, for centres 52.8 mm apart), scaled on each knee to 26.4 × spacing / 52.8 (assumed, below); knots 20° internal rotation, no translation at 120°, and 33.4°, −4.8 mm at 162°; linear between knots and from extension, held beyond 162° | Fitted to published numbers (below) |
 | S2 | Observed CR: paradoxical anterior slide | 2.7° internal rotation and 1.12 mm anterior at the joint centre, at 109° | Bellemans 2002 means (medial 1.97, lateral 0.27 mm anterior, 2.7° internal); 109° is Banks 2003's CR mean maximum flexion standing in for Bellemans' own |
 | S3 | Neutral hinge | none | Level D0, unchanged |
 
@@ -618,15 +618,52 @@ from extension to 20° at 120° adds only about 5 mm of lateral rollback by 162�
 centre after the rotation) and 33.4° of rotation at 162°, which puts the lateral centre a
 further 15 mm back. That 33.4° is derived (the sources give displacements, not the angle)
 and holds only as long as the motion is rigid; beyond 162° nothing was measured and the
-values are held. The pivot is for a 52.8 mm centre spacing and is not scaled to each knee,
-which matters for knees much wider or narrower than the 80–90 mm femurs it was fitted
-for. Iwaki, Pinskerova and Freeman 2000 (JBJS Br 82:1189), the cadaver study the
-placeholder named, was not used; Hill et al. 2000 (JBJS Br 82:1196), the living-knee MRI
-paper in the same issue, has no numbers in its abstract.
+values are held. Iwaki, Pinskerova and Freeman 2000 (JBJS Br 82:1189), the cadaver study
+the placeholder named, was not used; Hill et al. 2000 (JBJS Br 82:1196), the living-knee
+MRI paper in the same issue, has no numbers in its abstract.
+
+**S1's pivot is scaled to each knee** (author ruling 2026-10-26). The fit above is for
+centres 52.8 mm apart; on a knee the pivot is put at 26.4 × *s* / 52.8 mm medial of the
+hinge midpoint, where *s* is that knee's own centre spacing, so it stays on the medial
+centre at half the spacing. This is an **assumption**, not a measurement: that the
+native motion keeps its shape and scales with the knee. Nothing else of S1 scales. The
+rotation angles are the sources' (20° by 120°; 33.4° at 162°), so the lateral rollback
+they give is proportional to *s* (2*s* (sin φ₁₂₀ − sin φ₂₀) from 20° to 120°, 15 mm only
+at *s* = 52.8 mm); the −4.8 mm at 162° is the medial centre's own translation, a
+displacement in millimetres from Nakagawa 2000, and it stays.
+
+*What is measured.* Pinskerova's centres are those of the flexion facets, the circles
+the posterior condyles follow from about 20° to 120°, one in each condyle's sagittal
+plane. Along the flexion axis such a centre lies where its condyle's posterior surface
+does, so *s* is the distance between the two posterior condyle points
+(`femur.condyle_posterior_medial` and `_lateral`, the most posterior point of each
+condyle) measured along the hinge's direction, the femoral frame's mediolateral axis.
+The epicondyles, the hinge's own ends, lie outside the condyles and are not what 52.8 mm
+stands for; the distal condyle points bear in extension, not on the flexion facets. The
+same posterior condyle points are where the per-compartment translations are reported.
+On a knee where either point is missing (or the medial one does not lie medial of the
+lateral one), the fitted 26.4 mm is kept and the trajectory says so with a warning;
+never silently. Every `plan.json` and flexion result records, under S1's
+`pivot_scaling`, the status (`assumed`, or `fallback`), the spacing, the rule and the
+method tag `kinematics.s1_pivot_scaled.v1`; the application's trial, the flexion search
+and the plan file all take S1 from the same function.
+
+*On the two validation knees* (automatic landmarks), *s* is 52.60 mm on REF_KJ2 and
+51.15 mm on P009L, so the pivot is 26.30 and 25.57 mm: 0.10 and 0.83 mm medial of where
+the fitted 26.4 mm put it. Both knees are close to the fitted spacing, so on them the
+scaling hardly moves S1. The pivot is placed from the hinge midpoint, the midpoint of
+the epicondyles, which is not exactly midway between the condyles: on REF_KJ2 the medial
+posterior condyle lies 26.96 mm medial of it, 0.66 mm medial of the scaled pivot, and on
+P009L 25.38 mm, 0.19 mm lateral of it. The ruling scales the distance from the hinge
+midpoint, not the medial condyle's own position, and that offset is left as it is. In
+E10a on these two knees S1 still meets no contact by 180° in either plan, as with the
+fixed pivot; the closest gap at the bound narrows by 0.05 mm on REF_KJ2 and by 0.4–0.5 mm
+on P009L (to 2.5 and 3.5 mm), and S2 and S3 are unchanged.
 
 S3 composes to exactly the matrix Reduce mode has always produced; a test asserts
 equality, not closeness. The scenario is a trial control in the application and every
-`plan.json` records all three parameter sets and which one the plan was previewed with.
+`plan.json` records all three parameter sets (S1 as scaled to that knee) and which one the
+plan was previewed with.
 Both papers measured contact-point migration of a weight-bearing activity; here it is
 applied as rigid translation in a passive preview.
 
