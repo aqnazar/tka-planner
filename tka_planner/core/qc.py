@@ -409,17 +409,45 @@ def clean_islands(
             keep_faces(welded, keep, detached_triangles_removed=n_dropped), report)
 
 
-def check_entered_femur_length(length_mm: float | None) -> QCReport:
+def check_entered_femur_length(length_mm: float | None,
+                               length_type: str | None = None) -> QCReport:
     """An entered femur length must be a length a femur can have.
 
     A knee-only scan cannot give the femur's length: the hip is not in it. The
     author's ruling (2026-10-15) is that it may be entered, from a long-leg film or a
-    scanogram, and it is then recorded as entered, never as measured.
+    scanogram, and it is then recorded as entered, never as measured. ``length_type``
+    is what it measures (``core.phantom_femur.FEMUR_LENGTH_TYPES``; unset, hip centre to
+    knee centre); the range is checked on the hip-to-knee length it gives.
     """
     report = QCReport()
     if length_mm is None:
         return report
+    from .phantom_femur import femur_length_record
+
     low, high = PLAUSIBLE_ENTERED_FEMUR_LENGTH_MM
+    length = femur_length_record(length_mm, length_type)
+    if length["conversion"] != "none":
+        hip_to_knee = length["hip_to_knee_mm"]
+        said = (f"{length_mm:g} mm from the head top to the condyles ({hip_to_knee:g} mm "
+                f"hip centre to knee centre, after an assumed {length['offset_mm']:g} mm "
+                f"offset)")
+        context = {"femur_length_mm": length_mm, "femur_length_type": length["type"],
+                   "hip_to_knee_mm": hip_to_knee}
+        if not (np.isfinite(hip_to_knee) and low <= hip_to_knee <= high):
+            report.add(
+                "FEMUR_LENGTH_IMPLAUSIBLE", Severity.ERROR,
+                f"The entered femur length, {said}, is outside {low:g}-{high:g} mm hip "
+                f"to knee. Check the length and what it was measured between.",
+                **context,
+            )
+        else:
+            report.add(
+                "FEMUR_LENGTH_ENTERED", Severity.INFO,
+                f"Femur length {said} was entered, not measured: the scan does not "
+                f"reach the hip.",
+                **context,
+            )
+        return report
     if not (np.isfinite(length_mm) and low <= length_mm <= high):
         report.add(
             "FEMUR_LENGTH_IMPLAUSIBLE", Severity.ERROR,

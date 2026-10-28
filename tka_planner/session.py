@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tka_planner.core.planning import Adjustments
 from tka_planner.pipeline import (
-    find_size_chart, measure_case, plan_case, trajectory_case,
+    find_size_chart, measure_case, phantom_femur_for, plan_case, trajectory_case,
 )
 from tka_planner.scene import build as scene_build
 from tka_planner.scene import motion
@@ -157,8 +157,11 @@ class PlanningSession:
     # Remove every detached piece of a bone, not only those too small to be anatomy.
     # Quality control reports the large ones; this is the option it offers.
     remove_large_islands: bool = False
-    # Hip centre to knee centre, entered: a knee-only scan cannot give it.
+    # The femur's length, entered: a knee-only scan cannot give it. What it measures
+    # (unset: hip centre to knee centre) and the sex, which sizes the phantom's head.
     femur_length_mm: float | None = None
+    femur_length_type: str | None = None
+    sex: str | None = None
 
     measurement = None
 
@@ -181,11 +184,14 @@ class PlanningSession:
     @classmethod
     def open(cls, folder, *, side: str, library=None,
              landmarks=None, remove_large_islands: bool = False,
-             femur_length_mm: float | None = None) -> "PlanningSession":
+             femur_length_mm: float | None = None,
+             femur_length_type: str | None = None,
+             sex: str | None = None) -> "PlanningSession":
         """Find the two bone meshes in a patient folder and measure them.
 
         ``landmarks`` is a landmark file laid over the automatic estimate, exactly as
-        the command line's ``--landmarks`` is.
+        the command line's ``--landmarks`` is; the femur length, its type and the sex
+        are the command line's ``--femur-length``, ``--femur-length-type`` and ``--sex``.
         """
         femur_path, tibia_path = find_bone_files(Path(folder), side)
         session = cls(
@@ -195,6 +201,7 @@ class PlanningSession:
             landmarks_path=Path(landmarks) if landmarks else None,
             remove_large_islands=remove_large_islands,
             femur_length_mm=femur_length_mm,
+            femur_length_type=femur_length_type, sex=sex,
         )
         session._measure()
         return session
@@ -211,6 +218,7 @@ class PlanningSession:
             case_id=self.case_id or None, landmarks_path=self.landmarks_path,
             remove_large_islands=self.remove_large_islands,
             femur_length_mm=self.femur_length_mm,
+            femur_length_type=self.femur_length_type, sex=self.sex,
         )
 
     # The measurement's parts, under the names the scene, the report and the export
@@ -256,15 +264,12 @@ class PlanningSession:
     # ------------------------------------------------------------------
 
     def _phantom(self):
-        """The schematic femur at the entered length, or ``None`` without one."""
-        length = self.measurement.entered.get("femur_length_mm")
-        if length is None:
-            return None
-        from tka_planner.core.phantom_femur import build_phantom_femur
+        """The schematic femur at the entered length, or ``None`` without one.
 
-        return build_phantom_femur(
-            self._femoral_frame, length,
-            width_mm=self.measurement.femoral_measure.ml_mm)
+        The plan's own (:func:`tka_planner.pipeline.phantom_femur_for`), so the drawing
+        and the record have one length, length type and sex.
+        """
+        return phantom_femur_for(self.measurement)
 
     def build(self) -> SceneDelta:
         """Compute the plan and build the scene. The equivalent of pressing Plan."""

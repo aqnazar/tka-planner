@@ -14,8 +14,12 @@ import pytest
 from tka_planner.core.frames import AnatomicalFrame
 from tka_planner.core.phantom_femur import (
     AMA_DEG,
+    FEMUR_LENGTH_TYPES,
+    HEAD_TOP_TO_CONDYLE_OFFSET_MM,
     NECK_SHAFT_ANGLE_DEG,
     build_phantom_femur,
+    entered_femur_record,
+    femur_length_record,
     head_diameter_mm,
     hip_centre_error_budget_mm,
 )
@@ -153,3 +157,219 @@ def test_the_scene_has_a_toggleable_phantom_only_when_a_length_was_entered(sessi
         session.measurement.entered.pop("femur_length_mm", None)
         session.replan(show_phantom=True)
         session.build()
+
+
+# ----------------------------------------------------------------------
+# What the entered length measures, and the sex (author ruling 2026-10-26)
+# ----------------------------------------------------------------------
+
+
+def test_a_head_top_to_condyle_length_loses_the_assumed_forty_millimetres():
+    assert FEMUR_LENGTH_TYPES == ("hip_to_knee", "head_top_to_condyle")
+    assert HEAD_TOP_TO_CONDYLE_OFFSET_MM == 40.0
+    record = femur_length_record(450.0, "head_top_to_condyle")
+    assert record == {
+        "type": "head_top_to_condyle", "entered_mm": 450.0, "hip_to_knee_mm": 410.0,
+        "conversion": "assumed", "offset_mm": 40.0,
+        "basis": record["basis"],
+    }
+    assert "assumed" in record["basis"] and "calibrat" in record["basis"]
+
+
+def test_a_hip_to_knee_length_is_used_as_entered_and_is_the_default():
+    record = femur_length_record(410.0, "hip_to_knee")
+    assert record == {"type": "hip_to_knee", "entered_mm": 410.0,
+                      "hip_to_knee_mm": 410.0, "conversion": "none"}
+    assert femur_length_record(410.0) == record
+    assert femur_length_record(410.0, "") == record
+
+
+def test_the_phantom_is_placed_at_the_converted_length():
+    f = frame(Side.LEFT)
+    converted = build_phantom_femur(f, 450.0, width_mm=80.0,
+                                    length_type="head_top_to_condyle")
+    direct = build_phantom_femur(f, 410.0, width_mm=80.0)
+    assert np.allclose(converted.head_centre, f.origin + 410.0 * f.z_proximal)
+    assert np.allclose(converted.head_centre, direct.head_centre)
+    assert converted.head_diameter_mm == pytest.approx(direct.head_diameter_mm)
+    assert converted.length_check == direct.length_check
+    record = converted.to_dict()
+    assert record["entered_length_mm"] == 450.0
+    assert record["length"]["hip_to_knee_mm"] == 410.0
+    assert record["length"]["conversion"] == "assumed"
+    assert "head-top-to-condyle" in record["assumptions"][0]
+    assert "entered, not measured" in record["assumptions"][0]
+
+
+def test_a_converted_length_must_still_be_a_length():
+    with pytest.raises(ValueError, match="hip"):
+        build_phantom_femur(frame(Side.LEFT), 30.0, length_type="head_top_to_condyle")
+
+
+def test_the_sex_sets_the_head_and_its_absence_keeps_the_length_rule():
+    f = frame(Side.LEFT)
+    male = build_phantom_femur(f, 410.0, sex="male")
+    female = build_phantom_femur(f, 410.0, sex="female")
+    unset = build_phantom_femur(f, 410.0)
+    assert male.head_diameter_mm == pytest.approx(49.65)      # 49.7 to one decimal
+    assert female.head_diameter_mm == pytest.approx(44.41)    # 44.4
+    assert unset.head_diameter_mm == pytest.approx(0.100 * (410.0 + 40.0))
+    # A published mean is reported at its source's precision, not rounded to 49.6.
+    assert male.to_dict()["head"]["diameter_mm"] == 49.65
+    assert female.to_dict()["head"]["diameter_mm"] == 44.41
+    assert unset.to_dict()["head"]["diameter_mm"] == 45.0
+    assert male.to_dict()["sex"] == "male" and unset.to_dict()["sex"] is None
+
+
+def test_the_unset_path_records_the_default_length_type_and_nothing_else_moves():
+    f = frame(Side.LEFT)
+    default = build_phantom_femur(f, 410.0, width_mm=80.0).to_dict()
+    explicit = build_phantom_femur(f, 410.0, width_mm=80.0,
+                                   length_type="hip_to_knee").to_dict()
+    assert default == explicit
+    assert default["entered_length_mm"] == 410.0
+    assert default["length"] == {"type": "hip_to_knee", "entered_mm": 410.0,
+                                 "hip_to_knee_mm": 410.0, "conversion": "none"}
+    assert default["assumptions"][0] == (
+        "the head centre lies 410 mm from the knee centre along the frame's mechanical "
+        "axis (entered, not measured)")
+
+
+def test_the_entered_record_is_flat_and_says_what_was_entered():
+    assert entered_femur_record(None) == {}
+    assert entered_femur_record(410.0) == {
+        "femur_length_mm": 410.0, "femur_length_type": "hip_to_knee",
+        "femur_length_entered_mm": 410.0, "femur_length_conversion": "none"}
+    assert entered_femur_record(450.0, "head_top_to_condyle", "female") == {
+        "femur_length_mm": 410.0, "femur_length_type": "head_top_to_condyle",
+        "femur_length_entered_mm": 450.0, "femur_length_conversion": "assumed",
+        "femur_length_offset_mm": 40.0, "sex": "female"}
+
+
+@pytest.mark.parametrize("length, length_type, sex, match", [
+    (450.0, "scanogram", None, "length type"),
+    (450.0, "HIP_TO_KNEE", None, "length type"),
+    (450.0, None, "M", "sex"),
+    (450.0, None, "other", "sex"),
+    (None, "head_top_to_condyle", None, "without a femur length"),
+    (None, None, "male", "without a femur length"),
+])
+def test_unknown_or_orphaned_femur_inputs_are_refused(length, length_type, sex, match):
+    with pytest.raises(ValueError, match=match):
+        entered_femur_record(length, length_type, sex)
+
+
+def test_measuring_refuses_an_unknown_sex_before_reading_the_bones():
+    from tka_planner.pipeline import measure_meshes
+
+    with pytest.raises(ValueError, match="sex"):
+        measure_meshes(None, None, "left", case_id="X", femur_length_mm=450.0,
+                       sex="unknown")
+
+
+@pytest.mark.parametrize("length, length_type, code", [
+    (680.0, "head_top_to_condyle", "FEMUR_LENGTH_ENTERED"),       # 640 hip to knee
+    (680.0, "hip_to_knee", "FEMUR_LENGTH_IMPLAUSIBLE"),
+    (700.0, "head_top_to_condyle", "FEMUR_LENGTH_IMPLAUSIBLE"),   # 660 hip to knee
+    (330.0, "head_top_to_condyle", "FEMUR_LENGTH_IMPLAUSIBLE"),   # 290 hip to knee
+])
+def test_the_plausible_range_is_checked_on_the_hip_to_knee_length(length, length_type,
+                                                                 code):
+    from tka_planner.core.qc import check_entered_femur_length
+
+    report = check_entered_femur_length(length, length_type)
+    assert [f.code for f in report.findings] == [code]
+    if length_type == "head_top_to_condyle":
+        finding = report.findings[0]
+        assert "head top" in finding.message and "40 mm" in finding.message
+        assert finding.context["femur_length_type"] == "head_top_to_condyle"
+
+
+def test_the_default_length_finding_is_unchanged():
+    from tka_planner.core.qc import check_entered_femur_length
+
+    finding = check_entered_femur_length(455.0).findings[0]
+    assert finding.message == ("Femur length 455 mm was entered, not measured: the scan "
+                               "does not reach the hip.")
+    assert finding.context == {"femur_length_mm": 455.0}
+
+
+def test_a_plan_records_the_length_type_and_the_sex(session):
+    entered = dataclasses.replace(
+        session.measurement,
+        entered=entered_femur_record(450.0, "head_top_to_condyle", "male"))
+    document = plan_document(entered, session.plan, session.sizing)
+    assert validate_plan_document(document) == []
+    assert document["inputs"]["entered"] == {
+        "femur_length_mm": 410.0, "femur_length_type": "head_top_to_condyle",
+        "femur_length_entered_mm": 450.0, "femur_length_conversion": "assumed",
+        "femur_length_offset_mm": 40.0, "sex": "male"}
+    phantom = document["phantom_femur"]
+    assert phantom["entered_length_mm"] == 450.0
+    assert phantom["length"]["hip_to_knee_mm"] == 410.0
+    assert phantom["sex"] == "male" and phantom["head"]["diameter_mm"] == 49.65
+
+
+def test_the_scene_phantom_is_the_plan_phantom(session):
+    """The app's drawing and the plan's record come from the same entered values."""
+    from tka_planner.pipeline import phantom_femur_for
+
+    saved = dict(session.measurement.entered)
+    session.measurement.entered.update(
+        entered_femur_record(450.0, "head_top_to_condyle", "female"))
+    try:
+        drawn = session._phantom()
+        assert drawn.head_diameter_mm == pytest.approx(44.41)
+        assert drawn.length_mm == 410.0
+        assert drawn.to_dict() == phantom_femur_for(session.measurement).to_dict()
+    finally:
+        session.measurement.entered.clear()
+        session.measurement.entered.update(saved)
+
+
+def test_the_command_line_passes_the_length_type_and_the_sex(monkeypatch, tmp_path):
+    from tka_planner import cli
+
+    seen = {}
+
+    def stop(*args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("measured")
+
+    monkeypatch.setattr(cli, "measure_case", stop)
+    base = ["measure", "--femur", "f.stl", "--tibia", "t.stl", "--side", "left",
+            "--out", str(tmp_path)]
+    with pytest.raises(RuntimeError):
+        cli.main(base + ["--femur-length", "450", "--femur-length-type",
+                         "head_top_to_condyle", "--sex", "female"])
+    assert seen["femur_length_mm"] == 450.0
+    assert seen["femur_length_type"] == "head_top_to_condyle"
+    assert seen["sex"] == "female"
+
+    seen.clear()
+    with pytest.raises(RuntimeError):
+        cli.main(base + ["--femur-length", "410"])
+    assert seen["femur_length_type"] is None and seen["sex"] is None
+
+
+@pytest.mark.parametrize("extra", [["--femur-length", "450", "--sex", "M"],
+                                   ["--femur-length", "450", "--femur-length-type",
+                                    "scanogram"]])
+def test_the_command_line_refuses_an_unknown_value(extra, tmp_path, capsys):
+    from tka_planner import cli
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["measure", "--femur", "f.stl", "--tibia", "t.stl", "--side", "left",
+                  "--out", str(tmp_path)] + extra)
+    assert stopped.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("extra", [["--sex", "male"],
+                                   ["--femur-length-type", "head_top_to_condyle"]])
+def test_the_command_line_refuses_a_type_or_sex_without_a_length(extra, tmp_path, capsys):
+    from tka_planner import cli
+
+    assert cli.main(["measure", "--femur", "f.stl", "--tibia", "t.stl", "--side", "left",
+                     "--out", str(tmp_path)] + extra) == 2
+    assert "without a femur length" in capsys.readouterr().err

@@ -18,6 +18,12 @@ from . import __version__
 from .core.frames import FrameConstructionError
 from .core.landmarks import load_landmarks, write_landmark_set, write_slicer_template
 from .core.meshio import read_stl
+from .core.phantom_femur import (
+    FEMUR_LENGTH_TYPES,
+    HEAD_TOP_TO_CONDYLE_OFFSET_MM,
+    SEXES,
+    entered_femur_record,
+)
 from .core.planning import Adjustments
 from .core.qc import QCReport, QualityControlError, check_landmarks_on_mesh
 from .core.sides import Side
@@ -44,7 +50,13 @@ def _measure(args: argparse.Namespace) -> int:
 
     # The same pipeline the application runs: quality control, landmarks (the
     # automatic estimate, with any landmark file laid over it), frames, metrics and the
-    # sizing measurement.
+    # sizing measurement. A femur length type or sex without a length is refused before
+    # anything is read, by the pipeline's own rule.
+    try:
+        entered_femur_record(args.femur_length, args.femur_length_type, args.sex)
+    except ValueError as error:
+        print(f"\n[REFUSED] {error}", file=sys.stderr)
+        return 2
     try:
         measurement = measure_case(
             args.femur, args.tibia, args.side,
@@ -52,6 +64,7 @@ def _measure(args: argparse.Namespace) -> int:
             rater=args.rater, session=args.session, size_chart=args.size_chart,
             remove_large_islands=args.remove_islands,
             femur_length_mm=args.femur_length,
+            femur_length_type=args.femur_length_type, sex=args.sex,
         )
     except QualityControlError as error:
         print(f"\n[REFUSED] {error}", file=sys.stderr)
@@ -351,8 +364,21 @@ def main(argv: list[str] | None = None) -> int:
                          help="size chart CSV; defaults to the bundled chart")
     measure.add_argument(
         "--femur-length", type=float, default=None, metavar="MM",
-        help="hip-centre to knee-centre length from a long-leg film or scanogram; a "
-             "knee-only scan cannot give it, so it is recorded as entered",
+        help="femur length from a long-leg film or scanogram (hip centre to knee centre "
+             "unless --femur-length-type says otherwise); a knee-only scan cannot give "
+             "it, so it is recorded as entered",
+    )
+    measure.add_argument(
+        "--femur-length-type", default=None, choices=list(FEMUR_LENGTH_TYPES),
+        help="what --femur-length measures: hip_to_knee (hip centre to knee centre, the "
+             "default) or head_top_to_condyle (top of the femoral head to the distal "
+             f"condyles, as a scanogram usually gives; converted by subtracting an "
+             f"assumed {HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm)",
+    )
+    measure.add_argument(
+        "--sex", default=None, choices=list(SEXES),
+        help="sizes the phantom femur's head (male 49.65, female 44.41 mm); omitted, "
+             "the head is 0.1 of the maximum femur length",
     )
     measure.add_argument(
         "--remove-islands", action="store_true",

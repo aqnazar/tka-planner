@@ -763,10 +763,43 @@ def test_opening_passes_the_island_option_and_an_entered_femur_length(api, folde
         "femur_length_mm": "455"})
     assert status == 200, payload
     assert raw_session.opened_with == {"remove_large_islands": True,
-                                       "femur_length_mm": 455.0}
+                                       "femur_length_mm": 455.0,
+                                       "femur_length_type": None, "sex": None}
 
 
 def test_an_entered_femur_length_must_be_a_number(api, folder):
     status, payload = api.dispatch("POST", "/api/sessions", {
         "folder": str(folder), "side": "left", "femur_length_mm": "long"})
     assert status == 400
+
+
+def test_opening_passes_the_femur_length_type_and_the_sex(api, folder, raw_session):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "femur_length_mm": 450,
+        "femur_length_type": "head_top_to_condyle", "sex": "female"})
+    assert status == 200, payload
+    assert raw_session.opened_with["femur_length_type"] == "head_top_to_condyle"
+    assert raw_session.opened_with["sex"] == "female"
+
+
+def test_an_empty_length_type_or_sex_is_not_given(api, folder, raw_session):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "femur_length_mm": 450,
+        "femur_length_type": "", "sex": ""})
+    assert status == 200, payload
+    assert raw_session.opened_with["femur_length_type"] is None
+    assert raw_session.opened_with["sex"] is None
+
+
+@pytest.mark.parametrize("fields, words", [
+    ({"femur_length_mm": 450, "femur_length_type": "scanogram"}, "length type"),
+    ({"femur_length_mm": 450, "sex": "F"}, "sex"),
+    ({"sex": "male"}, "without a femur length"),
+    ({"femur_length_type": "head_top_to_condyle"}, "without a femur length"),
+])
+def test_an_unknown_or_orphaned_length_type_or_sex_is_refused(api, folder, fields,
+                                                             words):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", **fields})
+    assert status == 400
+    assert words in payload["error"]

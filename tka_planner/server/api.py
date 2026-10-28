@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from tka_planner.core.phantom_femur import entered_femur_record
 from tka_planner.geom.gltf import write_glb
 from tka_planner.panel import TRIAL_SCHEMA, with_sizes
 from tka_planner.report.bundle import export_session
@@ -125,11 +126,20 @@ class Api:
         folder = body.get("folder")
         if not folder:
             raise ApiError(400, "A folder is required to open a session.")
+        femur_length_mm = _optional_float(body.get("femur_length_mm"))
+        femur_length_type = _optional_text(body.get("femur_length_type"))
+        sex = _optional_text(body.get("sex"))
+        # Refused here, before the case is measured, by the pipeline's own rule.
+        try:
+            entered_femur_record(femur_length_mm, femur_length_type, sex)
+        except ValueError as error:
+            raise ApiError(400, str(error)) from None
         entry = self.manager.open(
             folder, side=body.get("side", "left"), library=body.get("library"),
             landmarks=body.get("landmarks"),
             remove_large_islands=bool(body.get("remove_large_islands", False)),
-            femur_length_mm=_optional_float(body.get("femur_length_mm")),
+            femur_length_mm=femur_length_mm,
+            femur_length_type=femur_length_type, sex=sex,
         )
         return self.snapshot(entry)
 
@@ -282,3 +292,12 @@ def _optional_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         raise ApiError(400, f"Not a number: {value!r}") from None
+
+
+def _optional_text(value) -> str | None:
+    """A choice from a request body, where empty means not given."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ApiError(400, f"Not a text value: {value!r}")
+    return value

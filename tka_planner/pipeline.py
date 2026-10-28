@@ -33,6 +33,7 @@ from .core.landmarks_auto import estimate_landmarks, femoral_axes, tibial_axes
 from .core.measure import measure_femoral_ml, measure_tibial_plateau
 from .core.meshio import Mesh, read_stl
 from .core.metrics import compute_all
+from .core.phantom_femur import entered_femur_record
 from .core.planning import (
     KINEMATIC,
     MECHANICAL,
@@ -85,6 +86,7 @@ __all__ = [
     "findings_case",
     "resection_table_case",
     "phantom_femur_case",
+    "phantom_femur_for",
     "box_design",
     "femoral_cut_box_case",
     "implant_spec_case",
@@ -147,7 +149,8 @@ class CaseMeasurement:
     qc: QCReport
     chart: SizeChart
     chart_path: Path
-    # Values the operator entered rather than the scan gave, e.g. ``femur_length_mm``.
+    # Values the operator entered rather than the scan gave: the femur length, what it
+    # measures and the sex (``core.phantom_femur.entered_femur_record``).
     entered: dict = field(default_factory=dict)
 
     @property
@@ -193,6 +196,8 @@ def measure_case(
     size_chart=None,
     remove_large_islands: bool = False,
     femur_length_mm: float | None = None,
+    femur_length_type: str | None = None,
+    sex: str | None = None,
 ) -> CaseMeasurement:
     """Read, check and measure a case.
 
@@ -205,13 +210,15 @@ def measure_case(
     each pick replaces its estimate and everything else stays estimated and says so.
     """
     femur_path, tibia_path = Path(femur_path), Path(tibia_path)
+    # Refused before the bones are read, not after: an unknown value is a typing error.
+    entered_femur_record(femur_length_mm, femur_length_type, sex)
     return measure_meshes(
         read_stl(femur_path), read_stl(tibia_path), side,
         case_id=case_id or femur_path.parent.name,
         femur_path=femur_path, tibia_path=tibia_path,
         landmarks_path=landmarks_path, rater=rater, session=session,
         size_chart=size_chart, remove_large_islands=remove_large_islands,
-        femur_length_mm=femur_length_mm,
+        femur_length_mm=femur_length_mm, femur_length_type=femur_length_type, sex=sex,
     )
 
 
@@ -230,6 +237,8 @@ def measure_meshes(
     mesh_quality: QCReport | None = None,
     remove_large_islands: bool = False,
     femur_length_mm: float | None = None,
+    femur_length_type: str | None = None,
+    sex: str | None = None,
 ) -> CaseMeasurement:
     """:func:`measure_case` for meshes already in memory.
 
@@ -247,12 +256,16 @@ def measure_meshes(
     ``remove_large_islands`` removes every detached piece of a bone, not only those too
     small to be anatomy; the large ones are otherwise kept and reported.
 
-    ``femur_length_mm`` is an entered femur length (hip centre to knee centre), which a
-    knee-only scan cannot give. It is checked for plausibility and recorded as entered.
+    ``femur_length_mm`` is an entered femur length, which a knee-only scan cannot give;
+    ``femur_length_type`` says what it measures (hip centre to knee centre, the default,
+    or head top to condyles, converted with an assumed offset) and ``sex`` (``male``,
+    ``female`` or unset) sizes the phantom femur's head. They are checked, an unknown
+    value refused, and recorded as entered (``core.phantom_femur.entered_femur_record``).
     """
     side = Side.parse(side)
+    entered = entered_femur_record(femur_length_mm, femur_length_type, sex)
     qc = QCReport()
-    qc.extend(check_entered_femur_length(femur_length_mm))
+    qc.extend(check_entered_femur_length(femur_length_mm, femur_length_type))
     # Detached pieces too small to be anatomy are removed first: every estimator reads
     # the bone's extremes, and a speck beyond the bone becomes one. The weld is shared
     # with the mesh-quality check, which needs it too. A mesh that is not a closed
@@ -310,8 +323,7 @@ def measure_meshes(
         qc=qc, coverage={"femur": femur_coverage, "tibia": tibia_coverage},
         size_chart=size_chart,
     )
-    if femur_length_mm is not None:
-        measurement.entered["femur_length_mm"] = float(femur_length_mm)
+    measurement.entered.update(entered)
     return measurement
 
 
@@ -594,17 +606,32 @@ def _femur_samples(femur: Mesh) -> np.ndarray:
 _SAMPLES: dict = {}
 
 
-def phantom_femur_case(measurement: CaseMeasurement, *, sex: str | None = None) -> dict:
-    """The schematic femur drawn from the entered length (see ``core.phantom_femur``).
+def phantom_femur_for(measurement: CaseMeasurement):
+    """The schematic femur drawn from the entered values (see ``core.phantom_femur``),
+    or ``None`` without an entered length.
 
-    Needs ``femur_length_mm`` in ``measurement.entered``. The width the length is checked
-    against is the planner's own femoral ML.
+    The one place the app's drawing and the plan's record are built, so they cannot
+    differ. Reads ``measurement.entered``: the length as typed and its type (an older
+    record with only ``femur_length_mm`` is hip to knee) and the sex. The width the
+    length is checked against is the planner's own femoral ML.
     """
     from .core.phantom_femur import build_phantom_femur
 
+    entered = measurement.entered
+    if entered.get("femur_length_mm") is None:
+        return None
     return build_phantom_femur(
-        measurement.femoral_frame, measurement.entered["femur_length_mm"],
-        width_mm=measurement.femoral_measure.ml_mm, sex=sex).to_dict()
+        measurement.femoral_frame,
+        entered.get("femur_length_entered_mm", entered["femur_length_mm"]),
+        width_mm=measurement.femoral_measure.ml_mm, sex=entered.get("sex"),
+        length_type=entered.get("femur_length_type"))
+
+
+def phantom_femur_case(measurement: CaseMeasurement) -> dict:
+    """:func:`phantom_femur_for` as the plan records it. Needs an entered length."""
+    if measurement.entered.get("femur_length_mm") is None:
+        raise ValueError("A phantom femur needs an entered femur length.")
+    return phantom_femur_for(measurement).to_dict()
 
 
 def resection_table_case(measurement: CaseMeasurement, plan: SurgicalPlan,
