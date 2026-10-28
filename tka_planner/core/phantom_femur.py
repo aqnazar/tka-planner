@@ -14,7 +14,7 @@ error that follows from the priors is stated (about 11 mm, one standard deviatio
 metric: the frame's mechanical axis is the planner's own, and the phantom only places a
 head on it at the entered length.
 
-What it is built from (literature basis in ``docs/Prep for paper``, all constants below
+What it is built from (literature basis in ``docs/METHODS.md``, all constants below
 are named there with their status):
 
 * the head centre sits at the entered length ``L`` along the frame's mechanical axis;
