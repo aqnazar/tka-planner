@@ -3,7 +3,9 @@
 * **E10a** -- for each knee, mechanical and kinematic plans, the impingement-limited
   maximum flexion under the three trajectory scenarios (S1 native-like, S2 observed CR,
   S3 neutral hinge), the pair that first touches and where, and the envelope across
-  scenarios.
+  scenarios. S1's pivot is scaled to each knee's condyle-centre spacing (author ruling
+  2026-10-26, an assumption; :func:`tka_planner.pipeline.scenarios_case`), and every
+  row records the pivot, the spacing and the scaling status.
 * **E10b** -- posterior condylar offset per compartment, before surgery and as planned
   (patient-specific and catalogue implant), the change in mm, and the flexion change
   Bellemans' published slope would predict from it.
@@ -166,9 +168,14 @@ def run_e10a(ctx: Context) -> None:
             settings = result["settings"]
             seconds = round(time.perf_counter() - t0, 2)
             for name, record in result["trajectories"].items():
+                scaling = record["parameters"].get("pivot_scaling") or {}
                 rows.append({
                     "case": case.case_id, "side": case.side, "philosophy": philosophy,
                     "trajectory": name, "status": record["parameters"]["status"],
+                    # S1's pivot is scaled to the knee (author ruling 2026-10-26).
+                    "pivot_ml_mm": record["parameters"]["pivot_ml_mm"],
+                    "pivot_scaling": scaling.get("status"),
+                    "centre_spacing_mm": scaling.get("centre_spacing_mm"),
                     # Ruling #26: a search that met nothing has no flexion value; the
                     # bound it reached is in searched_to_deg.
                     "max_flexion_deg": record["flexion_limit_deg"],
@@ -222,6 +229,16 @@ def run_e10a(ctx: Context) -> None:
              "axis (e10a_scan_extent). A search that reaches the bound untouched is "
              "reported as 'no contact in the scanned models', with no flexion value, "
              "and the reason measured from the models.")
+    pivots = {r["case"]: r for r in rows if r["trajectory"] == "S1"}
+    for case_id, r in pivots.items():
+        if r["pivot_scaling"] == "assumed":
+            ctx.note(f"- {case_id} S1 pivot {r['pivot_ml_mm']:.2f} mm medial of the hinge "
+                     f"midpoint: 26.4 x {r['centre_spacing_mm']:.2f} / 52.8, the knee's "
+                     "posterior-condyle spacing along the flexion axis (scaling assumed, "
+                     "author ruling 2026-10-26).")
+        else:
+            ctx.note(f"- {case_id} S1 pivot NOT scaled ({r['pivot_scaling']}): the "
+                     f"fitted {r['pivot_ml_mm']:.1f} mm is used.")
     for philosophy in PHILOSOPHIES:
         for name in SCENARIOS:
             sel = [r for r in rows if r["philosophy"] == philosophy
@@ -565,10 +582,10 @@ def _thicker_posterior_condyle(model, thicken_mm: float, posterior):
 
 
 def _limit(model, trajectory):
-    from tka_planner.core.kinematics import scenario, search_max_flexion
+    from tka_planner.core.kinematics import search_max_flexion
 
     s = model.settings
-    t = scenario(trajectory)
+    t = model.trajectory(trajectory)      # S1 scaled to this knee
     return search_max_flexion(lambda a: model.contacts(t, a), trajectory=t.name,
                               start_deg=s.start_deg, stop_deg=s.stop_deg,
                               step_deg=s.step_deg, resolution_deg=s.resolution_deg)
