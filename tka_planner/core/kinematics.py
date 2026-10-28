@@ -33,7 +33,9 @@ Both grow linearly with flexion, at the rate set by their value at
 give ``knots``: (flexion, rotation, translation) triples between which both are
 interpolated linearly from the origin, held at the last knot's values beyond it. The
 native-like scenario S1 uses them, because a native knee's lateral condyle keeps rolling
-back after 120 degrees, faster than a straight line from extension allows. Applying the motion at
+back after 120 degrees, faster than a straight line from extension allows. S1's pivot is
+fitted for condyle centres 52.8 mm apart and, on a knee, scaled to that knee's own
+spacing (:func:`native_for_knee`; an assumption, recorded as such). Applying the motion at
 rest and then flexing makes the rotation about the tibia's own long axis wherever
 flexion has carried it, which is the joint-coordinate-system order (Grood and Suntay
 1983): flexion about a femoral axis, rotation about a tibial one.
@@ -98,6 +100,11 @@ __all__ = [
     "Trajectory",
     "SCENARIOS",
     "NEUTRAL",
+    "NATIVE_LIKE",
+    "NATIVE_CENTRE_SPACING_MM",
+    "NATIVE_PIVOT_ML_MM",
+    "native_for_knee",
+    "knee_scenarios",
     "scenario",
     "tibial_motion",
     "Contact",
@@ -123,6 +130,17 @@ STOP_CONTACT = "contact"
 #: ``FlexionLimit.stop_reason`` when the search reached its bound with nothing touching.
 STOP_NO_CONTACT = "no_contact_in_scanned_models"
 
+#: The condyle-centre spacing S1's pivot was fitted for, and that pivot (mm; see the
+#: derivation above ``NATIVE_LIKE``).
+NATIVE_CENTRE_SPACING_MM = 52.8
+NATIVE_PIVOT_ML_MM = 26.4
+#: Method tag of the per-knee pivot, recorded with every scaled S1.
+NATIVE_PIVOT_METHOD = "kinematics.s1_pivot_scaled.v1"
+#: ``Trajectory.pivot_scaling``: scaled to the knee (an assumption, not a measurement).
+PIVOT_ASSUMED = "assumed"
+#: ``Trajectory.pivot_scaling``: the spacing could not be measured; the fitted pivot kept.
+PIVOT_FALLBACK = "fallback"
+
 
 @dataclass(frozen=True)
 class Trajectory:
@@ -145,6 +163,13 @@ class Trajectory:
     # (flexion deg, internal rotation deg, femoral AP translation mm), rising in flexion.
     # When given they replace the straight line from extension (see the module docstring).
     knots: tuple = ()
+    # How the pivot was set for one knee (S1 only; see :func:`native_for_knee`): "" for
+    # a pivot fixed in the definition, "assumed" for one scaled to the knee's measured
+    # condyle-centre spacing, "fallback" when that spacing could not be measured and the
+    # fitted pivot was kept. ``scaling_note`` says what was measured, or why it was not.
+    pivot_scaling: str = ""
+    centre_spacing_mm: float | None = None
+    scaling_note: str = ""
 
     def __post_init__(self):
         if self.knots:
@@ -157,6 +182,14 @@ class Trajectory:
             raise ValueError("The reference flexion angle must be positive.")
         if self.status not in ("model", "literature", "placeholder", "custom"):
             raise ValueError(f"Unknown trajectory status {self.status!r}.")
+        if self.pivot_scaling not in ("", PIVOT_ASSUMED, PIVOT_FALLBACK):
+            raise ValueError(f"Unknown pivot scaling {self.pivot_scaling!r}.")
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """What a reader must be told about this trajectory: a pivot that should have
+        been scaled to the knee and could not be."""
+        return (self.scaling_note,) if self.pivot_scaling == PIVOT_FALLBACK else ()
 
     @property
     def is_neutral(self) -> bool:
@@ -199,6 +232,9 @@ class Trajectory:
             "status": self.status,
             "source": self.source,
             **({"knots": [list(k) for k in self.knots]} if self.knots else {}),
+            # Only on a pivot set for one knee, so S2, S3 and an unscaled S1 keep the
+            # record they always had.
+            **({"pivot_scaling": self._scaling_record()} if self.pivot_scaling else {}),
             "sign_convention": (
                 "axial rotation + internal tibial rotation (femoral external rotation "
                 "on the tibia); pivot + medial of the flexion-axis midpoint; AP "
@@ -207,12 +243,37 @@ class Trajectory:
             ),
         }
 
+    def _scaling_record(self) -> dict:
+        return {
+            "status": self.pivot_scaling,
+            "method": NATIVE_PIVOT_METHOD,
+            "rule": (f"pivot_ml_mm = {NATIVE_PIVOT_ML_MM:g} * centre_spacing_mm / "
+                     f"{NATIVE_CENTRE_SPACING_MM:g} (author ruling 2026-10-26): the "
+                     "fitted pivot, the medial condyle centre for centres "
+                     f"{NATIVE_CENTRE_SPACING_MM:g} mm apart, scaled to this knee; the "
+                     "rotation angles and the -4.8 mm medial translation are not scaled"),
+            "assumption": ("that the native motion scales with the knee: the pivot "
+                           "stays on the medial condyle centre at half this knee's "
+                           "spacing; not measured"),
+            "centre_spacing_mm": (None if self.centre_spacing_mm is None
+                                  else float(self.centre_spacing_mm)),
+            "reference_centre_spacing_mm": NATIVE_CENTRE_SPACING_MM,
+            "reference_pivot_ml_mm": NATIVE_PIVOT_ML_MM,
+            "note": self.scaling_note,
+            "warnings": list(self.warnings),
+        }
+
     @classmethod
     def from_dict(cls, record: dict) -> "Trajectory":
         keys = ("name", "label", "axial_rotation_deg", "pivot_ml_mm",
                 "ap_translation_mm", "reference_flexion_deg", "status", "source")
         knots = tuple(tuple(float(x) for x in k) for k in record.get("knots", ()))
-        return cls(**{k: record[k] for k in keys if k in record}, knots=knots)
+        scaling = record.get("pivot_scaling") or {}
+        spacing = scaling.get("centre_spacing_mm")
+        return cls(**{k: record[k] for k in keys if k in record}, knots=knots,
+                   pivot_scaling=scaling.get("status", ""),
+                   centre_spacing_mm=None if spacing is None else float(spacing),
+                   scaling_note=scaling.get("note", ""))
 
 
 NEUTRAL = Trajectory(
@@ -265,12 +326,18 @@ OBSERVED_CR = Trajectory(
 # rotation's cos) and the rotation reaches 33.4 degrees, which puts the lateral centre
 # a further 15 mm back (derived, not measured: the sources give displacements, not
 # the angle at 162). Beyond 162 the motion is held, since nothing was measured there.
-# The pivot is for a 52.8 mm centre spacing; scaling it to each knee is not done.
+#
+# The pivot is for a 52.8 mm centre spacing. On a knee it is scaled to that knee's own
+# spacing (author ruling 2026-10-26, an assumption): pivot = 26.4 * spacing / 52.8, by
+# :func:`native_for_knee`, so it stays on the medial centre. Only the pivot scales. The
+# rotation angles are the sources' and stay, so the lateral rollback they give grows
+# with the spacing; the -4.8 mm is a translation of the medial centre itself, measured
+# in millimetres, and stays too. ``NATIVE_LIKE`` below is the definition, at 52.8 mm.
 NATIVE_LIKE = Trajectory(
     name="S1",
     label="Native: medial pivot, lateral rollback (fitted to published numbers)",
     axial_rotation_deg=20.0,
-    pivot_ml_mm=26.4,
+    pivot_ml_mm=NATIVE_PIVOT_ML_MM,
     ap_translation_mm=0.0,
     reference_flexion_deg=120.0,
     status="literature",
@@ -284,12 +351,53 @@ NATIVE_LIKE = Trajectory(
 SCENARIOS: dict[str, Trajectory] = {t.name: t for t in (NATIVE_LIKE, OBSERVED_CR, NEUTRAL)}
 
 
-def scenario(name_or_trajectory) -> Trajectory:
-    """A named scenario, or a trajectory passed through unchanged."""
+def native_for_knee(centre_spacing_mm: float | None, *, measured_from: str = "",
+                    reason: str = "") -> Trajectory:
+    """S1 with its pivot scaled to one knee (author ruling 2026-10-26).
+
+    ``centre_spacing_mm`` is the knee's distance between its medial and lateral condyle
+    centres along the flexion axis, the quantity the fitted 52.8 mm stands for; the
+    pivot becomes ``26.4 * spacing / 52.8`` mm medial of the axis midpoint, and the
+    scaling is recorded as ``assumed``. Nothing else of S1 changes.
+
+    With no spacing (``None``, or one that is not a positive finite length) the fitted
+    26.4 mm is kept and the trajectory says so: ``pivot_scaling`` is ``fallback`` and
+    :attr:`Trajectory.warnings` carries ``reason``. It is never silent.
+    """
+    spacing = None if centre_spacing_mm is None else float(centre_spacing_mm)
+    if spacing is None or not np.isfinite(spacing) or spacing <= 0.0:
+        why = reason or ("no condyle-centre spacing was given" if spacing is None
+                         else f"the condyle-centre spacing ({spacing:g} mm) is not a "
+                              "positive length")
+        return replace(NATIVE_LIKE, pivot_scaling=PIVOT_FALLBACK, centre_spacing_mm=None,
+                       scaling_note=(f"S1 pivot not scaled to this knee: {why}; the "
+                                     f"fitted {NATIVE_PIVOT_ML_MM:g} mm (for centres "
+                                     f"{NATIVE_CENTRE_SPACING_MM:g} mm apart) is used."))
+    # The ratio first, so a knee at the reference spacing gets exactly 26.4.
+    pivot = NATIVE_PIVOT_ML_MM * (spacing / NATIVE_CENTRE_SPACING_MM)
+    return replace(NATIVE_LIKE, pivot_ml_mm=pivot, pivot_scaling=PIVOT_ASSUMED,
+                   centre_spacing_mm=spacing, scaling_note=measured_from)
+
+
+def knee_scenarios(centre_spacing_mm: float | None, *, measured_from: str = "",
+                   reason: str = "") -> dict[str, Trajectory]:
+    """The scenarios for one knee: :data:`SCENARIOS` with S1 scaled to it."""
+    return {**SCENARIOS, NATIVE_LIKE.name: native_for_knee(
+        centre_spacing_mm, measured_from=measured_from, reason=reason)}
+
+
+def scenario(name_or_trajectory, scenarios: dict | None = None) -> Trajectory:
+    """A named scenario, or a trajectory passed through unchanged.
+
+    ``scenarios`` is one knee's set (S1 scaled to it, see :func:`native_for_knee`);
+    names are looked up there first, then in the defined :data:`SCENARIOS`.
+    """
     if isinstance(name_or_trajectory, Trajectory):
         return name_or_trajectory
     if isinstance(name_or_trajectory, dict):
         return Trajectory.from_dict(name_or_trajectory)
+    if scenarios and str(name_or_trajectory) in scenarios:
+        return scenarios[str(name_or_trajectory)]
     try:
         return SCENARIOS[str(name_or_trajectory)]
     except KeyError:

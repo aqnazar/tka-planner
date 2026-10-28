@@ -15,6 +15,8 @@ from tka_planner.core.kinematics import (
     Contact,
     Trajectory,
     envelope,
+    knee_scenarios,
+    native_for_knee,
     scenario,
     search_max_flexion,
     tibial_motion,
@@ -192,6 +194,91 @@ def test_the_native_scenario_is_labelled_literature_and_cites_its_sources():
 def test_an_unknown_scenario_is_refused():
     with pytest.raises(ValueError, match="Unknown trajectory"):
         scenario("S9")
+
+
+# ----------------------------------------------------------------------
+# S1's pivot, scaled to each knee (author ruling 2026-10-26)
+# ----------------------------------------------------------------------
+
+
+def test_at_the_reference_spacing_the_scaled_pivot_is_exactly_the_fitted_one():
+    s1 = native_for_knee(52.8)
+    assert s1.pivot_ml_mm == 26.4                       # exactly, not approximately
+    assert s1.pivot_scaling == "assumed" and s1.centre_spacing_mm == 52.8
+    assert s1.warnings == ()
+
+
+@pytest.mark.parametrize("spacing", [44.0, 50.1, 61.7])
+def test_the_pivot_scales_with_the_spacing_and_nothing_else_does(spacing):
+    s1 = native_for_knee(spacing, measured_from="posterior condyles")
+    assert s1.pivot_ml_mm == pytest.approx(26.4 * spacing / 52.8, abs=1e-12)
+    assert s1.pivot_ml_mm == pytest.approx(spacing / 2.0, abs=1e-12)
+    fitted = SCENARIOS["S1"]
+    assert s1.knots == fitted.knots == ((120.0, 20.0, 0.0), (162.0, 33.4, -4.8))
+    assert (s1.axial_rotation_deg, s1.ap_translation_mm, s1.reference_flexion_deg) == (
+        fitted.axial_rotation_deg, fitted.ap_translation_mm, fitted.reference_flexion_deg)
+    assert s1.status == "literature" and s1.name == "S1"
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_a_scaled_pivot_still_keeps_the_medial_centre_still(side):
+    """On a knee whose centres are 2d apart, the medial one (at +d) stays put 30-120 deg,
+    and the lateral one goes back 2d (sin 20 deg), not the fitted 15 mm."""
+    d = 30.0
+    s1 = native_for_knee(2.0 * d)
+
+    def moved(angle, ml):
+        return _femur_moves(s1, angle, side, ml)
+
+    assert moved(120.0, +d) - moved(30.0, +d) == pytest.approx(0.0, abs=1e-9)
+    expected = -2.0 * d * (np.sin(np.radians(20.0)) - np.sin(np.radians(20.0 / 6.0)))
+    assert moved(120.0, -d) - moved(20.0, -d) == pytest.approx(expected, abs=1e-6)
+
+
+def test_a_knee_with_no_spacing_keeps_the_fitted_pivot_and_says_so():
+    s1 = native_for_knee(None, reason="femur.condyle_posterior_lateral not picked")
+    assert s1.pivot_ml_mm == 26.4
+    assert s1.pivot_scaling == "fallback" and s1.centre_spacing_mm is None
+    assert len(s1.warnings) == 1
+    assert "not scaled" in s1.warnings[0]
+    assert "condyle_posterior_lateral" in s1.warnings[0]
+    record = s1.to_dict()["pivot_scaling"]
+    assert record["status"] == "fallback" and record["warnings"] == list(s1.warnings)
+
+
+@pytest.mark.parametrize("spacing", [0.0, -12.0, float("nan")])
+def test_a_spacing_that_is_not_a_length_falls_back_too(spacing):
+    s1 = native_for_knee(spacing)
+    assert s1.pivot_ml_mm == 26.4 and s1.pivot_scaling == "fallback" and s1.warnings
+
+
+def test_a_scaled_pivot_is_recorded_as_assumed_and_round_trips():
+    s1 = native_for_knee(49.37, measured_from="posterior condyles along the hinge")
+    record = s1.to_dict()
+    assert record["pivot_ml_mm"] == pytest.approx(24.685)
+    scaling = record["pivot_scaling"]
+    assert scaling["status"] == "assumed"
+    assert scaling["centre_spacing_mm"] == 49.37
+    assert scaling["reference_centre_spacing_mm"] == 52.8
+    assert scaling["reference_pivot_ml_mm"] == 26.4
+    assert scaling["method"] == "kinematics.s1_pivot_scaled.v1"
+    assert scaling["warnings"] == []
+    assert Trajectory.from_dict(record) == s1
+    assert Trajectory.from_dict(native_for_knee(None).to_dict()) == native_for_knee(None)
+
+
+def test_the_defined_scenarios_carry_no_scaling_record():
+    for trajectory in SCENARIOS.values():
+        assert "pivot_scaling" not in trajectory.to_dict()
+
+
+def test_a_knees_scenarios_resolve_s1_to_the_scaled_one():
+    scenarios = knee_scenarios(48.0)
+    assert scenario("S1", scenarios).pivot_ml_mm == pytest.approx(24.0)
+    assert scenario("S2", scenarios) is SCENARIOS["S2"]
+    assert scenario("S1").pivot_ml_mm == 26.4                # no knee: the definition
+    with pytest.raises(ValueError, match="Unknown trajectory"):
+        scenario("S9", scenarios)
 
 
 # ----------------------------------------------------------------------
