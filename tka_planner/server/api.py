@@ -22,6 +22,7 @@ from tka_planner.geom.gltf import write_glb
 from tka_planner.panel import TRIAL_SCHEMA, with_sizes
 from tka_planner.report.bundle import export_session
 from tka_planner.scene.model import SceneDelta
+from tka_planner.study import pick_targets, save_picks, save_review, study_schema
 
 from .encode import clip_planes, node_payload, scene_snapshot
 
@@ -80,6 +81,8 @@ class Api:
             return {"cases": self.manager.available_cases()}
         if rest == ["schema"] and method == "GET":
             return self.schema()
+        if rest == ["study", "schema"] and method == "GET":
+            return study_schema()
         if rest == ["sessions"] and method == "POST":
             return self.open_session(body)
 
@@ -115,6 +118,12 @@ class Api:
             return self.mesh(entry, tail[1])
         elif tail == ["report"] and method == "GET":
             return self.report(entry)
+        elif tail == ["study", "targets"] and method == "POST":
+            return pick_targets(entry, body.get("mode"))
+        elif tail == ["study", "picks"] and method == "POST":
+            return save_picks(entry, self._study_dir(), body)
+        elif tail == ["study", "review"] and method == "POST":
+            return save_review(entry, self._study_dir(), body)
 
         raise ApiError(404, f"No route for {method} on session {session_id}")
 
@@ -223,6 +232,13 @@ class Api:
         """
         return Binary("text/html; charset=utf-8",
                       entry.session.report_html().encode("utf-8"))
+
+    def _study_dir(self) -> Path:
+        """Where observer picks and verdicts go: the server's study folder."""
+        folder = self.manager.study_dir
+        if folder is None:
+            raise ApiError(400, "No study folder is configured (start with --study).")
+        return Path(folder)
 
     def mesh(self, entry, filename: str) -> Binary:
         """One mesh as binary glTF, addressed by content hash.

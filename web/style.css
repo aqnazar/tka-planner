@@ -189,3 +189,35 @@ legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-s
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 [hidden] { display: none !important; }
+
+/* The observer studies (Review, Pick). */
+#modes button { padding: 4px 2px; }
+.study-help { color: var(--dim); margin: 0 0 10px; }
+.study-warn { color: var(--warn); margin: 6px 0; }
+label.wide { display: flex; justify-content: space-between; margin-bottom: 8px; }
+label.wide select { flex: 1; margin-left: 8px; }
+label.column { flex-direction: column; align-items: stretch; }
+textarea { font: inherit; color: var(--ink); background: #262c33; border: 1px solid var(--edge);
+           border-radius: 4px; padding: 4px 7px; width: 100%; resize: vertical; }
+label.check { display: flex; align-items: flex-start; gap: 6px; color: var(--ink); margin: 3px 0; }
+label.check.big { font-size: 15px; font-weight: 600; }
+.verdict { display: flex; gap: 22px; margin: 8px 0; }
+button.primary { background: #2a5bb0; border-color: var(--accent); }
+#study-who label { margin: 2px 10px 2px 0; }
+.study-progress { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+.study-name { font-size: 15px; font-weight: 600; margin: 4px 0; }
+.study-definition { margin: 0 0 6px; }
+.study-status { color: var(--accent); min-height: 2.9em; margin: 0 0 8px; }
+#pick-list { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 10px; max-height: 260px; overflow-y: auto; }
+.pick-item { text-align: left; font-size: 12px; padding: 2px 6px; border-color: transparent; }
+.pick-item::before { content: ""; display: inline-block; width: 8px; height: 8px;
+                     margin-right: 7px; border-radius: 50%; border: 1px solid var(--dim); }
+.pick-item.placed::before { background: #ffc533; border-color: #ffc533; }
+.pick-item.skipped::before { background: var(--stale); border-color: var(--stale); border-radius: 1px; }
+/* Picking shows the bones only: the plan's readout is not part of the task. */
+body.picking main { grid-template-columns: 300px 1fr; }
+body.picking #readout { display: none; }
+.pick-item.current { border-color: #ff2bd6; }
+#review-saved .saved { font-size: 12px; margin: 2px 0; }
+#review-saved .saved.ok { color: #6fd08c; }
+#review-saved .saved.not_ok { color: var(--stale); }

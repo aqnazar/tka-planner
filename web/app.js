@@ -7,6 +7,7 @@
 // be flexed between -10 and +15 degrees" are clinical limits, and a viewer that wrote
 // its own copy of them would be a second place for one to live.
 
+import { Study } from "./study.js";
 import { Viewer } from "./viewer.js";
 
 const state = {
@@ -432,16 +433,29 @@ function note(message) {
 // --------------------------------------------------------------------
 
 function setMode(mode) {
+  if ((mode === "review" || mode === "pick") && !state.sessionId) {
+    note("Open a case first.");
+    return;
+  }
+  // Leaving Pick puts the planner's scene back; unsaved markers stay as a draft.
+  if (state.mode === "pick" && mode !== "pick") study.stopPick();
   state.mode = mode;
   state.playing = false;
   el("plan-mode").hidden = mode !== "plan";
   el("reduce-mode").hidden = mode !== "reduce";
+  el("review-mode").hidden = mode !== "review";
+  el("pick-mode").hidden = mode !== "pick";
+  el("study-who").hidden = mode !== "review" && mode !== "pick";
   for (const button of document.querySelectorAll("#modes button")) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
-  // Plan mode previews the cut by clipping. Reduce mode works on geometry that has
-  // really been cut, so clipping there would take a second bite out of it.
-  viewer.setClipping(mode === "plan");
+  // Plan mode previews the cut by clipping, and Review judges that same preview.
+  // Reduce mode works on geometry that has really been cut, so clipping there would
+  // take a second bite out of it. Pick draws its own uncut bones.
+  viewer.setClipping(mode === "plan" || mode === "review");
+  document.body.classList.toggle("picking", mode === "pick");
+  viewer.resize();
+  if (mode === "review") study.enterReview();
   syncPanel();
 }
 
@@ -503,6 +517,7 @@ async function openCase({ folder, side, library, femurLength = "",
   state.sessionId = payload.session_id;
   state.schema = await api("GET", "/api/schema");
   buildPanel();
+  await study.loadSchema();
   await applyEnvelope(payload);
   setMode("plan");
   return payload;
@@ -584,6 +599,12 @@ el("clean").addEventListener("change", (event) =>
 for (const button of document.querySelectorAll("#modes button")) {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 }
+
+const study = new Study({
+  viewer, api, el, note, busy, state,
+  sessionId: () => state.sessionId,
+  sendControls: (changes) => sendControls(changes).then(() => study.syncReview()),
+});
 
 (async function start() {
   let cases = [];

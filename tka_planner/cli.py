@@ -327,6 +327,8 @@ def _serve(args: argparse.Namespace) -> int:
         argv += ["--cases", args.cases]
     if args.library:
         argv += ["--library", args.library]
+    if args.study:
+        argv += ["--study", args.study]
     if args.no_browser:
         argv.append("--no-browser")
     return serve_main(argv)
@@ -484,6 +486,8 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--library", default=None, help="implant library folder")
     serve.add_argument("--store", default=None, help="where cases, plans and "
                        "committed geometry are kept")
+    serve.add_argument("--study", default=None, help="where observer-study picks and "
+                       "plan verdicts are written (default: 'study' in the store)")
     serve.add_argument("--port", type=int, default=8731)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--no-browser", action="store_true")

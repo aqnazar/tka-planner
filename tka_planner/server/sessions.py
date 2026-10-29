@@ -71,10 +71,16 @@ class SessionEntry:
 class SessionManager:
     """Opens sessions, keeps them, and puts the store behind their commits."""
 
-    def __init__(self, *, store=None, cases_root=None, library=None, kernel=None):
+    def __init__(self, *, store=None, cases_root=None, library=None, kernel=None,
+                 study_dir=None):
         self.store = store if isinstance(store, Store) else (
             Store(store) if store is not None else None
         )
+        # Observer picks and plan verdicts (tka_planner.study); beside the store unless
+        # given, and never in the repository: they hold patient geometry.
+        if study_dir is None and self.store is not None:
+            study_dir = Path(self.store.root) / "study"
+        self.study_dir = Path(study_dir) if study_dir else None
         self.cases_root = Path(cases_root) if cases_root else None
         self.library = Path(library) if library else None
         self.kernel = kernel
