@@ -18,17 +18,26 @@ from . import __version__
 from .core.frames import FrameConstructionError
 from .core.landmarks import load_landmarks, write_landmark_set, write_slicer_template
 from .core.meshio import read_stl
+from .core.phantom_femur import (
+    FEMUR_LENGTH_TYPES,
+    HEAD_TOP_TO_CONDYLE_OFFSET_MM,
+    SEXES,
+    entered_femur_record,
+)
 from .core.planning import Adjustments
 from .core.qc import QCReport, QualityControlError, check_landmarks_on_mesh
 from .core.sides import Side
 from .pipeline import (
     discrete_sizing,
-    fit_case,
+    findings_case,
+    fit_case_with_grids,
+    flexion_case,
     implant_spec_case,
     measure_case,
     plan_case,
     plan_document,
     render_case_report,
+    resection_table_case,
     write_implant_spec,
     write_plan,
 )
@@ -41,12 +50,21 @@ def _measure(args: argparse.Namespace) -> int:
 
     # The same pipeline the application runs: quality control, landmarks (the
     # automatic estimate, with any landmark file laid over it), frames, metrics and the
-    # sizing measurement.
+    # sizing measurement. A femur length type or sex without a length is refused before
+    # anything is read, by the pipeline's own rule.
+    try:
+        entered_femur_record(args.femur_length, args.femur_length_type, args.sex)
+    except ValueError as error:
+        print(f"\n[REFUSED] {error}", file=sys.stderr)
+        return 2
     try:
         measurement = measure_case(
             args.femur, args.tibia, args.side,
             case_id=args.case_id, landmarks_path=args.landmarks,
             rater=args.rater, session=args.session, size_chart=args.size_chart,
+            remove_large_islands=args.remove_islands,
+            femur_length_mm=args.femur_length,
+            femur_length_type=args.femur_length_type, sex=args.sex,
         )
     except QualityControlError as error:
         print(f"\n[REFUSED] {error}", file=sys.stderr)
@@ -91,7 +109,10 @@ def _measure(args: argparse.Namespace) -> int:
     )
     discrete = discrete_sizing(m)
     spec = implant_spec_case(m, surgical, sizing, args.library)
-    fit = fit_case(m, surgical, sizing, args.library, args.implant_mode)
+    fit, grids = fit_case_with_grids(m, surgical, sizing, args.library, args.implant_mode)
+    box = spec["femoral_component"].get("cut_box")
+    table = resection_table_case(m, surgical, args.library, box)
+    findings = findings_case(m, surgical, sizing, box=box, fit=fit)
     controls = {
         "philosophy": args.philosophy,
         "size_override": args.size or "",
@@ -102,11 +123,23 @@ def _measure(args: argparse.Namespace) -> int:
         "implant_mode": args.implant_mode,
     }
 
-    report_path = write_report(render_case_report(m, surgical, sizing),
-                               output / "report.html")
+    flexion = None
+    if getattr(args, "flexion", False):
+        if args.library is None:
+            print("  --flexion needs --library: skipped", file=sys.stderr)
+        else:
+            flexion = flexion_case(m, surgical, sizing, args.library,
+                                   args.implant_mode)
+
+    report_path = write_report(
+        render_case_report(m, surgical, sizing, fit=fit, fit_grids=grids,
+                           implant_spec=spec, resection_table=table,
+                           findings=findings),
+        output / "report.html")
     plan_path = write_plan(
         plan_document(m, surgical, sizing, fit=fit, implant_spec=spec,
-                      controls=controls),
+                      controls=controls, resection_table=table, findings=findings,
+                      flexion=flexion),
         output / "plan.json",
     )
     spec_path = write_implant_spec(spec, output / "implant_spec.json")
@@ -136,6 +169,8 @@ def _measure(args: argparse.Namespace) -> int:
               f"{diagnostics['tray_thickness_mm']:.1f} mm); extension gap medial "
               f"{diagnostics['extension_gap_medial_mm']:4.1f} / lateral "
               f"{diagnostics['extension_gap_lateral_mm']:4.1f} mm")
+    print()
+    print(_resection_table_text(table))
     print(f"  plateau AP       {m.tibial_measure.ap_mm:5.1f} mm  "
           f"(naive bbox would say "
           f"{m.tibial_measure.diagnostics['naive_proximal_bbox_ap_mm']:.1f})")
@@ -158,6 +193,27 @@ def _measure(args: argparse.Namespace) -> int:
                   + (f"  [{', '.join(f['flags'])}]" if f["flags"] else ""))
         if fit["missing"]:
             print(f"  not in the library: {', '.join(fit['missing'])}")
+        pco = fit.get("posterior_condylar_offset") or {}
+        if pco.get("available"):
+            for compartment in ("medial", "lateral"):
+                row = pco[compartment]
+                if row["planned_mm"] is None:
+                    continue
+                print(f"  posterior condylar offset {compartment:7s} "
+                      f"{row['preoperative_mm']:5.1f} -> {row['planned_mm']:5.1f} mm "
+                      f"({row['change_mm']:+.1f}, {pco['status']})")
+    if flexion is not None:
+        print()
+        for name, record in flexion["trajectories"].items():
+            if record["censored"]:
+                print(f"  max flexion {name}  >= {record['reported_flexion_deg']:.0f} deg "
+                      f"(a bound: no contact in the scanned models by "
+                      f"{record['max_flexion_deg']:.0f} deg; "
+                      f"{record.get('no_contact', {}).get('reason', 'no reason')})")
+                continue
+            print(f"  max flexion {name}    {record['max_flexion_deg']:6.1f} deg"
+                  + (f"  first contact: {record['first_pair']}"
+                     if record["first_pair"] else ""))
     print()
     f_dims = spec["femoral_component"]["dimensions_mm"]
     t_dims = spec["tibial_component"]["dimensions_mm"]
@@ -171,6 +227,27 @@ def _measure(args: argparse.Namespace) -> int:
     print(f"  -> {spec_path}")
     print(f"  -> {report_path}")
     return 0
+
+
+def _resection_table_text(table: dict) -> str:
+    """The resection table for the console, one row per cut."""
+    from .core.resection_table import ROW_LABELS, angle_text
+
+    def mm(value):
+        return "    -" if value is None else f"{value:5.1f}"
+
+    lines = ["  resection table (mm off the bone; medial / lateral)"]
+    for row in table.get("rows", []):
+        line = (f"    {ROW_LABELS.get(row['cut'], row['cut']):18s} "
+                f"{mm(row['medial_mm'])} / {mm(row['lateral_mm'])}")
+        if row.get("angle_deg"):
+            line += f"   {angle_text(row['angle_deg'])} deg"
+        lines.append(line)
+        if row.get("highest_mm"):
+            lines.append(f"    {'  highest bone':18s} {mm(row['highest_mm']['medial'])}"
+                         f" / {mm(row['highest_mm']['lateral'])}")
+    lines += [f"    note: {note}" for note in table.get("notes", [])]
+    return "\n".join(lines)
 
 
 def _landmark_template(args: argparse.Namespace) -> int:
@@ -250,6 +327,8 @@ def _serve(args: argparse.Namespace) -> int:
         argv += ["--cases", args.cases]
     if args.library:
         argv += ["--library", args.library]
+    if args.study:
+        argv += ["--study", args.study]
     if args.no_browser:
         argv.append("--no-browser")
     return serve_main(argv)
@@ -285,6 +364,30 @@ def main(argv: list[str] | None = None) -> int:
                          help="rating session of the landmark file")
     measure.add_argument("--size-chart", default=None,
                          help="size chart CSV; defaults to the bundled chart")
+    measure.add_argument(
+        "--femur-length", type=float, default=None, metavar="MM",
+        help="femur length from a long-leg film or scanogram (hip centre to knee centre "
+             "unless --femur-length-type says otherwise); a knee-only scan cannot give "
+             "it, so it is recorded as entered",
+    )
+    measure.add_argument(
+        "--femur-length-type", default=None, choices=list(FEMUR_LENGTH_TYPES),
+        help="what --femur-length measures: hip_to_knee (hip centre to knee centre, the "
+             "default) or head_top_to_condyle (top of the femoral head to the distal "
+             f"condyles, as a scanogram usually gives; converted by subtracting a "
+             f"calibrated offset, {HEAD_TOP_TO_CONDYLE_OFFSET_MM:g} mm, or 31.3 / 34.9 mm "
+             f"with --sex female / male)",
+    )
+    measure.add_argument(
+        "--sex", default=None, choices=list(SEXES),
+        help="sizes the phantom femur's head (male 49.65, female 44.41 mm); omitted, "
+             "the head is 0.1 of the maximum femur length",
+    )
+    measure.add_argument(
+        "--remove-islands", action="store_true",
+        help="remove every detached piece of each bone, including those large enough "
+             "to be anatomy (by default they are kept and reported)",
+    )
     measure.add_argument(
         "--philosophy", default="mechanical", choices=["mechanical", "kinematic"],
         help="alignment philosophy",
@@ -323,6 +426,11 @@ def main(argv: list[str] | None = None) -> int:
     measure.add_argument(
         "--insert-delta", type=float, default=0.0,
         help="insert thicker (+) or thinner (-) than the one that closes the joint, mm",
+    )
+    measure.add_argument(
+        "--flexion", action="store_true",
+        help="search the impingement-limited maximum flexion under the three flexion "
+             "trajectories S1-S3 (needs --library; about half a minute per knee)",
     )
     measure.set_defaults(func=_measure)
 
@@ -378,6 +486,8 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--library", default=None, help="implant library folder")
     serve.add_argument("--store", default=None, help="where cases, plans and "
                        "committed geometry are kept")
+    serve.add_argument("--study", default=None, help="where observer-study picks and "
+                       "plan verdicts are written (default: 'study' in the store)")
     serve.add_argument("--port", type=int, default=8731)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--no-browser", action="store_true")

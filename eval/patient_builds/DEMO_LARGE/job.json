@@ -911,5 +911,8 @@
  "bones": [
   "demo_cases/DEMO_LARGE/FD.stl",
   "demo_cases/DEMO_LARGE/TD.stl"
+ ],
+ "only": [
+  "insert"
  ]
 }

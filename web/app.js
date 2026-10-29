@@ -7,6 +7,7 @@
 // be flexed between -10 and +15 degrees" are clinical limits, and a viewer that wrote
 // its own copy of them would be a second place for one to live.
 
+import { Study } from "./study.js";
 import { Viewer } from "./viewer.js";
 
 const state = {
@@ -89,6 +90,8 @@ async function applyEnvelope(payload) {
   if (payload.clip) viewer.setClip(payload.clip);
 
   renderReport(payload.report || []);
+  renderFindings(payload.findings || []);
+  renderLegend(payload.fit_map);
   renderNotes(payload.delta?.notes || [], payload.commit);
   syncPanel();
   // A change to the plan invalidates the arc the server computed for the old one.
@@ -274,6 +277,132 @@ function splitLine(line) {
   return index === -1 ? [line, ""] : [line.slice(0, index), line.slice(index + 1)];
 }
 
+// --------------------------------------------------------------------
+// Findings and the fit map's legend
+// --------------------------------------------------------------------
+
+const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 };
+
+// The server's findings, most severe first, as it worded them. One with a place gets a
+// button that turns the view to it.
+function renderFindings(findings) {
+  const host = el("findings");
+  host.textContent = "";
+  const head = document.createElement("div");
+  head.className = "head";
+  const counts = { error: 0, warning: 0, info: 0 };
+  for (const finding of findings) counts[finding.severity] = (counts[finding.severity] || 0) + 1;
+  head.textContent =
+    `Findings: ${counts.error} error, ${counts.warning} warning, ${counts.info} info`;
+  host.append(head);
+
+  const sorted = [...findings].sort(
+    (a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3)
+  );
+  for (const finding of sorted) {
+    const row = document.createElement("details");
+    row.className = `finding ${finding.severity}`;
+    if (finding.severity !== "info") row.open = finding.severity === "error";
+    const summary = document.createElement("summary");
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = finding.severity;
+    const code = document.createElement("code");
+    code.textContent = finding.code;
+    summary.append(badge, code);
+    if (finding.location) {
+      const show = document.createElement("button");
+      show.type = "button";
+      show.className = "show";
+      show.textContent = "Show";
+      show.title = `Turn the view to ${finding.location.label}`;
+      show.addEventListener("click", (event) => {
+        event.preventDefault();
+        viewer.focus(finding.location);
+      });
+      summary.append(show);
+    }
+    // A detached piece large enough to be anatomy is kept unless the operator says it
+    // is not: re-open the case with every detached piece removed.
+    if (finding.code === "MESH_LARGE_ISLAND" && state.opened) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "show";
+      remove.textContent = "Remove";
+      remove.title = "Re-open the case with every detached piece of the bones removed";
+      remove.addEventListener("click", (event) => {
+        event.preventDefault();
+        busy(() => openCase({ ...state.opened, removeLargeIslands: true }));
+      });
+      summary.append(remove);
+    }
+    const message = document.createElement("div");
+    message.className = "message";
+    message.textContent = finding.message;
+    row.append(summary, message);
+    host.append(row);
+  }
+}
+
+// The legend is the server's: its stops, its ends and its words. Only the layout is
+// here.
+function renderLegend(fitMap) {
+  const host = el("legend");
+  host.textContent = "";
+  if (!fitMap || !fitMap.available || !fitMap.visible) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  const { legend } = fitMap;
+  state.fitLegend = legend;
+  const span = legend.max_mm - legend.min_mm;
+  const title = document.createElement("div");
+  title.className = "title";
+  title.textContent = `${legend.title} (${legend.unit})`;
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  bar.style.background = `linear-gradient(to right, ${legend.stops
+    .map(([value, [r, g, b]]) =>
+      `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)}) ` +
+      `${(100 * (value - legend.min_mm)) / span}%`)
+    .join(", ")})`;
+  const ticks = document.createElement("div");
+  ticks.className = "ticks";
+  for (const [value] of legend.stops) {
+    const tick = document.createElement("span");
+    tick.style.left = `${(100 * (value - legend.min_mm)) / span}%`;
+    tick.textContent = value > 0 ? `+${value}` : `${value}`;
+    ticks.append(tick);
+  }
+  const words = document.createElement("div");
+  words.className = "words";
+  const left = document.createElement("span");
+  left.textContent = legend.negative;
+  const right = document.createElement("span");
+  right.textContent = legend.positive;
+  words.append(left, right);
+  const foot = document.createElement("div");
+  foot.className = "foot";
+  foot.textContent = `${legend.zero} at 0; ${legend.clamped}. ` +
+    (legend.resolution_mm ? `Drawn at ${legend.resolution_mm} mm. ` : "") +
+    (fitMap.seconds !== null ? `Measured in ${fitMap.seconds} s at Commit.` : "");
+  host.append(title, bar, ticks, words, foot);
+}
+
+function showValueUnderPointer(event) {
+  const readout = el("legend").querySelector(".foot");
+  if (!readout || el("legend").hidden) return;
+  const hit = viewer.valueAt(event.clientX, event.clientY);
+  if (!hit) return;
+  const value = hit.value;
+  const legend = state.fitLegend;
+  const where = hit.name.endsWith("tibial") ? "Tibial cut" : "Distal femoral cut";
+  readout.textContent = value === 0 ? `${where}: ${legend.zero}` :
+    `${where}: ${value < 0 ? legend.negative : legend.positive} by ` +
+    `${Math.abs(value).toFixed(1)} mm`;
+}
+
 function renderNotes(notes, commit) {
   const host = el("notes");
   host.textContent = "";
@@ -304,16 +433,29 @@ function note(message) {
 // --------------------------------------------------------------------
 
 function setMode(mode) {
+  if ((mode === "review" || mode === "pick") && !state.sessionId) {
+    note("Open a case first.");
+    return;
+  }
+  // Leaving Pick puts the planner's scene back; unsaved markers stay as a draft.
+  if (state.mode === "pick" && mode !== "pick") study.stopPick();
   state.mode = mode;
   state.playing = false;
   el("plan-mode").hidden = mode !== "plan";
   el("reduce-mode").hidden = mode !== "reduce";
+  el("review-mode").hidden = mode !== "review";
+  el("pick-mode").hidden = mode !== "pick";
+  el("study-who").hidden = mode !== "review" && mode !== "pick";
   for (const button of document.querySelectorAll("#modes button")) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
-  // Plan mode previews the cut by clipping. Reduce mode works on geometry that has
-  // really been cut, so clipping there would take a second bite out of it.
-  viewer.setClipping(mode === "plan");
+  // Plan mode previews the cut by clipping, and Review judges that same preview.
+  // Reduce mode works on geometry that has really been cut, so clipping there would
+  // take a second bite out of it. Pick draws its own uncut bones.
+  viewer.setClipping(mode === "plan" || mode === "review");
+  document.body.classList.toggle("picking", mode === "pick");
+  viewer.resize();
+  if (mode === "review") study.enterReview();
   syncPanel();
 }
 
@@ -357,15 +499,25 @@ async function busy(work) {
   }
 }
 
-async function openCase({ folder, side, library }) {
+async function openCase({ folder, side, library, femurLength = "",
+                         femurLengthType = "hip_to_knee", sex = "",
+                         removeLargeIslands = false }) {
   const payload = await api("POST", "/api/sessions", {
     folder,
     side,
     library: library || null,
+    femur_length_mm: femurLength === "" ? null : Number(femurLength),
+    // The type describes the length, so it goes only with one. A sex without a length
+    // is sent as chosen: the server refuses it rather than drop it unseen.
+    femur_length_type: femurLength === "" ? null : femurLengthType,
+    sex: sex || null,
+    remove_large_islands: removeLargeIslands,
   });
+  state.opened = { folder, side, library, femurLength, femurLengthType, sex };
   state.sessionId = payload.session_id;
   state.schema = await api("GET", "/api/schema");
   buildPanel();
+  await study.loadSchema();
   await applyEnvelope(payload);
   setMode("plan");
   return payload;
@@ -377,6 +529,9 @@ el("open-form").addEventListener("submit", (event) => {
     folder: el("folder").value.trim(),
     side: el("side").value,
     library: el("library").value.trim(),
+    femurLength: el("femur-length").value.trim(),
+    femurLengthType: el("femur-length-type").value,
+    sex: el("sex").value,
   }));
 });
 
@@ -421,6 +576,22 @@ el("export").addEventListener("click", () =>
   })
 );
 
+el("open-report").addEventListener("click", () => {
+  if (!state.sessionId) { note("Open a case first."); return; }
+  window.open(`/api/sessions/${state.sessionId}/report`, "_blank");
+});
+
+// The fit value under the pointer, at most once a frame.
+let pointerPending = false;
+el("view").addEventListener("pointermove", (event) => {
+  if (pointerPending) return;
+  pointerPending = true;
+  requestAnimationFrame(() => {
+    pointerPending = false;
+    showValueUnderPointer(event);
+  });
+});
+
 el("clean").addEventListener("change", (event) =>
   viewer.setCleanViewport(event.target.checked)
 );
@@ -428,6 +599,12 @@ el("clean").addEventListener("change", (event) =>
 for (const button of document.querySelectorAll("#modes button")) {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 }
+
+const study = new Study({
+  viewer, api, el, note, busy, state,
+  sessionId: () => state.sessionId,
+  sendControls: (changes) => sendControls(changes).then(() => study.syncReview()),
+});
 
 (async function start() {
   let cases = [];

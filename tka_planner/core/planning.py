@@ -55,7 +55,18 @@ __all__ = [
     "KINEMATIC",
     "TIBIAL_REFERENCES",
     "TIBIAL_REFERENCE_DEFAULT_MM",
+    "FEMORAL_SAGITTAL_REFERENCES",
 ]
+
+# What the femoral cut's flexion is measured from. ``femoral_axis``, the default, is the
+# femoral frame's own proximal axis: the mechanical axis where the femoral head was
+# measured, otherwise the diaphyseal axis turned by the assumed mechanical-anatomical
+# angle in the coronal plane, which in the sagittal plane is the distal diaphyseal axis --
+# the reference an intramedullary femoral guide sets. ``scanner`` is the earlier
+# behaviour, the femoral axis with its tilt against the scanner's anterior axis removed,
+# kept so the two can be compared: it makes the component's flexion on the femur equal
+# to however far the leg was tipped in the scanner.
+FEMORAL_SAGITTAL_REFERENCES = ("femoral_axis", "scanner")
 
 # Where the tibial resection depth is measured from, as the commercial techniques set
 # their stylus. The first is the default in every system checked (Triathlon, ATTUNE,
@@ -276,6 +287,7 @@ def plan_alignment(
     adjustments: Adjustments = NO_ADJUSTMENT,
     femur_mesh=None,
     tibia_mesh=None,
+    femoral_sagittal_reference: str = "femoral_axis",
 ) -> SurgicalPlan:
     """Compute the correction, the resection planes and the component poses.
 
@@ -291,11 +303,11 @@ def plan_alignment(
     have to articulate across that error.
 
     So the femoral mechanical axis supplies the coronal reference for both, and the cuts
-    differ only in the sagittal plane -- femoral flexion and tibial posterior slope. The
-    sagittal angles are *set from the target* rather than inherited from the axis, for
-    the same reason: component flexion and tibial slope are surgical parameters, not
-    properties of a diaphyseal fit that happens to lean forward because the leg lay at an
-    angle in the scanner.
+    differ only in the sagittal plane -- femoral flexion and tibial posterior slope.
+    Both sagittal angles are surgical parameters, *set from the target*, and each is
+    measured from its own bone: femoral flexion from the femoral axis
+    (``femoral_sagittal_reference``, see :data:`FEMORAL_SAGITTAL_REFERENCES`), tibial
+    slope from the tibial axis. Neither depends on how the leg lay in the scanner.
 
     ``femoral_thickness_mm`` is the femoral component's distal thickness, measured from
     the more distal of the two distal condyles: measured resection, as every commercial
@@ -317,6 +329,11 @@ def plan_alignment(
     stands for tray and insert together.
     """
     warnings: list[str] = []
+    if femoral_sagittal_reference not in FEMORAL_SAGITTAL_REFERENCES:
+        raise ValueError(
+            f"femoral_sagittal_reference must be one of "
+            f"{', '.join(FEMORAL_SAGITTAL_REFERENCES)}."
+        )
 
     valgus_deg, valgus_source, valgus_quality = _valgus_cut_angle(
         landmarks, femoral_frame
@@ -355,18 +372,25 @@ def plan_alignment(
         reference = limb_axis
         femoral_reference = "perpendicular to the femoral mechanical axis"
 
-    # Strip the reference's sagittal tilt, measured against the **patient** frame.
+    # The sagittal zero of the femoral cut: the femur's own axis.
     #
-    # A diaphyseal axis fitted to a supine, slightly flexed leg leans forwards by a few
-    # degrees -- 4.3 on this case -- and that lean says how the leg lay in the scanner,
-    # not what the anatomy is. Component flexion and tibial slope are surgical
-    # parameters, so they are set explicitly below rather than inherited from it.
-    #
-    # The zero has to come from the patient frame rather than the bone frame. A bone
-    # frame's anterior axis is perpendicular to its own proximal axis by construction,
-    # so projecting the axis onto it removes nothing at all. LPS *is* the patient frame,
-    # which is what makes this well defined: +Z superior, -Y anterior.
-    reference = unit(reference - np.dot(reference, LPS_ANTERIOR) * LPS_ANTERIOR)
+    # The reference already lies in the femur's sagittal plane -- the femoral axis, or
+    # the kinematic joint-line normal built square to the frame's anterior axis -- so a
+    # femoral flexion of zero is a cut square to the femoral axis seen from the side, and
+    # the target's flexion is measured from there, on the femur. An earlier version
+    # stripped the reference's tilt against the scanner's anterior axis instead, on the
+    # argument that a diaphyseal axis fitted to a supine, slightly flexed leg leans
+    # forwards (4.3 degrees on P009) only because of how the leg lay. But that lean is
+    # the femur's, and the cut is made on the femur: stripping it set the component's
+    # flexion on the femur to exactly however far the leg was tipped in the scanner,
+    # while the tibial cut, set from the tibial axis, followed its bone (paper experiment
+    # E2). ``femoral_sagittal_reference="scanner"`` keeps that construction for
+    # comparison.
+    if femoral_sagittal_reference == "scanner":
+        anterior = LPS_ANTERIOR
+        reference = unit(reference - np.dot(reference, anterior) * anterior)
+    else:
+        anterior = unit(femoral_frame.x_anterior)
 
     # ---- Varus/valgus correction -------------------------------------
     #
@@ -382,7 +406,7 @@ def plan_alignment(
     # direction, so the same number means the same correction on a left and a right knee.
     if abs(adjustments.coronal_correction_deg) > 1e-9:
         reference = _tilt_about(
-            reference, LPS_ANTERIOR, adjustments.coronal_correction_deg,
+            reference, anterior, adjustments.coronal_correction_deg,
             posterior=femoral_frame.lateral,
         )
         femoral_reference += (
@@ -395,21 +419,21 @@ def plan_alignment(
     # the ratio of the mediolateral to proximal components untouched, so every cut built
     # on this pair carries an identical mediolateral slope however much its own
     # anteroposterior angle differs.
-    hinge = unit(np.cross(reference, LPS_ANTERIOR))
+    hinge = unit(np.cross(reference, anterior))
 
     # ---- Femoral distal resection -----------------------------------
     femoral_flexion_deg = (
         target.femoral_flexion_deg + adjustments.femoral_flexion_delta_deg
     )
     femoral_normal = _tilt_about(
-        reference, hinge, femoral_flexion_deg, posterior=-LPS_ANTERIOR
+        reference, hinge, femoral_flexion_deg, posterior=-anterior
     )
     if abs(adjustments.femoral_varus_delta_deg) > 1e-9:
         # A per-cut varus override, deliberately applied after the split. It breaks the
         # shared mediolateral slope, which is why it is reported below rather than
         # absorbed silently.
         femoral_normal = _tilt_about(
-            femoral_normal, LPS_ANTERIOR, adjustments.femoral_varus_delta_deg,
+            femoral_normal, anterior, adjustments.femoral_varus_delta_deg,
             posterior=femoral_frame.lateral,
         )
     if abs(femoral_flexion_deg) > 1e-9:
@@ -461,11 +485,11 @@ def plan_alignment(
         np.dot(reference, tibial_sagittal),
     )))
     tibial_normal = _tilt_about(
-        tibial_sagittal, hinge, slope_deg, posterior=-LPS_ANTERIOR
+        tibial_sagittal, hinge, slope_deg, posterior=-anterior
     )
     if abs(adjustments.tibial_varus_delta_deg) > 1e-9:
         tibial_normal = _tilt_about(
-            tibial_normal, LPS_ANTERIOR, adjustments.tibial_varus_delta_deg,
+            tibial_normal, anterior, adjustments.tibial_varus_delta_deg,
             posterior=tibial_frame.lateral,
         )
 
@@ -594,8 +618,8 @@ def plan_alignment(
 
     # ---- Did the cuts stay parallel in the coronal plane? -------------
     ml_disagreement = float(np.degrees(angle_between(
-        _in_plane_of(femoral_normal, LPS_ANTERIOR),
-        _in_plane_of(tibial_normal, LPS_ANTERIOR),
+        _in_plane_of(femoral_normal, anterior),
+        _in_plane_of(tibial_normal, anterior),
     )))
     if ml_disagreement > 0.01:
         warnings.append(
@@ -664,7 +688,7 @@ def plan_alignment(
                 f"sagittal plane"
             ),
             "tibial_axis_sagittal_lean_deg": round(tibial_axis_lean_deg, 2),
-            "tibial_slope_from_scanner_axial_deg": round(float(np.degrees(
+            "tibial_cut_from_femoral_reference_deg": round(float(np.degrees(
                 angle_between(tibial_normal, reference))), 2),
             "femoral_flexion_deg": femoral_flexion_deg,
             "coronal_axis_disagreement_deg": round(coronal_disagreement, 2),
@@ -673,7 +697,7 @@ def plan_alignment(
             **gaps,
             **register,
             **tray_on_tibia,
-            "reference_sagittal_tilt_removed": True,
+            "femoral_sagittal_reference": femoral_sagittal_reference,
             "cut_angle_between_deg": round(float(np.degrees(
                 angle_between(femoral_normal, tibial_normal)
             )), 2),

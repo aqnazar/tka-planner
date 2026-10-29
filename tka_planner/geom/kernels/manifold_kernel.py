@@ -22,7 +22,7 @@ import numpy as np
 from tka_planner.core.meshio import Mesh
 
 from ..kernel import KernelRecord, KernelResult
-from ..repair import edge_report, is_manifold, repair
+from ..repair import edge_report, prepare_for_kernel
 
 __all__ = ["ManifoldKernel"]
 
@@ -61,18 +61,19 @@ class ManifoldKernel:
 
     @staticmethod
     def _prepare(mesh: Mesh, role: str) -> tuple:
-        if is_manifold(mesh):
-            return mesh, ()
-
-        fixed, actions = repair(mesh)
-        if not is_manifold(fixed):
+        # Repaired once per mesh content and kept: a commit cuts the same uncut bone
+        # for the shell and again for the block, and every re-commit starts from it.
+        fixed, actions, ready = prepare_for_kernel(mesh)
+        if not ready:
             report = ", ".join(
                 f"{key}={value}" for key, value in edge_report(fixed).items() if value
-            )
+            ) or "inconsistent winding"
+            undone = "; ".join(a for a in actions if a.startswith("left "))
             raise ValueError(
-                f"The {role} mesh is not manifold and repair did not make it one "
-                f"({report}). Fix the segmentation rather than forcing the cut: a "
-                f"boolean against a broken surface returns broken geometry."
+                f"The {role} mesh is not manifold and repair could not make it one "
+                f"({report}{'; ' + undone if undone else ''}). Fix the segmentation "
+                f"rather than forcing the cut: a boolean against a broken surface "
+                f"returns broken geometry."
             )
         return fixed, actions
 

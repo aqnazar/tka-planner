@@ -31,7 +31,8 @@ def manager(raw_session, tmp_path, monkeypatch):
     """
     from tka_planner.server import sessions as sessions_module
 
-    def fake_open(cls, folder, *, side, library=None, landmarks=None):
+    def fake_open(cls, folder, *, side, library=None, landmarks=None, **options):
+        raw_session.opened_with = options
         raw_session.build()
         return raw_session
 
@@ -387,7 +388,7 @@ def test_resetting_the_trial_returns_to_extension(api, session_id):
 
     assert payload["trial"] == {
         "flexion_deg": 0.0, "varus_valgus_deg": 0.0, "drawer_ap_mm": 0.0,
-        "distraction_mm": 0.0,
+        "distraction_mm": 0.0, "trajectory": "S3",
     }
     assert np.allclose(payload["delta"]["poses"]["TibialSet"], np.eye(4))
 
@@ -500,6 +501,98 @@ def test_the_export_records_the_manual_adjustments(api, session_id, tmp_path):
 def test_exporting_without_a_folder_is_refused(api, session_id):
     status, _ = api.dispatch("POST", f"/api/sessions/{session_id}/export", {})
     assert status == 400
+
+
+# ----------------------------------------------------------------------
+# The fit map, the findings and the report
+# ----------------------------------------------------------------------
+
+
+def test_there_is_no_fit_map_before_the_first_commit(opened):
+    assert opened["fit_map"]["available"] is False
+    assert opened["fit_map"]["visible"] is False
+
+
+def test_committing_draws_the_fit_on_each_cut(api, session_id):
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+    state = payload["fit_map"]
+
+    assert state["available"] and state["current"] and state["visible"]
+    assert set(state["nodes"]) == {"FitMap.tibial", "FitMap.femoral"}
+    assert state["legend"]["unit"] == "mm"
+    assert state["legend"]["stops"][0][0] < 0 < state["legend"]["stops"][-1][0]
+    assert state["seconds"] is not None
+    for name in state["nodes"]:
+        # Sent as a new node, with its mesh, so the viewer adds it.
+        assert payload["delta"]["nodes"][name]["tags"]["fit_map"] is True
+        assert payload["delta"]["visibility"][name] is True
+
+
+def test_the_fit_map_downloads_with_its_colours(api, session_id):
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+    digest = payload["delta"]["meshes"]["FitMap.tibial"]
+
+    status, served = api.dispatch("GET", f"/api/sessions/{session_id}/meshes/{digest}.glb")
+
+    assert status == 200
+    assert b"COLOR_0" in served.data and b"_VALUE_MM" in served.data
+
+
+def test_a_moved_plan_hides_the_map_until_the_next_commit(api, session_id):
+    post(api, f"/api/sessions/{session_id}/commit")
+    moved = post(api, f"/api/sessions/{session_id}/controls",
+                 {"changes": {"tibial_shift_ap_mm": 2.0}})
+
+    assert moved["fit_map"]["current"] is False
+    assert moved["delta"]["visibility"]["FitMap.tibial"] is False
+    assert any("press Commit" in line for line in moved["report"])
+
+    again = post(api, f"/api/sessions/{session_id}/commit")
+    assert again["fit_map"]["current"] and again["fit_map"]["visible"]
+
+
+def test_the_map_is_toggled_from_the_panel(api, session_id):
+    post(api, f"/api/sessions/{session_id}/commit")
+    off = post(api, f"/api/sessions/{session_id}/controls",
+               {"changes": {"show_fit_map": False}})
+
+    assert off["fit_map"]["visible"] is False
+    assert off["stale"] is False  # a display toggle cuts nothing
+    on = post(api, f"/api/sessions/{session_id}/controls",
+              {"changes": {"show_fit_map": True}})
+    assert on["fit_map"]["visible"] is True
+
+
+def test_every_envelope_carries_the_findings(api, session_id, opened):
+    for finding in opened["findings"]:
+        assert {"code", "severity", "message", "source", "location"} <= set(finding)
+        assert finding["severity"] in ("error", "warning", "info")
+    codes = {finding["code"] for finding in opened["findings"]}
+    # The synthetic femur is an ellipsoid, with no trochlea to place the box against.
+    assert "FEMORAL_BOX_NOT_PLACED" in codes
+
+
+def test_a_fit_finding_says_where_it_is(api, session_id):
+    payload = post(api, f"/api/sessions/{session_id}/commit")
+    located = [f for f in payload["findings"] if f["code"].startswith("OVERHANG_")]
+
+    assert located, "the synthetic tray overhangs its block of bone"
+    for finding in located:
+        assert len(finding["location"]["point_mm"]) == 3
+        assert finding["location"]["set"] in ("femoral", "tibial")
+
+
+def test_the_report_is_served_with_every_section(api, session_id):
+    post(api, f"/api/sessions/{session_id}/commit")
+    status, payload = api.dispatch("GET", f"/api/sessions/{session_id}/report")
+
+    assert status == 200
+    assert payload.content_type.startswith("text/html")
+    page = payload.data.decode("utf-8")
+    for section in ("Resection table", "Fit on the cuts", "Fit map", "Component register",
+                    "Implant sizing", "Quality control and findings",
+                    "Deformity measurements", "data:image/png;base64,"):
+        assert section in page, section
 
 
 # ----------------------------------------------------------------------
@@ -661,3 +754,52 @@ def test_toggling_the_planes_and_axes_changes_visibility(api, session_id):
         api, f"/api/sessions/{session_id}/controls", {"changes": {"show_planes": True}}
     )
     assert shown["delta"]["visibility"]["femoral_distal"] is True
+
+
+def test_opening_passes_the_island_option_and_an_entered_femur_length(api, folder,
+                                                                     raw_session):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "remove_large_islands": True,
+        "femur_length_mm": "455"})
+    assert status == 200, payload
+    assert raw_session.opened_with == {"remove_large_islands": True,
+                                       "femur_length_mm": 455.0,
+                                       "femur_length_type": None, "sex": None}
+
+
+def test_an_entered_femur_length_must_be_a_number(api, folder):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "femur_length_mm": "long"})
+    assert status == 400
+
+
+def test_opening_passes_the_femur_length_type_and_the_sex(api, folder, raw_session):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "femur_length_mm": 450,
+        "femur_length_type": "head_top_to_condyle", "sex": "female"})
+    assert status == 200, payload
+    assert raw_session.opened_with["femur_length_type"] == "head_top_to_condyle"
+    assert raw_session.opened_with["sex"] == "female"
+
+
+def test_an_empty_length_type_or_sex_is_not_given(api, folder, raw_session):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", "femur_length_mm": 450,
+        "femur_length_type": "", "sex": ""})
+    assert status == 200, payload
+    assert raw_session.opened_with["femur_length_type"] is None
+    assert raw_session.opened_with["sex"] is None
+
+
+@pytest.mark.parametrize("fields, words", [
+    ({"femur_length_mm": 450, "femur_length_type": "scanogram"}, "length type"),
+    ({"femur_length_mm": 450, "sex": "F"}, "sex"),
+    ({"sex": "male"}, "without a femur length"),
+    ({"femur_length_type": "head_top_to_condyle"}, "without a femur length"),
+])
+def test_an_unknown_or_orphaned_length_type_or_sex_is_refused(api, folder, fields,
+                                                             words):
+    status, payload = api.dispatch("POST", "/api/sessions", {
+        "folder": str(folder), "side": "left", **fields})
+    assert status == 400
+    assert words in payload["error"]

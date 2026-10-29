@@ -322,6 +322,15 @@ class DemoApi(Api):
         s = entry.session
         t0 = time.time()
         job = derive(name, s.side, s.measurement, s.plan, s.sizing, s.library)
+        # The plan the parts are built on, recorded with them. Without this a build from
+        # the app dropped the knee's controls (P029R, 2026-10-11: +4.0 mm tibial
+        # resection built, nothing recorded), and the app then reopened the knee on a
+        # plan the parts were not built for.
+        from dataclasses import asdict, fields
+        from tka_planner.core.planning import Adjustments
+        defaults = {f.name: f.default for f in fields(Adjustments)}
+        job['plan_controls'] = {k: v for k, v in asdict(s._adjustments()).items()
+                                if v != defaults.get(k)}
         built = self.built_job(name)
         job["label"], job["bones"] = built.get("label", name), built["bones"]
         natural = jcurve_run(job, femur=s.measurement.femur, comp=None, write=False)

@@ -19,7 +19,6 @@ from tka_planner.geom import mesh as gm
 from tka_planner.pipeline import (
     fit_case,
     plan_document,
-    render_case_report,
     write_implant_spec,
     write_plan,
 )
@@ -41,17 +40,23 @@ def export_session(session, out_dir, *, commit=None, write_meshes: bool = True) 
 
     # The command line's plan format, with the application's controls, trial pose and
     # last commit filled in where the command line writes None.
+    fit = (session.fit if session.fit_is_current else
+           fit_case(session.measurement, session.plan, session.sizing,
+                    session.library, session.controls.implant_mode))
     document = plan_document(
         session.measurement, session.plan, session.sizing,
-        fit=fit_case(session.measurement, session.plan, session.sizing,
-                     session.library, session.controls.implant_mode),
+        fit=fit,
+        resection_table=session.resection_table,
+        findings=session.findings(fit),
         controls=_controls(session),
         trial={
             "flexion_deg": session.trial.flexion_deg,
             "varus_valgus_deg": session.trial.varus_valgus_deg,
             "drawer_ap_mm": session.trial.drawer_ap_mm,
             "distraction_mm": session.trial.distraction_mm,
+            "trajectory": session.trial.trajectory,
         },
+        trajectory=session.trial.trajectory,
         geometry=commit.to_dict() if commit is not None else None,
         geometry_matches_plan=not session.stale,
     )
@@ -59,14 +64,15 @@ def export_session(session, out_dir, *, commit=None, write_meshes: bool = True) 
     written["implant_spec"] = str(write_implant_spec(
         document["implant_spec"], out_dir / "implant_spec.json"))
 
-    report = render_case_report(session.measurement, session.plan, session.sizing)
-    written["report"] = str(write_report(report, out_dir / "report.html"))
+    written["report"] = str(write_report(session.report_html(), out_dir / "report.html"))
 
     if write_meshes and session.scene is not None:
         meshes = out_dir / "meshes"
         paths = []
         for node in session.scene.nodes.values():
-            if node.mesh_id is None or node.tags.get("landmark"):
+            # A fit map is a drawing of numbers already in the plan, not geometry.
+            if (node.mesh_id is None or node.tags.get("landmark")
+                    or node.tags.get("fit_map")):
                 continue
             mesh = session.scene.meshes[node.mesh_id]
             # Written in world space, so the folder can be opened in any viewer and the

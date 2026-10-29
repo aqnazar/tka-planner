@@ -3,12 +3,13 @@
 Sizing is only as good as the dimension driving it, and the two bones want different
 treatment.
 
-**Femur: the bounding box along the mediolateral axis.** The distal femur is widest at
-the condyles and epicondyles, and that width is what the femoral component spans, so the
+**Femur: the extent along the mediolateral axis.** The distal femur is widest at the
+condyles and epicondyles, and that width is what the femoral component spans, so the
 extent of the distal block along the frame's mediolateral axis is the measurement.
 Measuring in the *frame's* axis rather than the world's matters, because a femur lies at
 whatever rotation the scanner found it in and a world-aligned box inflates with that
-rotation.
+rotation. The extent runs between the 0.1st and 99.9th percentiles of the block's
+vertices rather than between its two outermost ones (see :data:`EXTENT_PERCENTILE`).
 
 **Tibia: the resection cross-section, not a bounding box.** A bounding box of the
 proximal tibia is measured to the wrong features. The intercondylar eminence rises above
@@ -35,9 +36,11 @@ import numpy as np
 
 from .frames import AnatomicalFrame
 from .geometry import regional_mask
+from .landmarks_auto import DISTAL_WINDOW_CONDYLAR_WIDTHS, condylar_width_mm
 from .meshio import Mesh
 
 __all__ = [
+    "EXTENT_PERCENTILE",
     "SizingMeasurement",
     "measure_femoral_ml",
     "measure_tibial_plateau",
@@ -47,6 +50,16 @@ __all__ = [
 # and excluded when locating the articular surface. The eminence occupies roughly the
 # central third; 0.20 either way is comfortably clear of the weight-bearing surface.
 EMINENCE_HALF_WIDTH_FRACTION = 0.20
+
+# Percentile trimmed from each end of the femoral extent. A bounding box is the distance
+# between two vertices, so surface noise only ever widens it: on the cohort 0.5 mm of
+# vertex noise added 2.1-3.1 mm to the femoral ML and moved the nearest size on five of
+# eleven knees. Between the 0.1st and 99.9th percentiles the same noise adds 0.4-0.7 mm and
+# moves none. A clean bone reads 0.4-0.8 mm narrower than its box: no clean knee's
+# nearest size changes, but P029L and P029R, whose boxes were 80.49 and 80.02 mm against
+# L2's 80 mm, now round down to L1.
+# 0.5 would leave less noise bias (0.16 mm) but take 1.9 mm off every clean knee.
+EXTENT_PERCENTILE = 0.1
 
 
 @dataclass(frozen=True)
@@ -72,25 +85,46 @@ def measure_femoral_ml(
     frame: AnatomicalFrame,
     *,
     distal_fraction: float = 0.25,
+    extent_percentile: float = EXTENT_PERCENTILE,
 ) -> SizingMeasurement:
     """Mediolateral and anteroposterior extent of the distal femur.
 
-    A bounding box of the distal block, taken in the frame's own axes. Both dimensions
-    come from the same region, so they describe one anatomical structure rather than two
-    unrelated extremes of the segmentation.
+    The extent of the distal block in the frame's own axes, between the
+    ``extent_percentile`` and ``100 - extent_percentile`` percentiles of its vertices
+    (0 gives the bounding box). Both dimensions come from the same region, so they
+    describe one anatomical structure rather than two unrelated extremes of the
+    segmentation.
+
+    The block is ``distal_fraction`` of the segment, but of no more of it than the
+    distal window the landmark search uses
+    (:data:`~tka_planner.core.landmarks_auto.DISTAL_WINDOW_CONDYLAR_WIDTHS` condylar
+    widths). A quarter of a full-length femur is 112 mm and takes in the anterior cortex
+    above the trochlea, which put 3 mm on the reference femur's AP; a knee-only segment is
+    shorter than the window and is measured exactly as before.
     """
-    distal = mesh.vertices[
-        regional_mask(mesh.vertices, frame.z_proximal,
-                      fraction=distal_fraction, end="low")
-    ]
+    window = DISTAL_WINDOW_CONDYLAR_WIDTHS * condylar_width_mm(mesh)
+    heights = mesh.vertices @ frame.z_proximal
+    span = float(heights.max() - heights.min())
+    if span <= window:
+        mask = regional_mask(mesh.vertices, frame.z_proximal,
+                             fraction=distal_fraction, end="low")
+    else:
+        mask = heights <= float(heights.min()) + distal_fraction * window
+    distal = mesh.vertices[mask]
     local = frame.to_local(distal)
+    low, high = np.percentile(local[:, :2], [extent_percentile, 100.0 - extent_percentile],
+                              axis=0)
+    ap, ml = high - low
 
     return SizingMeasurement(
-        ml_mm=float(np.ptp(local[:, 1])),
-        ap_mm=float(np.ptp(local[:, 0])),
-        method="measure.femur.frame_aligned_distal_bbox.v1",
+        ml_mm=float(ml),
+        ap_mm=float(ap),
+        method="measure.femur.frame_aligned_distal_extent.v2",
         diagnostics={
-            "region": f"distal {distal_fraction:.0%} of the segment",
+            "extent_percentile": extent_percentile,
+            "box_ml_mm": round(float(np.ptp(local[:, 1])), 2),
+            "region": (f"distal {distal_fraction:.0%} of the segment" if span <= window
+                       else f"distal {distal_fraction:.0%} of a {window:.0f} mm window"),
             "n_vertices": int(len(distal)),
             "world_aligned_ml_mm": round(float(mesh.extent[0]), 2),
         },

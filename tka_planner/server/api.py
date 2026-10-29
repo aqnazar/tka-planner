@@ -17,10 +17,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from tka_planner.core.phantom_femur import entered_femur_record
 from tka_planner.geom.gltf import write_glb
 from tka_planner.panel import TRIAL_SCHEMA, with_sizes
 from tka_planner.report.bundle import export_session
 from tka_planner.scene.model import SceneDelta
+from tka_planner.study import pick_targets, save_picks, save_review, study_schema
 
 from .encode import clip_planes, node_payload, scene_snapshot
 
@@ -79,6 +81,8 @@ class Api:
             return {"cases": self.manager.available_cases()}
         if rest == ["schema"] and method == "GET":
             return self.schema()
+        if rest == ["study", "schema"] and method == "GET":
+            return study_schema()
         if rest == ["sessions"] and method == "POST":
             return self.open_session(body)
 
@@ -112,6 +116,14 @@ class Api:
             return self.export(entry, body)
         elif len(tail) == 2 and tail[0] == "meshes" and method == "GET":
             return self.mesh(entry, tail[1])
+        elif tail == ["report"] and method == "GET":
+            return self.report(entry)
+        elif tail == ["study", "targets"] and method == "POST":
+            return pick_targets(entry, body.get("mode"))
+        elif tail == ["study", "picks"] and method == "POST":
+            return save_picks(entry, self._study_dir(), body)
+        elif tail == ["study", "review"] and method == "POST":
+            return save_review(entry, self._study_dir(), body)
 
         raise ApiError(404, f"No route for {method} on session {session_id}")
 
@@ -123,9 +135,20 @@ class Api:
         folder = body.get("folder")
         if not folder:
             raise ApiError(400, "A folder is required to open a session.")
+        femur_length_mm = _optional_float(body.get("femur_length_mm"))
+        femur_length_type = _optional_text(body.get("femur_length_type"))
+        sex = _optional_text(body.get("sex"))
+        # Refused here, before the case is measured, by the pipeline's own rule.
+        try:
+            entered_femur_record(femur_length_mm, femur_length_type, sex)
+        except ValueError as error:
+            raise ApiError(400, str(error)) from None
         entry = self.manager.open(
             folder, side=body.get("side", "left"), library=body.get("library"),
             landmarks=body.get("landmarks"),
+            remove_large_islands=bool(body.get("remove_large_islands", False)),
+            femur_length_mm=femur_length_mm,
+            femur_length_type=femur_length_type, sex=sex,
         )
         return self.snapshot(entry)
 
@@ -202,6 +225,21 @@ class Api:
         )
         return {"written": written, "out": str(Path(out).resolve())}
 
+    def report(self, entry) -> Binary:
+        """The HTML report on the current plan, to read in the browser beside the plan.
+
+        The same document Export writes, so what is read here is what is kept.
+        """
+        return Binary("text/html; charset=utf-8",
+                      entry.session.report_html().encode("utf-8"))
+
+    def _study_dir(self) -> Path:
+        """Where observer picks and verdicts go: the server's study folder."""
+        folder = self.manager.study_dir
+        if folder is None:
+            raise ApiError(400, "No study folder is configured (start with --study).")
+        return Path(folder)
+
     def mesh(self, entry, filename: str) -> Binary:
         """One mesh as binary glTF, addressed by content hash.
 
@@ -229,6 +267,10 @@ def _envelope(entry, delta=None, **extra) -> dict:
         "delta": _delta_payload(entry, delta or SceneDelta()),
         "clip": clip_planes(session.plan),
         "report": session.report_lines(),
+        # Every finding with its place, and the fit map's legend and status: the viewer
+        # lists the one and draws the other, and works out neither.
+        "findings": session.findings(),
+        "fit_map": session.fit_map_state(),
         "controls": asdict(session.controls),
         "trial": asdict(session.trial),
         "stale": bool(session.stale),
@@ -256,3 +298,22 @@ def _delta_payload(entry, delta) -> dict:
 
 def _segments(path: str) -> list:
     return [part for part in str(path).split("?")[0].split("/") if part]
+
+
+def _optional_float(value) -> float | None:
+    """A number from a request body, where empty means not given."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, f"Not a number: {value!r}") from None
+
+
+def _optional_text(value) -> str | None:
+    """A choice from a request body, where empty means not given."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ApiError(400, f"Not a text value: {value!r}")
+    return value

@@ -163,17 +163,27 @@ def remake_profile(des, old, plane):
     a, b = sp.startSketchPoint, sp.endSketchPoint
     up = lambda p, dz: sk.modelToSketchSpace(adsk.core.Point3D.create(p.worldGeometry.x, p.worldGeometry.y, p.worldGeometry.z + dz))
     L = sk.sketchCurves.sketchLines
-    l1 = L.addByTwoPoints(a, up(a, 0.2))
+    l1 = L.addByTwoPoints(up(a, 0), up(a, 0.2))
     l2 = L.addByTwoPoints(l1.endSketchPoint, up(b, 0.2))
-    l3 = L.addByTwoPoints(l2.endSketchPoint, b)
+    l3 = L.addByTwoPoints(l2.endSketchPoint, up(b, 0))
     gc = sk.geometricConstraints
     errs = []
+    # Explicit constraints, not shared points: a point shared with projected geometry
+    # loses the join when the curve moves (a new Tray_Offset or Insert_Thickness) and
+    # the box is left behind, so the sweeps lose their profile (2026-10-25: DEMO_LARGE
+    # insert v17; reproduced on five knees by moving Tray_Offset_X 0.8 mm).
+    for end, pt in ((l1.startSketchPoint, a), (l3.endSketchPoint, b)):
+        try:
+            gc.addCoincident(end, pt)
+        except Exception as ex:
+            errs.append("coincident " + str(ex)[:60])
     # Sides vertical (the curve's ends are vertical, so they meet it tangent) and equal,
     # top horizontal. Tangent sides with one length and a perpendicular top solved where
     # drawn but not when the linked curve moved with the next femoral (2026-10-11:
     # DEMO_LARGE sides 2.39 against 2 mm, "Failed to solve").
-    for f in (lambda: gc.addVertical(l1), lambda: gc.addVertical(l3), lambda: gc.addHorizontal(l2),
-              lambda: gc.addEqual(l1, l3)):
+    # The two sides' equal length is not added: with both ends coincident to the curve it is
+    # always refused as redundant (the "over constrained" noise of every build, 2026-10-25).
+    for f in (lambda: gc.addVertical(l1), lambda: gc.addVertical(l3), lambda: gc.addHorizontal(l2)):
         try: f()
         except Exception as ex: errs.append(str(ex)[:60])
     try:

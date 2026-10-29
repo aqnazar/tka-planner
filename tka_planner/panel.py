@@ -127,10 +127,19 @@ CONTROL_SCHEMA = (
             {"name": "show_planes", "label": "Cut planes", "kind": "bool"},
             {"name": "show_axes", "label": "Axes", "kind": "bool"},
             {"name": "show_landmarks", "label": "Landmarks", "kind": "bool"},
+            {"name": "show_phantom", "label": "Phantom femur", "kind": "bool",
+             "help": "A schematic femur (shaft, neck, head sphere) drawn from the "
+                     "entered femur length and population averages. It is not "
+                     "measured anatomy; it appears only when a length was entered."},
             {"name": "show_cutting_blocks", "label": "Cutting blocks", "kind": "bool",
              "help": "Show the instrument that would realise the cut. It is the size "
                      "of the block rather than of the resection, so it stands in "
                      "front of the bone."},
+            {"name": "show_fit_map", "label": "Fit map", "kind": "bool",
+             "help": "Colour each cut by how the component fits it: red where the "
+                     "component overhangs the bone, blue where bone is left "
+                     "uncovered. Measured on Commit; hidden while the plan has moved "
+                     "since."},
             {"name": "isolate_landmarks", "label": "Isolate landmarks", "kind": "bool",
              "help": "Hide everything but the landmarks, for watching how they move "
                      "relative to each other through a trial pose."},
@@ -154,6 +163,16 @@ TRIAL_SCHEMA = (
      "min": 0.0, "max": 20.0, "step": 0.5, "unit": "mm",
      "help": "Pull the tibia away from the femur along its axis. The plan closes the "
              "joint with no gap; this opens one to be seen, without changing the plan."},
+    {"name": "trajectory", "label": "Trajectory", "kind": "choice",
+     "choices": [["S3", "S3 Neutral hinge"],
+                 ["S2", "S2 Observed CR (anterior slide)"],
+                 ["S1", "S1 Native (fitted to published numbers)"]],
+     "help": "How the femur moves on the tibia as the knee flexes. S3 is the pure "
+             "hinge about the transepicondylar axis. S2 adds the paradoxical anterior "
+             "slide and small internal rotation measured in cruciate-retaining knees "
+             "(Bellemans 2002). S1 is a medial pivot with lateral rollback, fitted to "
+             "native-knee fluoroscopy (Pinskerova 2004, Nakagawa 2000); its pivot is "
+             "scaled to this knee's condyle spacing, an assumption."},
 )
 
 

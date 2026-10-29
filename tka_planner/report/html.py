@@ -58,6 +58,19 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:
 .kv dt{color:var(--muted)}
 .kv dd{margin:0;font-variant-numeric:tabular-nums}
 .overflow{overflow-x:auto}
+figure.fitmap{display:inline-block;margin:.5rem 1.5rem .5rem 0;vertical-align:top;
+max-width:100%}
+figure.fitmap img{max-width:100%;height:auto;image-rendering:pixelated;
+border:1px solid var(--line);background:repeating-conic-gradient(#0000 0 25%,#8881 0 50%)
+50%/16px 16px}
+figure.fitmap figcaption{font-size:.8rem;color:var(--muted);max-width:26rem}
+.legend{max-width:30rem;margin:.5rem 0 1rem}
+.legend .bar{height:.8rem;border-radius:3px;border:1px solid var(--line)}
+.legend .ends{display:flex;justify-content:space-between;font-size:.75rem;
+color:var(--muted)}
+.sev-error{color:var(--warn);font-weight:700}
+.sev-warning{color:var(--estimated);font-weight:600}
+.sev-info{color:var(--muted)}
 @media (prefers-color-scheme:dark){
 :root{--ink:#e6e8ec;--muted:#9aa3b2;--line:#2b3038;--bg:#14161a;--panel:#1b1e24;
 --measured:#6ddaa8;--estimated:#e5b661;--missing:#9aa3b2;
@@ -102,6 +115,20 @@ def _metric_rows(metrics: dict) -> str:
                     f'<div class="note"><strong>Assumes:</strong> '
                     f'{_escape(assumption.description)}</div>'
                 )
+        # A landmark measured outside the CT is ``measured`` like a CT pick, but its
+        # uncertainty is not; name the source and residual next to the value.
+        for landmark_id, record in metric.external_sources.items():
+            detail = [str(record["source"])]
+            if "rms_residual_mm" in record:
+                detail.append(f'RMS {record["rms_residual_mm"]:g} mm')
+            if "centre_sd_mm" in record:
+                detail.append(f'predicted SD {record["centre_sd_mm"]:g} mm')
+            if "registration" in record:
+                detail.append(f'registered by {record["registration"]}')
+            notes.append(
+                f'<div class="note"><strong>Source:</strong> '
+                f'<code>{_escape(landmark_id)}</code> {_escape(", ".join(detail))}</div>'
+            )
         if metric.missing:
             notes.append(
                 f'<div class="note"><strong>Missing:</strong> '
@@ -122,6 +149,151 @@ def _metric_rows(metrics: dict) -> str:
     return "\n".join(rows)
 
 
+def _mm(value) -> str:
+    return "&mdash;" if value is None else f"{value:.1f}"
+
+
+def _resection_table_section(table: dict) -> list:
+    from ..core.resection_table import ROW_LABELS, angle_text
+
+    parts = ["<h2>Resection table</h2>",
+             '<p class="note">Bone removed by each cut, in millimetres perpendicular to '
+             "the cut, measured on this patient's bone against the planned planes. "
+             "The definition of each row is beside it.</p>",
+             '<div class="overflow"><table><thead><tr><th>Cut</th><th>Medial</th>'
+             "<th>Lateral</th><th>Angle (deg)</th><th>Measured as</th></tr></thead>"
+             "<tbody>"]
+    for row in table.get("rows", []):
+        definition = row.get("definition", "")
+        if row.get("highest_mm"):
+            highest = row["highest_mm"]
+            definition += (f" Highest bone above the cut: medial "
+                           f"{highest['medial']:.1f}, lateral {highest['lateral']:.1f} "
+                           f"mm ({row.get('highest_definition', '')})")
+        parts.append(
+            f"<tr><td><strong>{_escape(ROW_LABELS.get(row['cut'], row['cut']))}"
+            f"</strong></td>"
+            f'<td class="num">{_mm(row["medial_mm"])}</td>'
+            f'<td class="num">{_mm(row["lateral_mm"])}</td>'
+            f'<td class="note">{_escape(angle_text(row.get("angle_deg", {})))}</td>'
+            f'<td class="note">{_escape(definition)}</td></tr>'
+        )
+    parts.append("</tbody></table></div>")
+    for note in table.get("notes", []):
+        parts.append(f'<div class="note">{_escape(note)}</div>')
+    return parts
+
+
+def _register_section(diagnostics: dict) -> list:
+    rows = [
+        ("Femoral over tibial component: rotation", "component_rotation_mismatch_deg",
+         "deg"),
+        ("Femoral over tibial component: anterior offset",
+         "component_offset_anterior_mm", "mm"),
+        ("Femoral over tibial component: lateral offset",
+         "component_offset_lateral_mm", "mm"),
+        ("Tray rotation off the tibial axis", "tray_rotation_from_tibial_axis_deg",
+         "deg"),
+        ("Tray offset from the cut centre, anterior",
+         "tray_offset_from_tibial_cut_centre_anterior_mm", "mm"),
+        ("Tray offset from the cut centre, lateral",
+         "tray_offset_from_tibial_cut_centre_lateral_mm", "mm"),
+        ("Insert thickness", "insert_thickness_mm", "mm"),
+        ("Extension gap, medial", "extension_gap_medial_mm", "mm"),
+        ("Extension gap, lateral", "extension_gap_lateral_mm", "mm"),
+    ]
+    present = [(label, diagnostics[key], unit) for label, key, unit in rows
+               if diagnostics.get(key) is not None]
+    if not present:
+        return []
+    parts = ["<h2>Component register</h2>", '<dl class="kv">']
+    for label, value, unit in present:
+        parts.append(f"<dt>{_escape(label)}</dt><dd>{float(value):+.1f} {unit}</dd>")
+    parts.append("</dl>")
+    return parts
+
+
+def _implant_section(spec: dict, fit: dict | None) -> list:
+    femoral = spec.get("femoral_component", {}).get("dimensions_mm", {})
+    tibial = spec.get("tibial_component", {}).get("dimensions_mm", {})
+    rows = [
+        ("Femoral component ML", femoral.get("ml")),
+        ("Femoral component AP (overall)", femoral.get("ap_overall")),
+        ("Femoral flange height", femoral.get("flange_height")),
+        ("Femoral distal thickness", femoral.get("distal_thickness")),
+        ("Tray ML", tibial.get("ml")),
+        ("Tray AP", tibial.get("ap")),
+        ("Tray thickness", tibial.get("tray_thickness")),
+        ("Insert thickness", spec.get("insert", {}).get("thickness_mm")),
+    ]
+    parts = ["<h2>Implant</h2>",
+             '<p class="note">The patient-specific implant, measured on this plan\'s '
+             "cuts: what the CAD model is given to build.</p>", '<dl class="kv">']
+    for label, value in rows:
+        if value is not None:
+            parts.append(f"<dt>{_escape(label)}</dt><dd>{float(value):.1f} mm</dd>")
+    equivalent = spec.get("catalogue_equivalent", {})
+    if equivalent:
+        parts.append(f"<dt>Nearest catalogue size</dt>"
+                     f"<dd>{_escape(equivalent.get('nearest_size'))} (parameter "
+                     f"{equivalent.get('size_parameter')})</dd>")
+    for name, record in ((fit or {}).get("library_sizes") or {}).items():
+        parts.append(f"<dt>Library part, {_escape(name.replace('_', ' '))}</dt>"
+                     f"<dd>{_escape(record.get('source_size'))} at scale "
+                     f"{_escape(record.get('scale_xyz') or record.get('scale'))}</dd>")
+    parts.append("</dl>")
+    return parts
+
+
+def _fit_section(fit: dict, grids: dict) -> list:
+    from .figures import fit_map_figure, legend_bar
+
+    parts = ["<h2>Fit on the cuts</h2>",
+             f'<p class="note">Implant: {_escape(fit.get("implant_mode", ""))}. Each '
+             "component's footprint just off its cut is compared with the bone's "
+             "section on the cut. Overhang is component beyond bone; underhang is bone "
+             "left uncovered; each is the largest distance to the other outline.</p>",
+             '<div class="overflow"><table><thead><tr><th>Component</th>'
+             "<th>Zone</th><th>Coverage</th><th>Overhang max</th>"
+             "<th>Underhang max</th></tr></thead><tbody>"]
+    names = [n for n in ("tibial_component", "femoral_component") if n in fit]
+    for name in names:
+        record = fit[name]
+        parts.append(
+            f"<tr><td><strong>{_escape(name.replace('_', ' '))}</strong></td>"
+            f"<td>whole cut</td>"
+            f'<td class="num">{100 * record["coverage_fraction"]:.1f}%</td>'
+            f'<td class="num">{record["max_overhang_mm"]:.1f} mm</td>'
+            f'<td class="num">{record["max_underhang_mm"]:.1f} mm</td></tr>'
+        )
+        for zone, values in record.get("zones", {}).items():
+            flagged = f"OVERHANG_{zone.upper()}" in record.get("flags", [])
+            parts.append(
+                f"<tr><td></td><td>{_escape(zone)}</td><td></td>"
+                f'<td class="num{" flag" if flagged else ""}">'
+                f'{values["max_overhang_mm"]:.1f} mm</td>'
+                f'<td class="num">{values["max_underhang_mm"]:.1f} mm</td></tr>'
+            )
+    parts.append("</tbody></table></div>")
+    insert = fit.get("insert") or {}
+    if insert.get("note"):
+        parts.append(f'<div class="note">Insert: {_escape(insert["note"])}</div>')
+    if fit.get("missing"):
+        parts.append(f'<div class="note">Not in the library: '
+                     f'{_escape(", ".join(fit["missing"]))}</div>')
+    drawn = [name for name in names if grids.get(name) is not None]
+    if drawn:
+        parts.append("<h3>Fit map</h3>")
+        parts.append(legend_bar())
+        for name in drawn:
+            # Drawn lateral-right on both knees, so it is a mirror image of the true
+            # view on one of them; the caption says which way is which.
+            title = ("Tibial cut" if name.startswith("tibial")
+                     else "Distal femoral cut")
+            parts.append(fit_map_figure(grids[name], title=title, record=fit[name]))
+    return parts
+
+
 def render_report(
     *,
     case_id: str,
@@ -138,8 +310,20 @@ def render_report(
     inputs: list | None = None,
     landmark_summary: dict | None = None,
     tool_version: str = "0.1.0",
+    resection_table: dict | None = None,
+    implant_spec: dict | None = None,
+    fit: dict | None = None,
+    fit_grids: dict | None = None,
+    findings: list | None = None,
 ) -> str:
-    """Render a complete plan report as one self-contained HTML document."""
+    """Render a complete plan report as one self-contained HTML document.
+
+    The later arguments carry what a comparison of plans needs beside the anatomy: the
+    resection table, the implant's dimensions, the fit on each cut with its colour map,
+    the components' register, and every finding. ``findings`` (from
+    :func:`tka_planner.pipeline.findings_case`) supersedes ``qc_findings`` when given,
+    because it holds the scan's checks and the plan's together.
+    """
     generated = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     counts = {tier: 0 for tier in ("measured", "estimated", "not_computable")}
     for metric in metrics.values():
@@ -248,6 +432,11 @@ def render_report(
         for warning in surgical.warnings:
             parts.append(f'<div class="panel flag">{_escape(warning)}</div>')
 
+    if resection_table is not None:
+        parts.extend(_resection_table_section(resection_table))
+    if surgical is not None:
+        parts.extend(_register_section(surgical.diagnostics))
+
     # -- Sizing --------------------------------------------------------
     if sizing is not None:
         parts.append("<h2>Implant sizing</h2>")
@@ -302,6 +491,11 @@ def render_report(
                 )
             parts.append("</div>")
 
+    if implant_spec is not None:
+        parts.extend(_implant_section(implant_spec, fit))
+    if fit is not None:
+        parts.extend(_fit_section(fit, fit_grids or {}))
+
     # -- Landmarks -----------------------------------------------------
     if landmark_summary:
         parts.append("<h2>Landmarks</h2>")
@@ -325,7 +519,29 @@ def render_report(
         parts.append("</tbody></table></div>")
 
     # -- Quality control -----------------------------------------------
-    if qc_findings:
+    if findings is not None:
+        parts.append("<h2>Quality control and findings</h2>")
+        parts.append('<p class="note">The scan\'s checks, then what the plan, the '
+                     "sizing, the femoral box and the fit found. A location is in scan "
+                     "millimetres; the application turns to it.</p>")
+        parts.append('<div class="overflow"><table><thead><tr>'
+                     "<th>Severity</th><th>Check</th><th>Source</th><th>Finding</th>"
+                     "<th>Where</th></tr></thead><tbody>")
+        for finding in findings:
+            where = finding.get("location")
+            where_text = ("&mdash;" if not where else
+                          _escape(", ".join(f"{v:.1f}" for v in where["point_mm"])
+                                  + f" ({where['set']})"))
+            parts.append(
+                f'<tr><td class="sev-{_escape(finding["severity"])}">'
+                f'{_escape(finding["severity"])}</td>'
+                f'<td><code>{_escape(finding["code"])}</code></td>'
+                f'<td>{_escape(finding.get("source", ""))}</td>'
+                f'<td class="note">{_escape(finding["message"])}</td>'
+                f'<td class="note">{where_text}</td></tr>'
+            )
+        parts.append("</tbody></table></div>")
+    elif qc_findings:
         parts.append("<h2>Quality control</h2>")
         parts.append('<div class="overflow"><table><thead><tr>'
                      "<th>Check</th><th>Severity</th><th>Finding</th>"

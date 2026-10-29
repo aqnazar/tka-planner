@@ -126,6 +126,49 @@ legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-s
 }
 #banner button { margin-top: 6px; width: 100%; }
 
+#findings { margin-bottom: 10px; }
+#findings .head {
+  color: var(--dim);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  margin: 0 0 4px;
+}
+.finding { border-left: 3px solid var(--edge); padding: 2px 0 2px 6px; margin: 3px 0; }
+.finding.error { border-color: #ff5d5d; }
+.finding.warning { border-color: var(--warn); }
+.finding summary { cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.finding .badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 0 5px; border-radius: 8px; background: #2a3038; color: var(--dim);
+}
+.finding.error .badge { background: #5a1f1f; color: #ffb3b3; }
+.finding.warning .badge { background: #4a3714; color: var(--warn); }
+.finding code { font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.finding .show { margin-left: auto; padding: 0 6px; font-size: 11px; }
+.finding .message { color: var(--dim); font-size: 11px; margin: 2px 0 2px; }
+
+#legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 300px;
+  padding: 8px 10px 9px;
+  background: rgba(20, 23, 26, 0.86);
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  font-size: 11px;
+  z-index: 2;
+}
+#legend .title { color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+#legend .bar { height: 12px; border-radius: 3px; }
+#legend .ticks { position: relative; height: 14px; color: var(--dim); }
+#legend .ticks span { position: absolute; transform: translateX(-50%); top: 1px; }
+#legend .ticks span:first-child { transform: none; }
+#legend .ticks span:last-child { transform: translateX(-100%); }
+#legend .words { display: flex; justify-content: space-between; color: var(--ink); }
+#legend .foot { color: var(--dim); margin-top: 4px; }
+
 #notes { color: var(--dim); font-size: 11px; margin-top: 14px; }
 #notes div { margin-bottom: 3px; }
 
@@ -146,3 +189,35 @@ legend { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-s
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 [hidden] { display: none !important; }
+
+/* The observer studies (Review, Pick). */
+#modes button { padding: 4px 2px; }
+.study-help { color: var(--dim); margin: 0 0 10px; }
+.study-warn { color: var(--warn); margin: 6px 0; }
+label.wide { display: flex; justify-content: space-between; margin-bottom: 8px; }
+label.wide select { flex: 1; margin-left: 8px; }
+label.column { flex-direction: column; align-items: stretch; }
+textarea { font: inherit; color: var(--ink); background: #262c33; border: 1px solid var(--edge);
+           border-radius: 4px; padding: 4px 7px; width: 100%; resize: vertical; }
+label.check { display: flex; align-items: flex-start; gap: 6px; color: var(--ink); margin: 3px 0; }
+label.check.big { font-size: 15px; font-weight: 600; }
+.verdict { display: flex; gap: 22px; margin: 8px 0; }
+button.primary { background: #2a5bb0; border-color: var(--accent); }
+#study-who label { margin: 2px 10px 2px 0; }
+.study-progress { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+.study-name { font-size: 15px; font-weight: 600; margin: 4px 0; }
+.study-definition { margin: 0 0 6px; }
+.study-status { color: var(--accent); min-height: 2.9em; margin: 0 0 8px; }
+#pick-list { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 10px; max-height: 260px; overflow-y: auto; }
+.pick-item { text-align: left; font-size: 12px; padding: 2px 6px; border-color: transparent; }
+.pick-item::before { content: ""; display: inline-block; width: 8px; height: 8px;
+                     margin-right: 7px; border-radius: 50%; border: 1px solid var(--dim); }
+.pick-item.placed::before { background: #ffc533; border-color: #ffc533; }
+.pick-item.skipped::before { background: var(--stale); border-color: var(--stale); border-radius: 1px; }
+/* Picking shows the bones only: the plan's readout is not part of the task. */
+body.picking main { grid-template-columns: 300px 1fr; }
+body.picking #readout { display: none; }
+.pick-item.current { border-color: #ff2bd6; }
+#review-saved .saved { font-size: 12px; margin: 2px 0; }
+#review-saved .saved.ok { color: #6fd08c; }
+#review-saved .saved.not_ok { color: var(--stale); }

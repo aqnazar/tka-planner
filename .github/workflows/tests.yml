@@ -48,6 +48,12 @@ jobs:
         run: python -m pip install -e ".[dev]" -c constraints-paper.txt
       - name: Test
         run: python -m pytest -q -rs
+      # E9's cross-platform check: the synthetic fixture's plan and geometry hashes
+      # against the table made on the paper's Windows machine. Reported, not yet
+      # enforced, until the first Linux result has been reviewed.
+      - name: Plan determinism against the paper machine
+        continue-on-error: true
+        run: python -m paper.determinism --synthetic --compare paper/determinism_synthetic.json
       # The suite imports the checkout, so it cannot see what a real install is
       # missing. Install the built wheel over it and use it from outside the checkout.
       - name: Installed package carries the viewer and the size chart

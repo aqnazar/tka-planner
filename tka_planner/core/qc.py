@@ -32,6 +32,7 @@ import numpy as np
 
 from .geometry import fit_sphere_robust, regional_mask
 from .landmarks import CoordinateSystem, LandmarkSet
+from .islands import find_islands, is_debris, keep_faces
 from .meshio import Mesh, weld_vertices
 from .sides import LPS_PATIENT_LEFT, LPS_SUPERIOR, Side
 
@@ -41,11 +42,15 @@ __all__ = [
     "QCReport",
     "MeshQuality",
     "assess_mesh_quality",
+    "clean_islands",
+    "check_repairable",
     "assess_femur_coverage",
     "assess_tibia_coverage",
     "check_plausible_bone_scale",
     "check_landmarks_on_mesh",
     "check_laterality",
+    "check_scan_orientation",
+    "check_entered_femur_length",
 ]
 
 
@@ -56,6 +61,16 @@ FEMUR_HEAD_RADIUS_MM = (18.0, 30.0)
 PLAUSIBLE_BONE_LENGTH_MM = (60.0, 600.0)
 PLAUSIBLE_EPICONDYLAR_WIDTH_MM = (35.0, 130.0)
 LANDMARK_MESH_MARGIN_MM = 5.0
+
+# A removed piece further than this outside the main body's extent would have moved one
+# of the bone's extremes, so its removal is a warning rather than a note. The cohort's own
+# specks are single collapsed points inside the bone, or 0.4 mm below it; the one that
+# mattered was 80 triangles 37 mm above a tibia. See clean_islands.
+DETACHED_FRAGMENT_GAP_MM = 2.0
+
+# An entered femur length (hip centre to knee centre) outside this range is a typing
+# error or a wrong unit, not a femur: adult femora run about 380-530 mm.
+PLAUSIBLE_ENTERED_FEMUR_LENGTH_MM = (300.0, 650.0)
 
 # Length below which the femoral head cannot be present. The head-to-condyle distance
 # *is* the femur's length, 400-500 mm in adults, so any scan containing both must be at
@@ -91,6 +106,20 @@ MIN_TIBIA_LENGTH_FOR_ANKLE_MM = 300.0
 # a human reviewing a borderline case, but they are not gates. Anyone tempted to relax
 # the length threshold should re-run the shaft sweep first.
 HEAD_SPHERE_MAX_RMS_MM = 1.0
+
+# How far a scan may lie from LPS before it is refused. The landmark estimators work in
+# each bone's own axes, but take their *signs* from the scanner -- which end is superior,
+# which side patient-left -- and those are unambiguous only while a bone's long axis is
+# within 90 degrees of scanner superior and its mediolateral axis within 90 degrees of
+# scanner left-right. 45 degrees is half that, a margin no supine knee CT approaches: on
+# this cohort the femoral working axis lies 4 to 7 degrees from scanner superior and the
+# posterior condylar line 0 to 10 degrees from scanner left-right.
+ORIENTATION_MAX_TILT_DEG = 45.0
+ORIENTATION_MAX_TURN_DEG = 45.0
+# The posterior condyles stand 22 to 54 mm further behind the femoral shaft than the
+# trochlea stands in front of it on this cohort. A femur whose block reaches this much
+# further forwards than backwards is facing backwards in the scan.
+FACING_MARGIN_MM = 5.0
 
 
 class Severity(Enum):
@@ -236,10 +265,16 @@ def assess_mesh_quality(
         valid_faces[:, [2, 0]],
     ])
     edges = np.sort(edges, axis=1)
-    _, counts = np.unique(edges, axis=0, return_counts=True)
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
 
     n_boundary = int(np.sum(counts == 1))
     n_nonmanifold = int(np.sum(counts > 2))
+
+    def first_edge_at(mask):
+        """One offending edge's midpoint, so a viewer can show where the fault is."""
+        edge = unique_edges[np.flatnonzero(mask)[0]]
+        midpoint = welded.vertices[edge].mean(axis=0)
+        return [round(float(v), 2) for v in midpoint]
 
     sorted_faces = np.sort(valid_faces, axis=1)
     n_unique_faces = len(np.unique(sorted_faces, axis=0))
@@ -262,6 +297,7 @@ def assess_mesh_quality(
             f"{n_nonmanifold} non-manifold edges. Exact boolean cutting may fail and "
             f"fall back to the fast solver, which changes the resulting geometry.",
             n_nonmanifold_edges=n_nonmanifold,
+            location_mm=first_edge_at(counts > 2),
         )
     if n_boundary:
         report.add(
@@ -269,6 +305,7 @@ def assess_mesh_quality(
             f"{n_boundary} boundary edges: the surface is not closed. Cut volumes are "
             f"ill-defined against an open surface.",
             n_boundary_edges=n_boundary,
+            location_mm=first_edge_at(counts == 1),
         )
     if n_degenerate:
         report.add(
@@ -283,6 +320,178 @@ def assess_mesh_quality(
             n_triangles=len(faces),
         )
     return quality, report
+
+
+def clean_islands(
+    mesh: Mesh,
+    bone: str,
+    *,
+    welded: Mesh | None = None,
+    remove_large: bool = False,
+    gap_mm: float = DETACHED_FRAGMENT_GAP_MM,
+) -> tuple[Mesh, Mesh, QCReport]:
+    """Remove the pieces of a bone mesh too small to be anatomy; report the rest.
+
+    The landmark estimators read a bone's extremes -- the top of the tibia is the
+    highest vertex, and the plateau, spines and tubercle are all searched below it. A
+    detached speck beyond the bone therefore relocates all of them. On one cohort tibia
+    an 80-triangle sliver of femoral surface, labelled tibia by the segmentation and
+    37 mm above the plateau, became the "top of the tibia": the spines and the PCL
+    insertion were placed on it, and the tibial frame was refused as if two landmarks
+    had been swapped.
+
+    Every piece other than the main body that is debris (longest side under 20 mm, or
+    a closed piece under 5 cm3; see :mod:`tka_planner.core.islands`) is removed. The removal is a warning when a removed piece
+    lay more than ``gap_mm`` outside the bone, where it would have moved an extreme,
+    and a note otherwise. A larger piece may be anatomy -- a patella or a fibular head
+    in the mask, or a cavity wall exported as a shell -- and is kept with a warning,
+    unless ``remove_large`` asks for every piece but the main body to go.
+
+    ``welded`` is the welded copy of ``mesh`` if the caller has one (mesh quality needs
+    it too, and welding is the expensive step). Returns the mesh, its welded copy and the
+    report; with nothing removed they are the very objects passed in, so a clean mesh
+    is measured exactly as before.
+    """
+    report = QCReport()
+    welded = weld_vertices(mesh) if welded is None else welded
+    if len(welded.faces) != len(mesh.faces):
+        raise ValueError("The welded mesh must have the same faces as the mesh.")
+    labels, pieces = find_islands(welded)
+    if not pieces:
+        return mesh, welded, report
+
+    small = [p for p in pieces if is_debris(p)]
+    large = [p for p in pieces if not is_debris(p)]
+    removed = small + (large if remove_large else [])
+
+    if small:
+        n_triangles = sum(p.n_triangles for p in small)
+        beyond = max(p.outside_mm for p in small)
+        moved = beyond > gap_mm
+        report.add(
+            "MESH_DETACHED_FRAGMENT",
+            Severity.WARNING if moved else Severity.INFO,
+            f"The {bone} mesh held {len(small)} detached piece(s) too small to be "
+            f"anatomy (under 20 mm long or 5 cm3; {n_triangles} triangles, "
+            f"{n_triangles / len(labels):.3%} of the surface); they were removed. "
+            + (f"One lay {beyond:.0f} mm outside the bone, where it would have been "
+               f"taken for the bone's extreme: check the segmentation." if moved
+               else "All lay within the bone's extent."),
+            bone=bone, n_fragments=len(small), n_triangles=n_triangles,
+            max_outside_mm=round(beyond, 1),
+        )
+    for piece in large:
+        where = ("inside the bone's extent (a cavity wall or an internal shell?)"
+                 if piece.inside else
+                 f"{piece.outside_mm:.0f} mm outside the bone (a patella, a fibula or a "
+                 f"neighbouring bone in the mask?)")
+        size = " x ".join(f"{e:.0f}" for e in piece.extents_mm)
+        report.add(
+            "MESH_LARGE_ISLAND_REMOVED" if remove_large else "MESH_LARGE_ISLAND",
+            Severity.WARNING,
+            f"The {bone} mesh holds a separate piece of {piece.n_triangles} triangles, "
+            f"{size} mm, {abs(piece.volume_cm3):.1f} cm3, lying {where}. "
+            + ("It was removed, as asked." if remove_large else
+               "It is too large to be dismissed as debris and was kept; it is measured "
+               "and cut with the bone. Re-open the case with detached pieces removed "
+               "if it is not part of the bone."),
+            bone=bone, removable=not remove_large, location_mm=list(piece.centre_mm),
+            **piece.to_dict(),
+        )
+    if not removed:
+        return mesh, welded, report
+
+    drop = np.zeros(len(pieces) + 1, dtype=bool)
+    drop[[p.label for p in removed]] = True
+    keep = ~drop[labels]
+    n_dropped = int((~keep).sum())
+    return (keep_faces(mesh, keep, detached_triangles_removed=n_dropped),
+            keep_faces(welded, keep, detached_triangles_removed=n_dropped), report)
+
+
+def check_entered_femur_length(length_mm: float | None,
+                               length_type: str | None = None,
+                               sex: str | None = None) -> QCReport:
+    """An entered femur length must be a length a femur can have.
+
+    A knee-only scan cannot give the femur's length: the hip is not in it. The
+    author's ruling (2026-10-15) is that it may be entered, from a long-leg film or a
+    scanogram, and it is then recorded as entered, never as measured. ``length_type``
+    is what it measures (``core.phantom_femur.FEMUR_LENGTH_TYPES``; unset, hip centre to
+    knee centre); the range is checked on the hip-to-knee length it gives.
+    """
+    report = QCReport()
+    if length_mm is None:
+        return report
+    from .phantom_femur import femur_length_record
+
+    low, high = PLAUSIBLE_ENTERED_FEMUR_LENGTH_MM
+    length = femur_length_record(length_mm, length_type, sex)
+    if length["conversion"] != "none":
+        hip_to_knee = length["hip_to_knee_mm"]
+        said = (f"{length_mm:g} mm from the head top to the condyles ({hip_to_knee:g} mm "
+                f"hip centre to knee centre, after a calibrated {length['offset_mm']:g} "
+                f"mm offset, {length['offset_for']})")
+        context = {"femur_length_mm": length_mm, "femur_length_type": length["type"],
+                   "hip_to_knee_mm": hip_to_knee}
+        if not (np.isfinite(hip_to_knee) and low <= hip_to_knee <= high):
+            report.add(
+                "FEMUR_LENGTH_IMPLAUSIBLE", Severity.ERROR,
+                f"The entered femur length, {said}, is outside {low:g}-{high:g} mm hip "
+                f"to knee. Check the length and what it was measured between.",
+                **context,
+            )
+        else:
+            report.add(
+                "FEMUR_LENGTH_ENTERED", Severity.INFO,
+                f"Femur length {said} was entered, not measured: the scan does not "
+                f"reach the hip.",
+                **context,
+            )
+        return report
+    if not (np.isfinite(length_mm) and low <= length_mm <= high):
+        report.add(
+            "FEMUR_LENGTH_IMPLAUSIBLE", Severity.ERROR,
+            f"The entered femur length {length_mm:g} mm is outside {low:g}-{high:g} mm. "
+            f"Enter the hip-centre to knee-centre distance in millimetres.",
+            femur_length_mm=length_mm,
+        )
+    else:
+        report.add(
+            "FEMUR_LENGTH_ENTERED", Severity.INFO,
+            f"Femur length {length_mm:g} mm was entered, not measured: the scan does "
+            f"not reach the hip.",
+            femur_length_mm=length_mm,
+        )
+    return report
+
+
+def check_repairable(mesh: Mesh, bone: str) -> QCReport:
+    """Repair a mesh as the kernel will, and refuse it now if repair cannot close it.
+
+    The repair is the kernel's own (:func:`tka_planner.geom.repair.prepare_for_kernel`)
+    and its result is kept, so the first Commit reuses it rather than repeating it.
+    """
+    from tka_planner.geom.repair import prepare_for_kernel
+
+    report = QCReport()
+    _, actions, ready = prepare_for_kernel(mesh)
+    if ready:
+        report.add(
+            "MESH_REPAIRED", Severity.WARNING,
+            f"The {bone} mesh was not a closed surface; it was repaired before cutting "
+            f"({'; '.join(actions)}). The repair touches only the defects listed.",
+            bone=bone, actions=list(actions),
+        )
+    else:
+        undone = "; ".join(actions) or "nothing could be done"
+        report.add(
+            "MESH_UNREPAIRABLE", Severity.ERROR,
+            f"The {bone} mesh is not a closed surface and could not be repaired "
+            f"({undone}). It cannot be cut reliably; fix the segmentation and re-export.",
+            bone=bone, actions=list(actions),
+        )
+    return report
 
 
 # ----------------------------------------------------------------------
@@ -575,5 +784,96 @@ def check_landmarks_on_mesh(
             "LANDMARKS_ON_MESH", Severity.INFO,
             f"All {checked} landmarks fall within their bone's bounds.",
             n_checked=checked,
+        )
+    return report
+
+
+def check_scan_orientation(femur_axes, tibia_axes) -> QCReport:
+    """Refuse a knee lying too far from LPS for its landmarks to be found.
+
+    ``femur_axes`` and ``tibia_axes`` are the bones' own axes
+    (:func:`~tka_planner.core.landmarks_auto.femoral_axes` and
+    :func:`~tka_planner.core.landmarks_auto.tibial_axes`), which the estimators then
+    search in. Within the gate the estimators do not depend on how the knee lies; beyond
+    it the signs they take from the scanner may be wrong, and a plan built on them would
+    be confidently mirrored or reversed. Metamorphic testing found exactly that before
+    this gate existed: every knee turned upside down was planned, with errors up to 114
+    degrees in a metric and 119 in the femoral cut, and at 90 degrees seven of eleven
+    failed inside the planner.
+
+    Four ways to fail, each an error:
+
+    * ``SCAN_ORIENTATION_TILTED`` -- a bone's long axis more than
+      :data:`ORIENTATION_MAX_TILT_DEG` from scanner superior;
+    * ``SCAN_ORIENTATION_TURNED`` -- the femur's posterior condylar line more than
+      :data:`ORIENTATION_MAX_TURN_DEG` from scanner left-right (the tibia's is not
+      tested: it may legitimately sit 20 degrees from the femur's);
+    * ``SCAN_UPSIDE_DOWN`` -- the femur below the tibia along the femur's axis;
+    * ``SCAN_FACING_BACKWARDS`` -- the condylar block reaching further in front of the
+      shaft than behind it, by more than :data:`FACING_MARGIN_MM`: what a knee turned
+      half round about its long axis looks like, and the only one of these the first
+      three cannot see.
+    """
+    report = QCReport()
+    tilts = {bone: float(axes.diagnostics.get("superior_tilt_deg", 0.0))
+             for bone, axes in (("femur", femur_axes), ("tibia", tibia_axes))}
+    turn = float(femur_axes.diagnostics.get("mediolateral_turn_deg", 0.0))
+    context = {"femur_tilt_deg": round(tilts["femur"], 1),
+               "tibia_tilt_deg": round(tilts["tibia"], 1),
+               "femur_turn_deg": round(turn, 1)}
+    refused = False
+
+    for bone, tilt in tilts.items():
+        if tilt > ORIENTATION_MAX_TILT_DEG:
+            refused = True
+            report.add(
+                "SCAN_ORIENTATION_TILTED", Severity.ERROR,
+                f"The {bone}'s long axis lies {tilt:.0f} degrees from the scanner's "
+                f"superior axis (limit {ORIENTATION_MAX_TILT_DEG:.0f}). The bone is not "
+                f"in the LPS patient frame the planner expects; check the export's "
+                f"coordinate system and orientation.",
+                bone=bone, **context,
+            )
+    if turn > ORIENTATION_MAX_TURN_DEG:
+        refused = True
+        report.add(
+            "SCAN_ORIENTATION_TURNED", Severity.ERROR,
+            f"The femur's posterior condylar line lies {turn:.0f} degrees from the "
+            f"scanner's left-right axis (limit {ORIENTATION_MAX_TURN_DEG:.0f}), so "
+            f"patient-left cannot be told from patient-right with confidence.",
+            **context,
+        )
+
+    separation = float(np.dot(femur_axes.origin - tibia_axes.origin,
+                              femur_axes.superior))
+    if separation <= 0.0:
+        refused = True
+        report.add(
+            "SCAN_UPSIDE_DOWN", Severity.ERROR,
+            f"The femur lies {abs(separation):.0f} mm below the tibia along its own "
+            f"axis: the scan is upside down, or the two bones are swapped.",
+            separation_mm=round(separation, 1), **context,
+        )
+
+    posterior = femur_axes.diagnostics.get("posterior_reach_mm")
+    anterior = femur_axes.diagnostics.get("anterior_reach_mm")
+    if (posterior is not None and anterior is not None
+            and anterior - posterior > FACING_MARGIN_MM):
+        refused = True
+        report.add(
+            "SCAN_FACING_BACKWARDS", Severity.ERROR,
+            f"The femoral condyles reach {anterior:.0f} mm in front of the shaft and "
+            f"{posterior:.0f} mm behind it, where the posterior condyles always stand "
+            f"further back: the knee faces backwards in the scan.",
+            posterior_reach_mm=posterior, anterior_reach_mm=anterior, **context,
+        )
+
+    if not refused:
+        report.add(
+            "SCAN_ORIENTATION_OK", Severity.INFO,
+            f"The knee lies within the orientation gate: femur {tilts['femur']:.1f} "
+            f"and tibia {tilts['tibia']:.1f} degrees from scanner superior, posterior "
+            f"condylar line {turn:.1f} degrees from scanner left-right.",
+            **context,
         )
     return report

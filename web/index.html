@@ -26,6 +26,13 @@
       <select id="side"><option value="left">Left</option><option value="right">Right</option></select>
     </label>
     <label>Library <input id="library" type="text" placeholder="implant library (optional)" size="24"></label>
+    <label title="From a long-leg film or scanogram. A knee-only scan cannot give it; it is recorded as entered.">Femur length <input id="femur-length" type="number" min="300" max="690" step="1" placeholder="mm, optional" style="width:8.5em"></label>
+    <label title="What the femur length measures. A scanogram usually gives the top of the femoral head to the distal condyles; the planner then subtracts a calibrated offset (32 mm; 31.3 for a woman, 34.9 for a man) to get hip centre to knee centre, and the plan says so.">measured
+      <select id="femur-length-type"><option value="hip_to_knee">hip centre to knee centre</option><option value="head_top_to_condyle">head top to condyles</option></select>
+    </label>
+    <label title="Sizes the phantom femur's head: male 49.65 mm, female 44.41 mm (3D CT, Yang and Qian 2025). Not given, the head is 0.1 of the maximum femur length. Needs a femur length.">Sex
+      <select id="sex"><option value="">not given</option><option value="male">Male</option><option value="female">Female</option></select>
+    </label>
     <button type="submit" id="open">Open</button>
   </form>
   <p class="disclaimer">Research and demonstration only. Not a medical device.</p>
@@ -36,7 +43,17 @@
     <nav id="modes">
       <button type="button" data-mode="plan" class="active">Plan</button>
       <button type="button" data-mode="reduce">Reduce</button>
+      <button type="button" data-mode="review" title="Observer study: mark the plan OK or NOT OK">Review</button>
+      <button type="button" data-mode="pick" title="Observer study: place the landmarks on the bones">Pick</button>
     </nav>
+
+    <fieldset id="study-who" hidden>
+      <legend>Observer</legend>
+      <label title="A code, not a name: letters, digits, - or _">Observer <input id="study-observer" type="text" size="8" placeholder="e.g. S01"></label>
+      <label>Round
+        <select id="study-round"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+      </label>
+    </fieldset>
 
     <section id="plan-mode">
       <div class="actions">
@@ -57,18 +74,87 @@
       </label>
     </section>
 
+    <section id="review-mode" hidden>
+      <p class="study-help">Look at the plan the planner proposes, turn it in the view, and mark it. Rate each alignment separately.</p>
+      <label class="wide">Plan
+        <select id="review-plan"><option value="mechanical">Mechanical</option><option value="kinematic">Kinematic</option></select>
+      </label>
+      <p id="review-adjusted" class="study-warn" hidden>This plan has been adjusted by hand; the adjustments are saved with the verdict.</p>
+      <div class="verdict">
+        <label class="check big"><input type="radio" name="review-verdict" value="ok"> OK</label>
+        <label class="check big"><input type="radio" name="review-verdict" value="not_ok"> NOT OK</label>
+      </div>
+      <div id="review-details" hidden>
+        <fieldset><legend>Why</legend><div id="review-reasons"></div></fieldset>
+        <fieldset><legend>How bad</legend><div id="review-severity"></div></fieldset>
+      </div>
+      <label class="wide column">Comment <textarea id="review-comment" rows="3"></textarea></label>
+      <div class="actions"><button type="button" id="review-save" class="primary">Save verdict</button></div>
+      <div id="review-saved"></div>
+    </section>
+
+    <section id="pick-mode" hidden>
+      <div id="pick-setup">
+        <p class="study-help">Place each landmark on the whole bone, one at a time. Click the bone to place the marker; drag the marker to slide it over the surface.</p>
+        <label class="wide">Start from
+          <select id="pick-start-mode">
+            <option value="blank">No markers (place each one)</option>
+            <option value="adjust">Automatic markers (move the wrong ones)</option>
+          </select>
+        </label>
+        <div class="actions"><button type="button" id="pick-start" class="primary">Start picking</button></div>
+      </div>
+      <div id="pick-run" hidden>
+        <div id="pick-progress" class="study-progress"></div>
+        <div id="pick-name" class="study-name"></div>
+        <p id="pick-definition" class="study-definition"></p>
+        <p id="pick-status" class="study-status"></p>
+        <div class="actions">
+          <button type="button" id="pick-prev">Previous</button>
+          <button type="button" id="pick-next" class="primary">Next</button>
+        </div>
+        <div class="actions">
+          <button type="button" id="pick-reset-one">Remove marker</button>
+          <button type="button" id="pick-reset-all">Reset all</button>
+        </div>
+        <div class="actions">
+          <select id="pick-skip-reason"></select>
+          <button type="button" id="pick-skip">Cannot place</button>
+        </div>
+        <label class="wide">Show
+          <select id="pick-view">
+            <option value="auto">the marker's bone</option>
+            <option value="Femur">femur</option>
+            <option value="Tibia">tibia</option>
+            <option value="both">both bones</option>
+          </select>
+        </label>
+        <label id="pick-ghost-row" class="check"><input id="pick-ghosts" type="checkbox" checked> Show automatic positions (ghost)</label>
+        <div id="pick-list"></div>
+        <div class="actions">
+          <button type="button" id="pick-save">Save progress</button>
+          <button type="button" id="pick-finish" class="primary" disabled>Finish and save</button>
+          <button type="button" id="pick-quit">Stop</button>
+        </div>
+      </div>
+    </section>
+
     <section class="actions export">
       <label>Export to <input id="export-path" type="text" placeholder="output folder" size="22"></label>
       <button type="button" id="export">Export plan</button>
+      <button type="button" id="open-report">Open report</button>
     </section>
 
     <label class="clean"><input id="clean" type="checkbox"> Clean viewport</label>
   </aside>
 
-  <div id="view"></div>
+  <div id="view">
+    <div id="legend" hidden></div>
+  </div>
 
   <aside id="readout">
     <div id="banner" hidden></div>
+    <section id="findings"></section>
     <div id="report"></div>
     <div id="notes"></div>
   </aside>
