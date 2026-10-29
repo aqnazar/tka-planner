@@ -24,10 +24,13 @@ All of it happens in one sagittal plane of the femur.
   it touches the silhouette without crossing it. That is the tangent. The shaft used is
   the stretch a lateral knee film shows: it starts at the distal canal centre's level,
   but no more than ``MAX_TANGENT_START_MM`` (100 mm) above the knee centre, and runs
-  ``TANGENT_WINDOW_MM`` (100 mm) or to the proximal canal centre, whichever is shorter.
-  On a full-length femur the canal centres sit at mid-shaft and near the trochanters,
-  and a tangent over that length follows the femoral bow instead of the distal cortex
-  (on the reference femur it lay 6 mm off its own fit and put the offset near 60 mm).
+  ``TANGENT_WINDOW_MM`` (100 mm) or to ``SHAFT_TOP_FRACTION`` of the bone's length,
+  short of the scan's cut end, whichever is shorter. The distal canal centre sits 100 mm
+  above the femur's most distal point (fewer on a scan too short for it), clear of the
+  metaphyseal flare. A tangent over a much longer stretch follows the femoral bow
+  instead of the distal cortex (on the reference femur, run between canal centres at
+  mid-shaft and near the trochanters, it lay 6 mm off its own fit and put the offset
+  near 60 mm).
   Its fit residual is reported, because a femur bowed over the fitted length makes
   "the" tangent ambiguous.
 * **Offset** of a compartment: the largest distance, perpendicular to the tangent in the
@@ -80,6 +83,9 @@ MIN_BANDS = 8
 # The stretch of shaft a lateral knee radiograph shows, where Bellemans drew the tangent.
 TANGENT_WINDOW_MM = 100.0
 MAX_TANGENT_START_MM = 100.0
+# The tangent stops short of the scan's cut end by the margin the canal sections keep:
+# this fraction of the bone's length along the shaft axis.
+SHAFT_TOP_FRACTION = 0.92
 
 PCO_DEFINITION = (
     "Posterior condylar offset (Bellemans 2002, per compartment): in the sagittal "
@@ -152,10 +158,11 @@ def posterior_cortex_line(
     rel = vertices - origin
     s, r = rel @ axial, rel @ posterior
     low = min(float((np.asarray(distal) - origin) @ axial), MAX_TANGENT_START_MM)
-    high = min(float((np.asarray(proximal) - origin) @ axial), low + TANGENT_WINDOW_MM)
+    top = float(s.min()) + SHAFT_TOP_FRACTION * float(s.max() - s.min())
+    high = min(top, low + TANGENT_WINDOW_MM)
     inside = (s >= low) & (s <= high)
     if not inside.any():
-        raise ValueError("no shaft surface between the canal centres")
+        raise ValueError("no shaft surface above the distal canal centre")
     bands = np.floor((s[inside] - low) / band_mm).astype(np.int64)
     order = np.lexsort((r[inside], bands))
     bands, ss, rr = bands[order], s[inside][order], r[inside][order]

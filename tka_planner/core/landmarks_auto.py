@@ -97,6 +97,17 @@ NOTCH_STRIP_MM = 3.0
 NOTCH_BAND_MM = 2.0
 # The PCL footprint is searched this far either side of the midline between the spines.
 PCL_STRIP_MM = 2.0
+# The femoral canal sections, in mm above the bone's most distal point, the upper one
+# capped at CANAL_TOP_FRACTION of the scan and kept FEMORAL_CANAL_MIN_SEPARATION_MM above
+# the lower. Calibrated on 157 whole femurs (HFValid, Aldieri 2025; VSD, Fischer 2023),
+# 2026-10-29: against the true mechanical axis the line through them leans +1.5 +- 1.5
+# degrees forward (sagittal) whatever the scan's length. Sections at 45 and 92 per cent of
+# the scan, as before, leaned +3.2 degrees on a 150 mm scan and -2.7 on a 300 mm one.
+FEMORAL_CANAL_LEVELS_MM = (100.0, 140.0)
+FEMORAL_CANAL_MIN_SEPARATION_MM = 30.0
+# The upper section stays this fraction of the bone's height from its distal end, clear
+# of a ragged cut end. The tibia's sections are at 45 per cent and this.
+CANAL_TOP_FRACTION = 0.92
 
 
 # ----------------------------------------------------------------------
@@ -980,14 +991,16 @@ def _canal_centres(
 ) -> list[Landmark]:
     """Trace the diaphyseal axis by taking cross-section centroids at two levels.
 
-    The sections are cut square to ``axis``, at fractions of the bone's length along it:
-    in the bone's own axes, the diaphyseal axis itself.
+    The sections are cut square to ``axis``: in the bone's own axes, the diaphyseal axis
+    itself. The femur's are at fixed heights above its most distal point
+    (:data:`FEMORAL_CANAL_LEVELS_MM`), the tibia's at fractions of its length.
 
-    The levels are placed as far apart as the segmentation allows, because the
-    separation is the lever arm of the axis fit and angular uncertainty scales inversely
-    with it. On the shorter femurs in this cohort that arm is only about 70 mm against a
-    more usual 200 mm, so the axis is correspondingly noisier -- which is why the
-    separation is recorded in the frame's diagnostics rather than left implicit.
+    The separation is the lever arm of the axis fit, and angular uncertainty scales
+    inversely with it, which is why it is recorded in the frame's diagnostics rather
+    than left implicit. For the femur, though, a wider arm is not a better axis: the
+    shaft bows forward, so a line through two sections leans with where they sit, and
+    sections at fractions of the scan put a short scan's lower one in the metaphyseal
+    flare and a long scan's upper one on the bow.
     """
     vertices = mesh.vertices
     axis = unit(axis)
@@ -999,10 +1012,14 @@ def _canal_centres(
 
     # Stay clear of the articular end, where the section is not the diaphysis.
     if bone == "femur":
-        near_level, far_level = z_min + 0.45 * height, z_min + 0.92 * height
+        distal_mm, proximal_mm = FEMORAL_CANAL_LEVELS_MM
+        far = min(proximal_mm, CANAL_TOP_FRACTION * height)
+        near = min(distal_mm, far - FEMORAL_CANAL_MIN_SEPARATION_MM)
+        near_level, far_level = z_min + near, z_min + far
         near_id, far_id = "femur.canal_centre_distal", "femur.canal_centre_proximal"
     else:
-        near_level, far_level = z_max - 0.45 * height, z_max - 0.92 * height
+        near_level = z_max - 0.45 * height
+        far_level = z_max - CANAL_TOP_FRACTION * height
         near_id, far_id = "tibia.canal_centre_proximal", "tibia.canal_centre_distal"
 
     landmarks = []

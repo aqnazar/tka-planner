@@ -464,8 +464,22 @@ area-weighted centroid:
 
 | Bone | Superior | Patient-left |
 |---|---|---|
-| Femur (`bone_axes.femur.shaft_ama.v1`) | the diaphyseal axis, through two canal sections each cut square to the last round's axis, turned medially by the population AMA (6°) in the plane of the posterior condylar line: the axis the femoral frame falls back to on a knee-only scan | the posterior condylar line, converged in the plane square to that axis |
-| Tibia (`bone_axes.tibia.shaft.v1`) | the diaphyseal axis, as for the femur, with no turn: the axis the tibial frame uses | the tibia's own posterior condylar line, on the top 22 mm, converged from the plateau's widest direction |
+| Femur (`bone_axes.femur.shaft_ama.v1`) | the diaphyseal axis, through two canal sections each cut square to the last round's axis (at 100 and 140 mm above the most distal point, below), turned medially by the population AMA (6°) in the plane of the posterior condylar line: the axis the femoral frame falls back to on a knee-only scan | the posterior condylar line, converged in the plane square to that axis |
+| Tibia (`bone_axes.tibia.shaft.v1`) | the diaphyseal axis, as for the femur, with no turn, through sections at 45 % and 92 % of the bone's length below its top: the axis the tibial frame uses | the tibia's own posterior condylar line, on the top 22 mm, converged from the plateau's widest direction |
+
+**The femoral canal sections sit at fixed heights**: 100 and 140 mm above the femur's
+most distal point, the upper one capped at 92 % of the scan's height (clear of the cut end)
+and the lower one kept 30 mm below it, so a scan shorter than 152 mm lowers them. They
+used to sit at 45 % and 92 % of the scan's height. The femoral shaft flares above the
+condyles and bows forward, so the line through two sections leans with where they sit:
+on 157 public whole femurs (HFValid, Aldieri 2025; VSD, Fischer 2023), profiled square to
+the true mechanical axis, the old sections leaned the axis +3.2 ± 1.8° forward on a
+150 mm scan, +0.4 ± 1.3° on a 200 mm one and −2.7 ± 1.6° on a 300 mm one (sagittal, against
+the head-to-knee line); the fixed sections give +1.5 ± 1.5° on every scan of 152 mm or
+more. Heights 90 to 110 mm for the lower section give +1.8 to +1.1°, at the same spread;
+100 mm leaves a 40 mm lever arm (36 mm on the shortest cohort femur, 148 mm).
+The coronal angle of the same line against the mechanical axis is 5.3 ± 1.9°, against the
+assumed 6° AMA. The tibial sections are unchanged.
 
 The femur's axes are found on its distal window only (2.75 condylar widths), so a
 full-length femur gets the axes of its own knee-only scan. The tibia's mediolateral axis
@@ -717,10 +731,12 @@ compartment:
   of the distal shaft (the most posterior surface point of each 2 mm band, which is the
   outline a film shows), then moved posteriorly until it touches the silhouette without
   crossing it. The shaft used is what a lateral knee film shows: from the distal canal
-  centre's level, but no more than 100 mm above the knee centre, for 100 mm or up to the
-  proximal canal centre. On the full-length reference femur a tangent over the whole
-  canal span followed the femoral bow (6 mm off its own fit) and put the offset near
-  60 mm. The fit residual is reported, since a bowed femur makes the tangent ambiguous;
+  centre's level (100 mm above the femur's most distal point), but no more than 100 mm
+  above the knee centre, for 100 mm or up to 92 % of the bone's length, short of the
+  scan's cut end. On the full-length reference femur a tangent between canal centres at
+  mid-shaft and near the trochanters followed the femoral bow (6 mm off its own fit) and
+  put the offset near 60 mm. The fit residual is reported, since a bowed femur makes the
+  tangent ambiguous;
 * each compartment's **offset** is the largest distance from that tangent, perpendicular
   to it in the sagittal plane, to any point of the condyle distal of the fitted shaft,
   compartments split at the notch centre. The film's single value is the larger of the
@@ -842,18 +858,21 @@ spread over the length), 6 mm anteroposterior (the offset's lever through the an
 410 mm, one SD, not counting the error of carrying the shaft axis up from a distal scan,
 which is unpublished. We measured it on the one full-length femur we have (REF_KJ2, head
 sphere fitted on the mesh, diameter 44.9 mm, hip-to-knee length 418.8 mm): with the scan
-cropped to 140, 180, 230 and 300 mm of femur above the knee, the frame's axis fell 3.2,
-1.7, 2.0 and 2.4° from the true knee-to-head line, and the phantom's head, placed at the
-true length, fell 23, 12, 15 and 17 mm from the fitted head. Repeated on the 157 public
-femurs (cropped flat along the scanner axis to 140, 200 and 300 mm above the lowest point,
-true length entered), the head fell 29.8 +- 14.0, 13.4 +- 8.2 and 22.8 +- 9.5 mm from the
-fitted head (axis 4.1, 1.9 and 3.3° off), mostly anteroposterior: the canal sections the
-axis is taken through sit at fixed fractions of the scan's height, so a short scan's axis
-follows the metaphyseal flare forward and a long one's follows the shaft's anterior bow
-back. The error is therefore not monotonic in scan length, and it is larger than the
-budget above, which does not contain it. On the full-length scan itself the frame's
-axis is 6.9° off (the head 51 mm), because an axis taken along a whole bowed diaphysis
-is not the one a distal scan gives; that case is not what the phantom is for. The phantom's axis is a population prior and carries no patient
+cropped to 140, 180, 230 and 300 mm of femur above the knee, the frame's axis fell 2.4,
+2.2, 2.3 and 2.3° from the true knee-to-head line, and the phantom's head, placed at the
+true length, fell 18, 16, 17 and 17 mm from the fitted head, mostly mediolateral (16 mm:
+the AMA this femur differs from the assumed 6° by). Repeated on the 157 public femurs
+(cropped flat along the scanner axis to 140, 200 and 300 mm above the lowest point, true
+length entered), the head fell 20.0 +- 12.7, 19.0 +- 11.4 and 18.9 +- 12.0 mm from the
+fitted head (median 17.8, 17.4 and 17.5; axis 2.8, 2.6 and 2.6° off), with a forward bias
+of about 11 mm (the canal line's +1.5 +- 1.5° sagittal lean) at every length. The error is
+larger than the budget above, which does not contain the axis's own error. With the canal
+sections at 45 % and 92 % of the scan's height, as before, it was 29.8 +- 14.0, 13.4 +- 8.2
+and 22.8 +- 9.5 mm (axis 4.1, 1.9 and 3.3°): a short scan's axis followed the metaphyseal
+flare forward and a long one's the shaft's anterior bow back, so the error depended on
+where the scan stopped, and on REF_KJ2's full length the axis was 6.9° off (2.3° now).
+Subtracting the mean sagittal lean would leave 17 to 18 mm (median 15), so it is not
+applied. The phantom's axis is a population prior and carries no patient
 varus or valgus; it cannot support an alignment decision, and the app says so beside it.
 Anteversion, the trochanters and the shaft's bow are not drawn. The literature basis, with
 the status of every number, is in `PHANTOM_FEMUR_RESEARCH_2026-10-25.md`.

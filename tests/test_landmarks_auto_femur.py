@@ -14,6 +14,8 @@ import pytest
 
 from tka_planner.core.landmarks_auto import (
     DISTAL_WINDOW_CONDYLAR_WIDTHS,
+    FEMORAL_CANAL_LEVELS_MM,
+    FEMORAL_CANAL_MIN_SEPARATION_MM,
     condylar_width_mm,
     distal_window_mm,
     estimate_femoral_landmarks,
@@ -111,6 +113,33 @@ def test_every_length_beyond_the_window_is_searched_identically():
         assert found.keys() == expected.keys()
         for landmark_id, position in expected.items():
             np.testing.assert_array_equal(found[landmark_id], position)
+
+
+def _canal_centres(mesh):
+    found = {lm.id: lm.position_mm for lm in estimate_femoral_landmarks(mesh, Side.RIGHT)}
+    return found["femur.canal_centre_distal"], found["femur.canal_centre_proximal"]
+
+
+def test_the_canal_sections_sit_at_fixed_heights_whatever_the_scan_length():
+    """Fractions of the scan put the axis in the flare or on the bow (D3, 2026-10-29)."""
+    assert FEMORAL_CANAL_LEVELS_MM == (100.0, 140.0)
+    reference = _canal_centres(distal_femur(200.0))
+    assert reference[0][2] == pytest.approx(100.0, abs=2.5)
+    assert reference[1][2] == pytest.approx(140.0, abs=2.5)
+    for length in (300.0, 450.0):
+        for near, far in zip(reference, _canal_centres(distal_femur(length))):
+            np.testing.assert_allclose(far, near, atol=1e-6)
+
+
+@pytest.mark.parametrize("length, distal, proximal", [
+    (150.0, 100.0, 138.0),    # the upper section stays 8 % below the cut end
+    (120.0, 80.4, 110.4),     # and the lower one 30 mm below it
+])
+def test_a_short_scan_lowers_the_canal_sections(length, distal, proximal):
+    near, far = _canal_centres(distal_femur(length))
+    assert near[2] == pytest.approx(distal, abs=2.5)
+    assert far[2] == pytest.approx(proximal, abs=2.5)
+    assert far[2] - near[2] >= FEMORAL_CANAL_MIN_SEPARATION_MM - 2.0
 
 
 def test_a_knee_only_segment_keeps_its_own_length_as_the_window():
