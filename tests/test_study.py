@@ -1,6 +1,7 @@
 """The on-screen observer studies through the API: picking (E3) and plan review (E13)."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from tka_planner.core.landmarks import LandmarkStatus, read_landmark_set
 from tka_planner.server import Api, SessionManager
 from tka_planner.store import Store
-from tka_planner.study import pickable_landmarks
+from tka_planner.study import observer_key, observer_slug, pickable_landmarks
 
 
 @pytest.fixture
@@ -129,15 +130,17 @@ def test_a_saved_set_is_an_ordinary_landmark_file(api, session_id, manager):
     landmarks = read_landmark_set(saved["landmarks"])
     picked = landmarks.get("femur.epicondyle_lateral")
     assert picked.status is LandmarkStatus.PRESENT
-    assert picked.origin == "observer:S01"
+    assert picked.origin == "observer:s01"      # the observer's file-safe key
     np.testing.assert_allclose(picked.position_mm, point, atol=1e-6)
     skipped = landmarks.get("femur.notch_centre")
     assert skipped.status is LandmarkStatus.NOT_PICKED
     assert skipped.reason == "osteophyte covers it"
     record = json.loads(open(saved["record"], encoding="utf-8").read())
     assert record["observer"] == "S01" and record["mode"] == "blank"
+    assert record["observer_key"] == "s01"
     assert record["picks"][0]["surface_gap_mm"] == pytest.approx(0.0, abs=1e-6)
-    assert "study" in saved["landmarks"] and "S01" in saved["landmarks"]
+    assert "study" in saved["landmarks"]
+    assert Path(saved["landmarks"]).parent.name == "s01"
 
 
 def test_an_adjusted_marker_records_how_far_it_moved(api, session_id, manager):
@@ -154,7 +157,7 @@ def test_an_adjusted_marker_records_how_far_it_moved(api, session_id, manager):
 
 
 @pytest.mark.parametrize("body, message", [
-    ({"observer": "S 01", "round": 1, "mode": "blank"}, "observer"),
+    ({"observer": "   ", "round": 1, "mode": "blank"}, "name"),
     ({"observer": "S01", "round": 0, "mode": "blank"}, "round"),
     ({"observer": "S01", "round": 1, "mode": "blank",
       "picks": [{"id": "femur.canal_centre_distal", "position_mm": [0, 0, 0]}]}, "study"),
@@ -214,6 +217,61 @@ def test_a_hand_adjusted_plan_is_marked_as_such(api, session_id):
 ])
 def test_an_incomplete_verdict_is_refused(api, session_id, body):
     call(api, "POST", f"/api/sessions/{session_id}/study/review", body, 400)
+
+
+# ----------------------------------------------------------------------
+# The observer is a name
+# ----------------------------------------------------------------------
+
+
+def review(api, session_id, observer, status=200):
+    return call(api, "POST", f"/api/sessions/{session_id}/study/review",
+                {"observer": observer, "round": 1, "verdict": "ok"}, status)
+
+
+def test_names_differing_in_case_and_spacing_are_one_observer(api, session_id):
+    first = review(api, session_id, "Dr. Ivanov")
+    second = review(api, session_id, " dr.  ivanov ")
+    assert first["file"] == second["file"]
+    lines = [json.loads(line) for line in open(first["file"], encoding="utf-8")]
+    assert [line["observer"] for line in lines] == ["Dr. Ivanov", " dr.  ivanov "]
+    assert {line["observer_key"] for line in lines} == {"dr. ivanov"}
+
+
+def test_a_name_with_unsafe_characters_saves(api, session_id, manager, tmp_path):
+    name = "Ахметов А.А./KZ"
+    saved = review(api, session_id, name)
+    path = Path(saved["file"]).resolve()
+    assert path.parent == (tmp_path / "study" / "reviews").resolve()
+    assert path.suffix == ".jsonl"
+    assert json.loads(path.read_text(encoding="utf-8"))["observer"] == name
+    picks = call(api, "POST", f"/api/sessions/{session_id}/study/picks", {
+        "observer": name, "round": 1, "mode": "blank",
+        "picks": [{"id": "femur.epicondyle_lateral",
+                   "position_mm": on_femur(manager, session_id)}],
+    })
+    folder = Path(picks["landmarks"]).resolve().parent
+    assert folder.parent == (tmp_path / "study" / "picks").resolve()
+    assert folder.name == path.stem
+    landmarks = read_landmark_set(picks["landmarks"])
+    assert landmarks.get("femur.epicondyle_lateral").origin == f"observer:{path.stem}"
+
+
+@pytest.mark.parametrize("name", ["", "   ", None, "\t\n"])
+def test_an_empty_name_is_refused(api, session_id, name):
+    payload = review(api, session_id, name, status=400)
+    assert "name" in payload["error"]
+
+
+def test_the_observer_key_and_slug():
+    assert observer_key("  Dr.  Ivanov ") == observer_key("dr. ivanov") == "dr. ivanov"
+    assert observer_key("ＩＶＡＮＯＶ") == "ivanov"   # NFKC
+    assert observer_slug("s01") == "s01"                     # nothing replaced: no hash
+    slug = observer_slug(observer_key("Ахметов А.А./KZ"))
+    assert slug.startswith("kz-") and len(slug) == len("kz-") + 8
+    assert observer_slug(observer_key("Ахметова А.А./KZ")) != slug   # names stay apart
+    assert len(observer_slug("a" * 100)) == 48 + 9           # truncated, then hashed
+    assert observer_slug("con") != "con"                     # never a Windows device name
 
 
 def test_without_a_study_folder_nothing_is_saved(raw_session, folder, monkeypatch):

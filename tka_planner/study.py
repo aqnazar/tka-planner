@@ -15,8 +15,8 @@ bone surface and can be slid over it. There are two ways to start:
   reset to it.
 
 A finished set is written as an ordinary landmark file (``tka-landmarks/1.0.0``,
-status ``present``, origin ``observer:<id>``), so it opens with ``--landmarks`` like any
-other, beside a study record with the timings, what was skipped and why, and in
+status ``present``, origin ``observer:<slug>``), so it opens with ``--landmarks`` like
+any other, beside a study record with the timings, what was skipped and why, and in
 ``adjust`` mode how far each marker was moved from the estimate.
 
 **Review.** The surgeon looks at the plan the planner proposes, mechanical or
@@ -24,16 +24,23 @@ kinematic, and marks it acceptable or not, with the reasons, a severity and a co
 Each verdict is a line of a per-observer JSON Lines file, with the plan it judged: the
 alignment, every control value, and the report as the surgeon saw it.
 
-Study output holds patient geometry and observer identities. It goes to the study
-folder the server is given, never into the repository.
+**The observer** is the surgeon's name as typed. Names that differ only in case,
+spacing or Unicode form are one person (:func:`observer_key`); the files are named by a
+file-safe form of that key (:func:`observer_slug`), and every record keeps both the name
+as typed and the key.
+
+Study output holds patient geometry and observer names. It goes to the study folder
+the server is given, never into the repository.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import math
 import re
+import unicodedata
 from dataclasses import asdict
 from pathlib import Path
 
@@ -53,6 +60,8 @@ __all__ = [
     "REVIEW_VERDICTS",
     "REVIEW_REASONS",
     "REVIEW_SEVERITIES",
+    "observer_key",
+    "observer_slug",
     "pickable_landmarks",
     "pick_targets",
     "save_picks",
@@ -90,9 +99,40 @@ REVIEW_SEVERITIES = (
     ("major", "Major: would not use this plan"),
 )
 
-_OBSERVER = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_OBSERVER_NAME_MAX = 200
+_SLUG_MAX = 48
+_SLUG_UNSAFE = re.compile(r"[^a-z0-9]+")
+# File names Windows reserves for devices, whatever the extension.
+_RESERVED_STEMS = {"con", "prn", "aux", "nul",
+                   *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))}
 # A pick further than this from its bone's surface is a fault in the client, not a pick.
 MAX_SURFACE_GAP_MM = 5.0
+
+
+def observer_key(name: str) -> str:
+    """One observer however the name is typed: NFKC, trimmed, single spaces, casefolded."""
+    text = unicodedata.normalize("NFKC", str(name))
+    return " ".join(text.split()).casefold()
+
+
+def observer_slug(key: str) -> str:
+    """A file-safe name for an observer key.
+
+    ASCII letters and digits are kept and every other run of characters becomes one
+    ``-``, at most 48 characters. When anything was replaced or cut, the first 8 hex
+    digits of the key's SHA-1 are appended, so names in other scripts, or that differ
+    only in what was replaced, stay distinct.
+    """
+    body = _SLUG_UNSAFE.sub("-", key).strip("-")
+    changed = body != key
+    if len(body) > _SLUG_MAX:
+        body, changed = body[:_SLUG_MAX].rstrip("-"), True
+    if body in _RESERVED_STEMS:
+        changed = True
+    if not changed:
+        return body
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+    return f"{body}-{digest}" if body else digest
 
 
 def pickable_landmarks() -> list:
@@ -161,7 +201,7 @@ def pick_targets(entry, mode: str) -> dict:
 
 def save_picks(entry, study_dir, body: dict) -> dict:
     """Write one observer's finished (or partial) set: a landmark file and a record."""
-    observer = _observer(body.get("observer"))
+    observer, key, slug = _observer(body.get("observer"))
     round_ = _round(body.get("round"))
     mode = _mode(body.get("mode"))
     session = entry.session
@@ -180,7 +220,7 @@ def save_picks(entry, study_dir, body: dict) -> dict:
         if position is None:
             reason = str(item.get("reason") or "not identifiable")[:200]
             points.append(Landmark(id=landmark_id, status=LandmarkStatus.NOT_PICKED,
-                                   origin=f"observer:{observer}", reason=reason))
+                                   origin=f"observer:{slug}", reason=reason))
             record["skipped"] = reason
         else:
             position = _point(position, landmark_id)
@@ -194,7 +234,7 @@ def save_picks(entry, study_dir, body: dict) -> dict:
                 record["surface_gap_mm"] = round(gap, 3)
             points.append(Landmark(id=landmark_id, position_mm=position,
                                    status=LandmarkStatus.PRESENT,
-                                   origin=f"observer:{observer}"))
+                                   origin=f"observer:{slug}"))
             record["position_mm"] = [round(float(v), 4) for v in position]
             auto = _position(automatic, landmark_id)
             if auto is not None:
@@ -206,11 +246,11 @@ def save_picks(entry, study_dir, body: dict) -> dict:
 
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     side = _side(session)
-    folder = Path(study_dir) / "picks" / observer
+    folder = Path(study_dir) / "picks" / slug
     folder.mkdir(parents=True, exist_ok=True)
     base = f"{session.case_id}_{side}_{mode}_r{round_}_{stamp}"
-    source = {"kind": "observer_study", "observer": observer, "round": round_,
-              "mode": mode, "saved_utc": stamp}
+    source = {"kind": "observer_study", "observer": observer, "observer_key": key,
+              "round": round_, "mode": mode, "saved_utc": stamp}
     landmark_path = write_landmark_set(
         LandmarkSet(case_id=session.case_id, side=side,
                     coordinate_system=automatic.coordinate_system,
@@ -237,7 +277,7 @@ def save_picks(entry, study_dir, body: dict) -> dict:
 
 def save_review(entry, study_dir, body: dict) -> dict:
     """Append one verdict on the plan as it stands now."""
-    observer = _observer(body.get("observer"))
+    observer, key, slug = _observer(body.get("observer"))
     round_ = _round(body.get("round"))
     verdict = body.get("verdict")
     if verdict not in REVIEW_VERDICTS:
@@ -260,6 +300,7 @@ def save_review(entry, study_dir, body: dict) -> dict:
     record = {
         "saved_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "observer": observer,
+        "observer_key": key,
         "round": round_,
         "case_id": session.case_id,
         "side": _side(session),
@@ -278,7 +319,7 @@ def save_review(entry, study_dir, body: dict) -> dict:
     }
     folder = Path(study_dir) / "reviews"
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{observer}.jsonl"
+    path = folder / f"{slug}.jsonl"
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
     return {"file": str(path), "record": {k: record[k] for k in (
@@ -296,10 +337,15 @@ def _mode(value) -> str:
     return value
 
 
-def _observer(value) -> str:
-    if not isinstance(value, str) or not _OBSERVER.match(value.strip()):
-        raise ValueError("Give the observer as 1-32 letters, digits, '-' or '_'.")
-    return value.strip()
+def _observer(value) -> tuple:
+    """The name as typed, its key and its slug; an empty name is refused."""
+    if not isinstance(value, str) or not observer_key(value):
+        raise ValueError("Enter the surgeon's name: the observer has no name.")
+    if len(value) > _OBSERVER_NAME_MAX:
+        raise ValueError(f"The surgeon's name is longer than {_OBSERVER_NAME_MAX} "
+                         f"characters.")
+    key = observer_key(value)
+    return value, key, observer_slug(key)
 
 
 def _round(value) -> int:

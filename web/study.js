@@ -34,11 +34,14 @@ export class Study {
     this.buildReviewForm();
   }
 
+  // The surgeon's name as typed. The server decides who that is (case, spacing and
+  // Unicode form do not matter); the same normalisation keys the browser's draft.
   observer() {
-    const observer = this.el("study-observer").value.trim();
+    const observer = this.el("study-observer").value;
+    const observerKey = observer.normalize("NFKC").trim().split(/\s+/).join(" ").toLowerCase();
     const round = Number(this.el("study-round").value);
-    if (!observer) throw new Error("Enter the observer's code first.");
-    return { observer, round };
+    if (!observerKey) throw new Error("Enter the surgeon's name first.");
+    return { observer, observerKey, round };
   }
 
   // ------------------------------------------------------------------
@@ -46,7 +49,7 @@ export class Study {
   // ------------------------------------------------------------------
 
   async startPick() {
-    const { observer, round } = this.observer();
+    const { observer, observerKey, round } = this.observer();
     const mode = this.el("pick-start-mode").value;
     const given = await this.api(
       "POST", `/api/sessions/${this.sessionId()}/study/targets`, { mode }
@@ -54,7 +57,7 @@ export class Study {
     await this.viewer.enterPick(given.bones);
     const auto = new Map(given.targets.filter((t) => t.auto_mm).map((t) => [t.id, t.auto_mm]));
     this.pick = {
-      ...given, observer, round, auto,
+      ...given, observer, observerKey, round, auto,
       positions: new Map(auto),
       skipped: new Map(),
       seconds: new Map(),
@@ -314,7 +317,7 @@ export class Study {
 
   draftKey() {
     const p = this.pick;
-    return `tka-study-draft:${p.case_id}:${p.side}:${p.observer}:${p.mode}:r${p.round}`;
+    return `tka-study-draft:${p.case_id}:${p.side}:${p.observerKey}:${p.mode}:r${p.round}`;
   }
 
   saveDraft() {

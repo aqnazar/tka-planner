@@ -10,11 +10,20 @@ tka serve --cases path/to/cases --library data/implants --study path/to/study_ou
 
 `--study` is where picks and verdicts are written; without it they go to a `study`
 folder inside the store (`~/.tka-planner/study`). Study output holds patient geometry and
-observer codes: keep it outside the repository.
+the surgeons' names: it is private, keep it outside the repository.
 
-Both modes ask for an **observer code** (letters, digits, `-` or `_`; a code, not a name)
-and a **round** (1, 2, ...: the same observer's sessions, at least a week apart for
-intra-observer variation).
+Both modes ask for the **surgeon's name** and a **round** (1, 2, ...: the same observer's
+sessions, at least a week apart for intra-observer variation). The same name means the
+same person across sessions: names that differ only in case, spacing or Unicode form
+("Dr. Ivanov", " dr.  ivanov ") are one observer. An empty name is refused.
+
+Files are named by a file-safe form of the name, the observer's `<slug>`: the name
+normalised (Unicode NFKC, trimmed, single spaces, case folded), ASCII letters and digits
+kept, every other run of characters made one `-`, at most 48 characters. When anything
+was replaced or cut, the first 8 hex digits of the normalised name's SHA-1 are
+appended, so names in Cyrillic or other scripts stay distinct (for example
+"Ахметов А.А./KZ" becomes `kz-` and eight hex digits). Every saved record keeps the name
+as typed (`observer`) and its normalised form (`observer_key`).
 
 ## Pick (landmark picking, experiment E3)
 
@@ -47,10 +56,10 @@ Two ways to start:
   puts one back, **Reset all** puts all back, and the ghosts can be hidden. A landmark
   with no estimate on that knee is placed as in `blank`.
 
-Each save writes two files to `<study>/picks/<observer>/`:
+Each save writes two files to `<study>/picks/<slug>/`:
 
 - `<case>_<side>_<mode>_r<round>_<UTC>.landmarks.json`: an ordinary landmark file
-  (`tka-landmarks/1.0.0`, status `present`, origin `observer:<code>`; skipped landmarks
+  (`tka-landmarks/1.0.0`, status `present`, origin `observer:<slug>`; skipped landmarks
   `not_picked` with the reason). It is read by `tka measure --landmarks` like any other.
 - `....study.json`: the record: time on each landmark, total time, whether the set is
   complete, each pick's distance to the bone surface, and in `adjust` mode how far each
@@ -72,6 +81,6 @@ previewed as in Plan mode), chooses **Mechanical** or **Kinematic**, and marks i
 plus an optional comment. The plan's adjustment controls are not shown in Review. If
 the plan was adjusted by hand beforehand, the panel says so and the verdict records it.
 
-Each verdict is one line of `<study>/reviews/<observer>.jsonl`, with the case, side,
+Each verdict is one line of `<study>/reviews/<slug>.jsonl`, with the case, side,
 alignment, verdict, reasons, severity, comment, time taken, every control value and the
 report as the surgeon saw it.
