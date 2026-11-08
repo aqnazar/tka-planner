@@ -336,6 +336,7 @@ def test_the_readout_carries_the_femoral_box_resections(session, monkeypatch):
     import tka_planner.pipeline as pipeline
 
     monkeypatch.setattr(pipeline, "femoral_cut_box_case", lambda *a: PLACED_BOX)
+    session._cut_box_cache = None     # the box the session placed on opening
     session.replan()
     lines = session.report_lines()
 
@@ -351,6 +352,7 @@ def test_the_readout_says_why_the_box_was_not_placed(session, monkeypatch):
 
     monkeypatch.setattr(pipeline, "femoral_cut_box_case",
                         lambda *a: {"available": False, "reason": "too short"})
+    session._cut_box_cache = None     # the box the session placed on opening
     session.replan()
 
     assert "Femoral box|not placed: too short" in session.report_lines()
@@ -361,6 +363,7 @@ def test_a_notching_anterior_cut_is_warned_about(session, monkeypatch):
 
     monkeypatch.setattr(pipeline, "femoral_cut_box_case",
                         lambda *a: {**PLACED_BOX, "anterior_notch_mm": 1.2})
+    session._cut_box_cache = None     # the box the session placed on opening
     session.replan()
 
     assert ("WARN|The anterior femoral cut notches the cortex by 1.2 mm"
@@ -373,9 +376,9 @@ def test_the_box_is_measured_once_per_plan(session, monkeypatch):
     calls = []
     monkeypatch.setattr(pipeline, "femoral_cut_box_case",
                         lambda *a: calls.append(1) or PLACED_BOX)
+    session._cut_box_cache = None         # the box the session placed on opening
+    # Re-planning places it for the implant rules; the readout then reuses it.
     session.replan()
-    # Re-planning measures the implant for the viewer too; count only the readout's.
-    calls.clear()
     session.report_lines()
     session.report_lines()
 

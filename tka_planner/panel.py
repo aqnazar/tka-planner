@@ -31,6 +31,13 @@ CONTROL_SCHEMA = (
              "help": "Patient-specific takes the implant's width and depth from this "
                      "patient's cuts; catalogue uses the library part at one scale, "
                      "as the legacy pipeline did."},
+            {"name": "implant_display", "label": "Parts shown", "kind": "choice",
+             "choices": [["built", "Built in Fusion (when built)"],
+                         ["stand_in", "Stand-in (library parts at the derived size)"]],
+             "help": "The knee's Fusion-built parts when it has a build; a build made "
+                     "for another plan is still shown and flagged with every parameter "
+                     "that differs. The stand-in is the library parts stretched to the "
+                     "dimensions the rules derive: it is not what would be built."},
             {"name": "coronal_correction_deg", "label": "Varus / valgus",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Coronal correction applied to both cuts together, so the "

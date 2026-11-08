@@ -271,6 +271,9 @@ def _envelope(entry, delta=None, **extra) -> dict:
         # lists the one and draws the other, and works out neither.
         "findings": session.findings(),
         "fit_map": session.fit_map_state(),
+        # What the implant shown is: built in Fusion, or a stand-in, and what a build
+        # made for another plan differs in. The viewer labels it; it decides nothing.
+        "implant": session.implant_state(),
         "controls": asdict(session.controls),
         "trial": asdict(session.trial),
         "stale": bool(session.stale),

@@ -36,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="where observer-study picks and plan verdicts are written "
              "(default: a 'study' folder in the store)",
     )
+    parser.add_argument(
+        "--builds", default=None,
+        help="the knees' Fusion-built parts, one folder per knee (default: a 'builds' "
+             "folder in the store); patient-derived, never in the repository",
+    )
     parser.add_argument("--port", type=int, default=8731)
     parser.add_argument(
         "--host", default="127.0.0.1",
@@ -52,7 +57,7 @@ def main(argv=None) -> int:
 
     manager = SessionManager(
         store=args.store, cases_root=args.cases, library=args.library,
-        study_dir=args.study,
+        study_dir=args.study, builds=args.builds,
     )
     server = PlannerServer(manager, host=args.host, port=args.port)
 
@@ -61,6 +66,7 @@ def main(argv=None) -> int:
     print(f"  cases    {args.cases or '(none configured; open a folder by path)'}")
     print(f"  library  {args.library or '(none configured; implants will not show)'}")
     print(f"  study    {manager.study_dir}")
+    print(f"  builds   {manager.builds.root if manager.builds else '(none)'}")
     print("Press Ctrl+C to stop.")
 
     if not args.no_browser:

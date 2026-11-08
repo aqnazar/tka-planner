@@ -919,8 +919,16 @@ def component_scales(
     library,
     mode: str = "patient_specific",
     spec: dict | None = None,
+    derived: dict | None = None,
 ) -> dict | None:
     """How each bone's set of library parts is shaped and placed for this implant.
+
+    ``derived`` is the implant the rules derive for this plan
+    (:func:`tka_planner.implant.derive_parameters`). With it the stand-in takes the
+    dimensions the parts would be built with: the femoral component Femur_ML - 1 wide,
+    centred where the rule slides it, and the tray at the tray rule's ML and AP, centred
+    on its outline. Without it (no parametric design in the library, or a plan the rules
+    cannot size) the parts are stretched to the sections measured on the cuts.
 
     ``patient_specific`` stretches the library parts to the patient's own width and
     depth, measured on the cuts, keeping the size's scale along the component's axis,
@@ -971,6 +979,8 @@ def component_scales(
     a = plan.adjustments
     shifts["femoral"] += np.array([a.femoral_shift_ap_mm,
                                    lateral_sign * a.femoral_shift_ml_mm, 0.0])
+    if derived is not None:
+        return _derived_transforms(derived, scales, shifts, lib_f, lib_t)
 
     # The tray is in register with the femoral component: the plan puts its origin
     # directly under the femoral one. So it takes the femoral part's slide rather than
@@ -983,6 +993,36 @@ def component_scales(
     world = femoral_pose[:3, :2] @ shifts["femoral"][:2]
     shifts["tibial"] = np.array([*(tray_pose[:3, :2].T @ world), 0.0])
     return {"scales": scales, "shifts": shifts}
+
+
+def _derived_transforms(derived, scales, shifts, lib_f, lib_t) -> dict:
+    """The stand-in at the derived dimensions (see :func:`component_scales`).
+
+    The femoral AP stays as measured over the flange (the rules set the box, not an
+    overall depth); its width is the component's, Femur_ML - 1, and its ML centre the
+    rule's slide, which is relative to the plan's pose (so it already holds any slide of
+    the surgeon's: the rule centres the part on the cut surfaces whatever it was). The
+    tray is the tray rule's ML x AP, centred on the rule's outline, which is in the tray
+    frame slid with the femoral component.
+    """
+    def mm(value):
+        return float(str(value).split()[0])
+
+    width = mm(derived["femoral"]["Femur_ML"]) - 1.0
+    scales = {k: np.array(v, dtype=float) for k, v in scales.items()}
+    shifts = {k: np.array(v, dtype=float) for k, v in shifts.items()}
+    scales["femoral"][1] = width / lib_f["ml"]
+    shifts["femoral"][1] = (float(derived["femoral_fit"]["ml_shift_mm"])
+                            - scales["femoral"][1] * lib_f["centre"][1])
+    plate = derived["plate"]
+    scales["tibial"][0] = mm(plate["Tibial_Plateau_ML"]) / lib_t["ml"]
+    scales["tibial"][1] = mm(plate["Tibial_Plateau_AP"]) / lib_t["ap"]
+    outline = np.asarray(derived["tray_rule"]["plate_outline_mm"], dtype=float)
+    centre = (outline.min(axis=0) + outline.max(axis=0)) / 2.0
+    slide = np.asarray(derived["femoral_fit"]["tray_origin_shift_mm"], dtype=float)
+    shifts["tibial"] = np.array([*(slide + centre - scales["tibial"][:2]
+                                   * np.asarray(lib_t["centre"])), 0.0])
+    return {"scales": scales, "shifts": shifts, "source": "derived"}
 
 
 def fit_case(
@@ -1014,6 +1054,8 @@ def fit_case_with_grids(
     mode: str = "patient_specific",
     *,
     transforms=None,
+    parts: dict | None = None,
+    built_shifts: dict | None = None,
 ) -> tuple[dict | None, dict]:
     """:func:`fit_case`, and the signed-distance grid of each component's fit.
 
@@ -1023,6 +1065,10 @@ def fit_case_with_grids(
 
     The grids are :class:`~tka_planner.core.fit.FitField` objects by component name,
     the fields the fit's maxima were read from, for drawing the fit as a colour map.
+
+    ``parts`` are the Fusion-built meshes by component name (in their CAD frames), used
+    instead of the library parts, at the plan's poses slid by ``built_shifts`` (per
+    group, in the component's axes) and never stretched: what was built is what fits.
     """
     from .core.fit import section_fit
     from .geom import mesh as gm
@@ -1040,22 +1086,28 @@ def fit_case_with_grids(
     transforms = transforms or {}
     scales = transforms.get("scales", {})
     shifts = transforms.get("shifts", {})
-    result = {"implant_mode": mode if scales else "catalogue",
+    parts = parts or {}
+    built_shifts = built_shifts or {}
+    result = {"implant_mode": "built" if parts else (mode if scales else "catalogue"),
               "library_sizes": {}, "missing": []}
     for name, cut, bone, frame, side_of_cut in (
         ("tibial_component", "tibial_proximal", m.tibia, m.tibial_frame, 1.0),
         ("femoral_component", "femoral_distal", m.femur, m.femoral_frame, -1.0),
     ):
         spec = specs.get(name)
-        if spec is None:
+        group = "tibial" if name.startswith("tibial") else "femoral"
+        if name in parts:
+            posed = gm.transformed(parts[name], place(plan.components[name], 1.0,
+                                                      built_shifts.get(group)))
+        elif spec is None:
             result["missing"].append(name)
             continue
-        group = "tibial" if name.startswith("tibial") else "femoral"
-        posed = gm.transformed(
-            _cached_component(spec),
-            place(plan.components[name], scales.get(group, spec["scale"]),
-                  shifts.get(group)),
-        )
+        else:
+            posed = gm.transformed(
+                _cached_component(spec),
+                place(plan.components[name], scales.get(group, spec["scale"]),
+                      shifts.get(group)),
+            )
         if name == "femoral_component":
             result["posterior_condylar_offset"] = planned_condylar_offset(
                 m.femur.vertices, posed.vertices, m.landmarks, m.femoral_frame)
@@ -1068,6 +1120,9 @@ def fit_case_with_grids(
         )
         result[name] = fit.to_dict()
         grids[name] = fit.grid
+        if name in parts:
+            result["library_sizes"][name] = {"built": True}
+            continue
         result["library_sizes"][name] = {
             "source_size": spec["source_size"], "scale": round(spec["scale"], 6),
         }
@@ -1076,12 +1131,41 @@ def fit_case_with_grids(
                 round(float(v), 6) for v in scales[group]]
             result["library_sizes"][name]["shift_mm"] = [
                 round(float(v), 3) for v in shifts[group]]
-    if "femoral_component" not in specs:
+    if "femoral_component" not in specs and "femoral_component" not in parts:
         result["posterior_condylar_offset"] = {
             "available": False,
             "reason": "the implant library has no femoral component for this side"}
-    result["insert"] = _insert_check(plan, specs, m, transforms)
+    if parts:
+        result["insert"] = _built_insert_check(plan, parts, m, built_shifts)
+    else:
+        result["insert"] = _insert_check(plan, specs, m, transforms)
     return result, grids
+
+
+def _built_insert_check(plan: SurgicalPlan, parts: dict, m: CaseMeasurement,
+                        built_shifts: dict) -> dict | None:
+    """Whether the built femoral component meets the built insert, as placed."""
+    from .core.insert import solve_insert
+    from .geom import mesh as gm
+    from .scene.build import place
+
+    if "femoral_component" not in parts or "tibial_insert" not in parts:
+        return None
+    femoral = gm.transformed(parts["femoral_component"], place(
+        plan.components["femoral_component"], 1.0, built_shifts.get("femoral")))
+    insert_pose = place(plan.components["tibial_component"], 1.0, built_shifts.get("tibial"))
+    insert = gm.transformed(parts["tibial_insert"], insert_pose)
+    try:
+        clearance = solve_insert(femoral, insert,
+                                 normal=plan.resections["tibial_proximal"].normal,
+                                 lateral=m.tibial_frame.lateral)
+    except ValueError as error:
+        return {"built": True, "clearance": None, "note": str(error)}
+    flags = ["COMPONENT_COLLISION"] if clearance.change_mm < -0.5 else []
+    note = (f"The built femoral component runs {-clearance.change_mm:.1f} mm into the "
+            f"built insert." if flags else
+            "No collision: the built insert meets the built femoral component.")
+    return {"built": True, "clearance": clearance.to_dict(), "flags": flags, "note": note}
 
 
 def _insert_check(plan: SurgicalPlan, specs: dict, m: CaseMeasurement,

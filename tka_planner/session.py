@@ -61,8 +61,16 @@ TIBIAL_ONLY = frozenset(
 TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference", "insert_minimum_mm", "tray_rotation"}
 BOTH_BONES = frozenset({
     "coronal_correction_deg", "philosophy", "size_override", "implant_mode",
-    "resection_mode", "build_bone_shells",
+    "resection_mode", "build_bone_shells", "implant_display",
 })
+# The scene's implant nodes and the built part each takes when the knee's Fusion build is
+# shown. The blocks take the knee's own blocks only while the build matches the plan.
+BUILT_PARTS = {"femoral_component": "femoral", "tibial_component": "plate",
+               "tibial_insert": "insert"}
+BUILT_BLOCKS = {"femoral_cutting_block": "femoral_block",
+                "femoral_cutting_block_shell": "femoral_block",
+                "tibial_cutting_block": "tibial_block",
+                "tibial_cutting_block_shell": "tibial_block"}
 # Controls that move nothing a boolean depends on, in any mode.
 NO_BONES = frozenset({
     "insert_thickness_delta_mm", "show_planes", "show_axes",
@@ -100,6 +108,10 @@ class Controls:
     # Patient-specific: the implant takes the patient's own dimensions from the cuts.
     # Catalogue: the library part at the size's single scale, as the legacy pipeline.
     implant_mode: str = "patient_specific"
+    # Which patient-specific implant is shown: the knee's Fusion-built parts when they
+    # exist (flagged when built for another plan), or the stand-in, the library parts at
+    # the dimensions the rules derive.
+    implant_display: str = "built"
     # The insert is solved to close the joint; this is the surgeon's thicker or thinner.
     insert_thickness_delta_mm: float = 0.0
     # The thinnest insert the plan accepts (author 2026-11-08); below it the tibial cut
@@ -168,6 +180,8 @@ class PlanningSession:
     femur_length_mm: float | None = None
     femur_length_type: str | None = None
     sex: str | None = None
+    # The knees' Fusion builds (tka_planner.implant.builds.BuildStore), or None.
+    builds: object = None
 
     measurement = None
 
@@ -192,7 +206,7 @@ class PlanningSession:
              landmarks=None, remove_large_islands: bool = False,
              femur_length_mm: float | None = None,
              femur_length_type: str | None = None,
-             sex: str | None = None) -> "PlanningSession":
+             sex: str | None = None, builds=None) -> "PlanningSession":
         """Find the two bone meshes in a patient folder and measure them.
 
         ``landmarks`` is a landmark file laid over the automatic estimate, exactly as
@@ -207,7 +221,7 @@ class PlanningSession:
             landmarks_path=Path(landmarks) if landmarks else None,
             remove_large_islands=remove_large_islands,
             femur_length_mm=femur_length_mm,
-            femur_length_type=femur_length_type, sex=sex,
+            femur_length_type=femur_length_type, sex=sex, builds=builds,
         )
         session._measure()
         return session
@@ -301,6 +315,7 @@ class PlanningSession:
             femur_mesh=self._femur,
             tibia_mesh=self._tibia,
         )
+        self.refresh_implant()
         # The scene holds uncut bones until Commit runs, so it does not yet match the
         # plan's resections.
         self.stale = True
@@ -319,14 +334,7 @@ class PlanningSession:
         self.controls = replace(self.controls, **changes)
         self.plan, self.sizing = self._plan()
 
-        delta = scene_update.update_scene(
-            self.scene,
-            self.plan,
-            insert_thickness_mm=self._insert_thickness(),
-            implant_ml_mm=self.sizing.implant_ml_mm,
-            insert_stretch=self._insert_stretch(),
-            component_scales=self.component_scales,
-        )
+        delta = self.refresh_implant()
         if "isolate_landmarks" in changes:
             delta = delta.merge(
                 scene_update.isolate_landmarks(
@@ -501,6 +509,7 @@ class PlanningSession:
             lines.append(f"Femoral box|not placed: {box['reason']}")
 
         lines += self._table_lines()
+        lines += self._implant_lines()
         lines += self._fit_lines()
 
         if diagnostics.get("insert_thickness_mm") is not None:
@@ -688,7 +697,8 @@ class PlanningSession:
         try:
             fit, grids = fit_case_with_grids(self.measurement, self.plan, self.sizing,
                                              self.library, self.controls.implant_mode,
-                                             transforms=self.component_scales)
+                                             transforms=self.component_scales,
+                                             **self._fit_parts())
         except ValueError as error:
             fit, grids = None, {}
             self.fit_note = f"The fit could not be measured: {error}"
@@ -733,6 +743,9 @@ class PlanningSession:
         digest.update(f"{self.controls.implant_mode}|{self.sizing.size_parameter!r}|"
                       f"{self.plan.diagnostics.get('insert_thickness_mm')!r}"
                       .encode("utf-8"))
+        # The parts the fit is of: the built ones (and which build) or the stand-in.
+        build = self.build_record if self._showing_built(self.build_record) else None
+        digest.update(repr(build.stamp if build is not None else None).encode("utf-8"))
         return digest.hexdigest()
 
     @property
@@ -790,7 +803,7 @@ class PlanningSession:
         if fit is None and self.fit_is_current:
             fit = self.fit
         return findings_case(self.measurement, self.plan, self.sizing,
-                             box=self.femoral_cut_box, fit=fit)
+                             box=self.femoral_cut_box, fit=fit) + self._implant_findings()
 
     def report_html(self) -> str:
         """The HTML report on the current plan, with the fit measured if it is not."""
@@ -806,7 +819,8 @@ class PlanningSession:
                 fit, grids = fit_case_with_grids(self.measurement, self.plan,
                                                  self.sizing, self.library,
                                                  self.controls.implant_mode,
-                                                 transforms=self.component_scales)
+                                                 transforms=self.component_scales,
+                                                 **self._fit_parts())
             except ValueError:
                 fit, grids = None, None
         return render_case_report(
@@ -816,6 +830,246 @@ class PlanningSession:
             resection_table=self.resection_table,
             findings=self.findings(fit),
         )
+
+    # ------------------------------------------------------------------
+    # The implant: derived by the rules, built in Fusion, or a stand-in
+    # ------------------------------------------------------------------
+
+    @property
+    def derived(self) -> dict | None:
+        """The implant the rules derive for this plan (the Fusion parameters of the
+        three parts, :func:`tka_planner.implant.derive_parameters`), or ``None`` with no
+        parametric design in the library or a plan they cannot size (see
+        :attr:`derived_reason`). Kept for as long as the plan."""
+        if self.library is None or self.plan is None:
+            return None
+        cached = getattr(self, "_derived_cache", None)
+        if cached is None or cached[0] != id(self.plan):
+            from tka_planner.implant import derive_parameters
+
+            try:
+                job, reason = derive_parameters(
+                    self.measurement, self.plan, self.sizing, self.library,
+                    name=self.case_id or None, side=str(self.side),
+                    box=self.femoral_cut_box), None
+            except (ValueError, KeyError, IndexError, TypeError) as error:
+                job, reason = None, str(error)
+            cached = (id(self.plan), job, reason)
+            self._derived_cache = cached
+        return cached[1]
+
+    @property
+    def derived_reason(self) -> str | None:
+        """Why there is no derivation, or ``None`` when there is one."""
+        if self.library is None:
+            return "no implant library"
+        self.derived
+        return self._derived_cache[2]
+
+    @property
+    def build_record(self):
+        """The knee's Fusion build in the builds folder, or ``None``."""
+        if self.builds is None:
+            return None
+        return self.builds.get(self.case_id, self.side)
+
+    def _showing_built(self, build) -> bool:
+        return (build is not None and self.controls.implant_display == "built"
+                and self.controls.implant_mode == "patient_specific")
+
+    def stale_parameters(self, build=None) -> list:
+        """Every parameter the build differs in from this plan's derivation, as rows
+        ``{part, name, built, now}``; empty when it matches."""
+        from tka_planner.implant.builds import compare
+
+        build = build if build is not None else self.build_record
+        if build is None:
+            return []
+        derived = self.derived
+        if derived is None:
+            return [{"part": "plan", "name": "derivation", "built": None,
+                     "now": self.derived_reason}]
+        return [{"part": part, "name": name, "built": a, "now": b}
+                for part, name, a, b in compare(build, derived)]
+
+    @property
+    def built_transforms(self) -> dict | None:
+        """How the built parts are placed on this plan: at their bone's pose, slid along
+        the femoral ML axis by the slide they were built with (the tray origin with it,
+        in its own plane); ``None`` when the built parts are not shown."""
+        import numpy as np
+
+        from tka_planner.implant import ml_slide
+
+        build = self.build_record
+        if not self._showing_built(build) or self.plan is None:
+            return None
+        F = self.plan.components["femoral_component"]
+        T = self.plan.components["tibial_component"]
+        _, _, t_shift = ml_slide(F, T, build.ml_shift_mm)
+        return {"shifts": {"femoral": np.array([0.0, build.ml_shift_mm, 0.0]),
+                           "tibial": np.array([t_shift[0], t_shift[1], 0.0])}}
+
+    def built_blocks(self) -> dict:
+        """The knee's own cutting blocks in the scene, by group: (mesh, slide). What a
+        commit's cache key reads, since these blocks then make the cut."""
+        transforms = self.built_transforms or {}
+        out = {}
+        for name, group in (("femoral_cutting_block", "femoral"),
+                            ("tibial_cutting_block", "tibial")):
+            node = self.scene.nodes.get(name) if self.scene is not None else None
+            if node is not None and node.tags.get("built"):
+                shift = transforms.get("shifts", {}).get(group)
+                out[group] = [node.mesh_id,
+                              None if shift is None else [round(float(v), 9) for v in shift]]
+        return out
+
+    def _built_mesh(self, path):
+        from tka_planner.core.meshio import read_stl
+
+        cache = getattr(self, "_built_meshes", None)
+        if cache is None:
+            cache = self._built_meshes = {}
+        key = (str(path), Path(path).stat().st_mtime_ns)
+        if key not in cache:
+            cache[key] = read_stl(path)
+        return cache[key]
+
+    def refresh_implant(self) -> SceneDelta:
+        """Put the right parts in the scene for this plan and pose them.
+
+        The knee's built parts when they are shown, the library's otherwise; the
+        knee's own blocks only while its build matches the plan, so a commit never cuts
+        with blocks made for another plan. Called on every re-plan and after a build.
+        """
+        from tka_planner.pipeline import _cached_component
+
+        delta = SceneDelta()
+        if self.scene is None or self.plan is None:
+            return delta
+        build = self.build_record
+        showing = self._showing_built(build)
+        matches = showing and not self.stale_parameters(build)
+        specs = self._components()
+        for name in list(self.scene.nodes):
+            node = self.scene.nodes[name]
+            part = BUILT_PARTS.get(name) or BUILT_BLOCKS.get(name)
+            if part is None:
+                continue
+            use = (showing and part in build.parts
+                   and (name in BUILT_PARTS or matches))
+            if use:
+                path = build.parts[part]
+                tag = f"{path}|{path.stat().st_mtime_ns}"
+                if node.tags.get("built") != tag:
+                    delta.meshes[name] = self.scene.replace_mesh(name, self._built_mesh(path))
+                    node.tags["built"] = tag
+            elif node.tags.get("built"):
+                node.tags.pop("built")
+                if name in specs:
+                    delta.meshes[name] = self.scene.replace_mesh(
+                        name, _cached_component(specs[name]))
+        return delta.merge(scene_update.update_scene(
+            self.scene,
+            self.plan,
+            insert_thickness_mm=self._insert_thickness(),
+            implant_ml_mm=self.sizing.implant_ml_mm,
+            insert_stretch=self._insert_stretch(),
+            component_scales=self.component_scales,
+            built=self.built_transforms,
+        ))
+
+    def implant_state(self) -> dict:
+        """What the implant shown is, for the envelope, the readout and the findings:
+        ``source`` ("built" or "stand_in"), the label to show, the parameters a build
+        made for another plan differs in, its versions and when it was built."""
+        build = self.build_record
+        showing = self._showing_built(build)
+        stale = self.stale_parameters(build) if showing else []
+        if showing:
+            label = "built" if not stale else (
+                f"built for another plan ({len(stale)} parameter"
+                f"{'s' if len(stale) != 1 else ''} differ)")
+        elif self.controls.implant_mode == "catalogue":
+            label = "catalogue size, not built"
+        else:
+            label = "stand-in, not built"
+        return {
+            "source": "built" if showing else "stand_in",
+            "label": label,
+            "stale": stale,
+            "built_available": build is not None,
+            "display": self.controls.implant_display,
+            "versions": build.versions if build is not None else {},
+            "health": build.health if build is not None else {},
+            "built_at": build.built_at if build is not None else None,
+            "derived": self.derived is not None,
+            "derived_reason": None if self.derived is not None else self.derived_reason,
+        }
+
+    def _implant_findings(self) -> list:
+        state = self.implant_state()
+        if state["source"] == "built" and not state["stale"]:
+            v = state["versions"]
+            return [{"code": "IMPLANT_BUILT", "severity": "info", "source": "implant",
+                     "location": None,
+                     "message": f"The parts shown are the knee's Fusion-built parts for this "
+                                f"plan (femoral v{v.get('femoral')}, plate v{v.get('plate')}, "
+                                f"insert v{v.get('insert')})."}]
+        if state["source"] == "built":
+            n = len(state["stale"])
+            names = ", ".join(f"{row['part']}.{row['name']}" for row in state["stale"][:4])
+            return [{"code": "BUILD_STALE", "severity": "warning", "source": "implant",
+                     "location": None,
+                     "message": f"The parts shown were built for another plan: {n} "
+                                f"parameter{'s' if n != 1 else ''} differ ({names}"
+                                f"{', ...' if n > 4 else ''}). They follow the new cuts at "
+                                f"their built sizes, and Commit cuts with the library "
+                                f"blocks. Build again to match."}]
+        if self.controls.implant_mode == "catalogue":
+            return []
+        extra = (" The knee's built parts exist; the stand-in was chosen."
+                 if state["built_available"] else "")
+        how = ("the library parts at the dimensions the rules derive" if state["derived"]
+               else f"the library parts stretched to the cuts (no derivation: "
+                    f"{state['derived_reason']})")
+        return [{"code": "IMPLANT_STAND_IN", "severity": "info", "source": "implant",
+                 "location": None,
+                 "message": f"The implant shown is a stand-in, not built: {how}.{extra}"}]
+
+    def _implant_lines(self) -> list:
+        state = self.implant_state()
+        lines = ["", "HEAD|Implant shown", f"Parts|{state['label']}"]
+        if state["source"] == "built":
+            v = state["versions"]
+            lines.append(f"Fusion versions|femoral v{v.get('femoral')}, plate "
+                         f"v{v.get('plate')}, insert v{v.get('insert')}")
+            if state["built_at"]:
+                lines.append(f"Built|{state['built_at']}")
+        job = self.derived
+        if job is not None:
+            def mm(value):
+                return float(str(value).split()[0])
+            lines += [
+                f"Femur_ML (rules)|{mm(job['femoral']['Femur_ML']):.2f} mm",
+                f"Tray (rules)|{mm(job['plate']['Tibial_Plateau_ML']):.1f} x "
+                f"{mm(job['plate']['Tibial_Plateau_AP']):.1f} mm",
+                f"Insert (rules)|{mm(job['insert']['Insert_Thickness']):.2f} mm",
+            ]
+        for row in state["stale"][:8]:
+            lines.append(f"WARN|Built {row['part']}.{row['name']} {row['built']} -> now "
+                         f"{row['now']}")
+        return lines
+
+    def _fit_parts(self) -> dict:
+        """The built meshes the fit is measured on, and their slides, when shown."""
+        transforms = self.built_transforms
+        if transforms is None or self.scene is None:
+            return {}
+        parts = {name: self.scene.meshes[self.scene.nodes[name].mesh_id]
+                 for name in BUILT_PARTS
+                 if name in self.scene.nodes and self.scene.nodes[name].tags.get("built")}
+        return {"parts": parts, "built_shifts": transforms["shifts"]} if parts else {}
 
     # ------------------------------------------------------------------
     # Internals
@@ -874,8 +1128,11 @@ class PlanningSession:
         key = (id(self.plan), self.controls.implant_mode)
         cached = getattr(self, "_transforms_cache", None)
         if cached is None or cached[0] != key:
+            derived = (self.derived if self.controls.implant_mode == "patient_specific"
+                       else None)
             cached = (key, component_scales(self.measurement, self.plan, self.sizing,
-                                            self.library, self.controls.implant_mode))
+                                            self.library, self.controls.implant_mode,
+                                            derived=derived))
             self._transforms_cache = cached
         return cached[1]
 

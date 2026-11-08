@@ -795,9 +795,9 @@ def test_opening_passes_the_island_option_and_an_entered_femur_length(api, folde
         "folder": str(folder), "side": "left", "remove_large_islands": True,
         "femur_length_mm": "455"})
     assert status == 200, payload
-    assert raw_session.opened_with == {"remove_large_islands": True,
-                                       "femur_length_mm": 455.0,
-                                       "femur_length_type": None, "sex": None}
+    assert {k: v for k, v in raw_session.opened_with.items() if k != "builds"} == {
+        "remove_large_islands": True, "femur_length_mm": 455.0,
+        "femur_length_type": None, "sex": None}
 
 
 def test_an_entered_femur_length_must_be_a_number(api, folder):

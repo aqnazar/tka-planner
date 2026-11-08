@@ -72,7 +72,7 @@ class SessionManager:
     """Opens sessions, keeps them, and puts the store behind their commits."""
 
     def __init__(self, *, store=None, cases_root=None, library=None, kernel=None,
-                 study_dir=None):
+                 study_dir=None, builds=None):
         self.store = store if isinstance(store, Store) else (
             Store(store) if store is not None else None
         )
@@ -82,6 +82,13 @@ class SessionManager:
             study_dir = Path(self.store.root) / "study"
         self.study_dir = Path(study_dir) if study_dir else None
         self.cases_root = Path(cases_root) if cases_root else None
+        # The knees' Fusion builds: beside the store unless given, never in the
+        # repository (patient-derived parts).
+        from tka_planner.implant.builds import BuildStore
+
+        if builds is None and self.store is not None:
+            builds = Path(self.store.root) / "builds"
+        self.builds = BuildStore(builds) if builds else None
         self.library = Path(library) if library else None
         self.kernel = kernel
         self._entries: dict = {}
@@ -142,7 +149,7 @@ class SessionManager:
             folder, side=side, library=library or self.library, landmarks=landmarks,
             remove_large_islands=remove_large_islands,
             femur_length_mm=femur_length_mm,
-            femur_length_type=femur_length_type, sex=sex,
+            femur_length_type=femur_length_type, sex=sex, builds=self.builds,
         )
         session.build()
 
