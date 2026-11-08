@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="the knees' Fusion-built parts, one folder per knee (default: a 'builds' "
              "folder in the store); patient-derived, never in the repository",
     )
+    parser.add_argument(
+        "--fusion-config", default=None,
+        help="the Fusion source documents and add-in address for Build (default: "
+             "fusion/local.json, or TKA_FUSION_CONFIG)",
+    )
     parser.add_argument("--port", type=int, default=8731)
     parser.add_argument(
         "--host", default="127.0.0.1",
@@ -60,6 +65,7 @@ def main(argv=None) -> int:
         study_dir=args.study, builds=args.builds,
     )
     server = PlannerServer(manager, host=args.host, port=args.port)
+    server.api.fusion_config_path = args.fusion_config
 
     print(f"TKA planner running at {server.url}")
     print(f"  store    {args.store}")

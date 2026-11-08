@@ -41,8 +41,11 @@
 <main>
   <aside id="panel">
     <nav id="modes">
+      <button type="button" data-mode="anatomy" title="The bones and the landmarks found on them">Anatomy</button>
       <button type="button" data-mode="plan" class="active">Plan</button>
+      <button type="button" data-mode="implant" title="The implant the rules derive from this plan">Implant</button>
       <button type="button" data-mode="reduce">Reduce</button>
+      <button type="button" data-mode="build" title="Build the derived parts in Fusion">Build</button>
       <button type="button" data-mode="review" title="Observer study: mark the plan OK or NOT OK">Review</button>
       <button type="button" data-mode="pick" title="Observer study: place the landmarks on the bones">Pick</button>
     </nav>
@@ -55,6 +58,13 @@
       </label>
     </fieldset>
 
+    <section id="anatomy-mode" hidden>
+      <p class="study-help">The bones as segmented from the CT, and the landmarks found on them. Every axis and cut of the plan is built from these points. Click a landmark to go to it.</p>
+      <div class="actions"><button type="button" id="anatomy-show">Show landmarks and axes</button></div>
+      <div id="anatomy-facts"></div>
+      <div id="landmark-list"></div>
+    </section>
+
     <section id="plan-mode">
       <div class="actions">
         <button type="button" id="commit">Commit</button>
@@ -63,7 +73,23 @@
       <div id="controls"></div>
     </section>
 
+    <section id="implant-mode" hidden>
+      <p class="study-help">The rules turn this plan's cuts into the Fusion parameters of the three parts. Each value with the rule that set it; a value that differs from the knee's build is marked.</p>
+      <div class="actions">
+        <button type="button" id="derive" class="primary">Derive from the plan</button>
+        <button type="button" id="figures-open">J-curve and tray</button>
+      </div>
+      <div id="derivation"></div>
+    </section>
+
     <section id="reduce-mode" hidden>
+      <label class="wide" title="The planner's trajectories (S1 to S3), or the kinematic model on the femoral component shown: it rolls on the component's own J-curve, with the published medial-pivot rollback or none.">Motion
+        <select id="motion">
+          <option value="planner">Planner trajectory (S1-S3)</option>
+          <option value="published">Medial pivot on the parts (published TKA profile)</option>
+          <option value="fixed">J-curve rolling only, no rollback</option>
+        </select>
+      </label>
       <div id="trial"></div>
       <div class="actions">
         <button type="button" id="play">Play arc</button>
@@ -72,6 +98,16 @@
       <label class="arc">Arc to
         <input id="arc-max" type="number" value="120" min="10" max="150" step="5"> deg
       </label>
+      <div id="kin-now"></div>
+      <div id="kin-charts"></div>
+    </section>
+
+    <section id="build-mode" hidden>
+      <p class="study-help">One Fusion design per part, driven by parameters: Build sets the parameters derived from this plan, rebuilds, checks every feature, compares each part with its last build (the save gate), saves a version and exports the parts. Needs Fusion open with its MCP add-in.</p>
+      <div class="actions"><button type="button" id="build" class="primary">Build this plan in Fusion</button></div>
+      <div id="build-state"></div>
+      <pre id="build-log"></pre>
+      <div id="build-parts"></div>
     </section>
 
     <section id="review-mode" hidden>
@@ -150,10 +186,15 @@
 
   <div id="view">
     <div id="legend" hidden></div>
+    <div id="figures" hidden>
+      <div class="figures-head"><b>The patient against the implant</b><button type="button" id="figures-close">Close</button></div>
+      <div id="figures-body"></div>
+    </div>
   </div>
 
   <aside id="readout">
     <div id="banner" hidden></div>
+    <div id="implant-badge" hidden></div>
     <section id="findings"></section>
     <div id="report"></div>
     <div id="notes"></div>

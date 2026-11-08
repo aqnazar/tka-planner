@@ -75,7 +75,8 @@ def test_orbit_controls_imports_only_the_mapped_name():
 
 
 def test_every_element_the_controller_reaches_for_is_in_the_page(index):
-    script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+    script = "".join((WEB_ROOT / name).read_text(encoding="utf-8")
+                     for name in ("app.js", "implant.js"))
     ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
 
     present = set(re.findall(r'id="([^"]+)"', index))

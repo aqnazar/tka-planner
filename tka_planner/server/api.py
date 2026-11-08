@@ -14,6 +14,7 @@ clipping half-spaces, the report lines, both sets of control values and the stal
 
 from __future__ import annotations
 
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from tka_planner.scene.model import SceneDelta
 from tka_planner.study import pick_targets, save_picks, save_review, study_schema
 
 from .encode import clip_planes, node_payload, scene_snapshot
+from .implant import ImplantRoutes
 
 __all__ = ["Api", "Binary", "ApiError"]
 
@@ -47,20 +49,37 @@ class ApiError(Exception):
         self.message = message
 
 
-class Api:
+class Api(ImplantRoutes):
     """Routes over a :class:`~tka_planner.server.sessions.SessionManager`."""
 
     def __init__(self, manager):
         self.manager = manager
+        self._implant_init()
+        # The server is threaded so meshes load while a commit cuts; a request that
+        # plans, cuts or derives must still not run beside another on the same state.
+        self._turn = threading.RLock()
 
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
 
     def dispatch(self, method: str, path: str, body=None):
-        """Route a request. Returns ``(status, payload)``; never raises for a caller."""
+        """Route a request. Returns ``(status, payload)``; never raises for a caller.
+
+        Every request takes its turn except the ones that only read: a mesh by its
+        content hash, and the progress of a Fusion build.
+        """
+        parts = _segments(path)
+        reads_only = method.upper() == "GET" and (
+            "meshes" in parts or parts[1:] == ["build"] or parts[1:] == ["health"])
+        if reads_only:
+            return self._dispatch(method, parts, body)
+        with self._turn:
+            return self._dispatch(method, parts, body)
+
+    def _dispatch(self, method, parts, body):
         try:
-            return 200, self._route(method.upper(), _segments(path), body or {})
+            return 200, self._route(method.upper(), parts, body or {})
         except ApiError as error:
             return error.status, {"error": error.message}
         except KeyError as error:
@@ -85,6 +104,8 @@ class Api:
             return study_schema()
         if rest == ["sessions"] and method == "POST":
             return self.open_session(body)
+        if rest == ["build"] and method == "GET":
+            return self.build_progress()
 
         if len(rest) >= 2 and rest[0] == "sessions":
             return self._session_route(method, rest[1], rest[2:], body)
@@ -107,9 +128,9 @@ class Api:
         elif tail == ["commit"] and method == "POST":
             return self.commit(entry)
         elif tail == ["trial"] and method == "POST":
-            return self.set_trial(entry, body)
+            return self.kinematic_trial(entry, self.set_trial(entry, body), body.get("model"))
         elif tail == ["trial", "reset"] and method == "POST":
-            return self.reset_trial(entry)
+            return self.kinematic_trial(entry, self.reset_trial(entry), body.get("model"))
         elif tail == ["arc"] and method == "POST":
             return self.arc(entry, body)
         elif tail == ["export"] and method == "POST":
@@ -124,6 +145,10 @@ class Api:
             return save_picks(entry, self._study_dir(), body)
         elif tail == ["study", "review"] and method == "POST":
             return save_review(entry, self._study_dir(), body)
+        else:
+            answer = self._implant_route(method, entry, tail, body)
+            if answer is not None:
+                return answer
 
         raise ApiError(404, f"No route for {method} on session {session_id}")
 
@@ -200,7 +225,10 @@ class Api:
         )
 
     def set_trial(self, entry, body) -> dict:
-        changes = body.get("changes") or body
+        changes = body.get("changes") or {k: v for k, v in body.items() if k != "model"}
+        if not changes and body.get("model"):
+            # Only the motion model changed: re-pose at the flexion already set.
+            changes = {"flexion_deg": entry.session.trial.flexion_deg}
         if not isinstance(changes, dict) or not changes:
             raise ApiError(400, "No trial changes were given.")
         return _envelope(entry, entry.session.set_trial(**changes))

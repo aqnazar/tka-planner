@@ -7,6 +7,7 @@
 // be flexed between -10 and +15 degrees" are clinical limits, and a viewer that wrote
 // its own copy of them would be a second place for one to live.
 
+import { Implant } from "./implant.js";
 import { Study } from "./study.js";
 import { Viewer } from "./viewer.js";
 
@@ -23,6 +24,8 @@ const state = {
 
 const el = (id) => document.getElementById(id);
 const viewer = new Viewer(el("view"));
+// Anatomy, Implant, Build and the Reduce motion charts (web/implant.js).
+let implantView = null;
 
 // --------------------------------------------------------------------
 // Talking to the server
@@ -68,9 +71,10 @@ function sendControls(changes) {
 
 async function sendTrial(changes) {
   const payload = await api(
-    "POST", `/api/sessions/${state.sessionId}/trial`, { changes }
+    "POST", `/api/sessions/${state.sessionId}/trial`, { changes, model: implantView?.motion() }
   );
   await applyEnvelope(payload);
+  implantView?.kinNow(payload.kinematics);
 }
 
 // --------------------------------------------------------------------
@@ -93,6 +97,7 @@ async function applyEnvelope(payload) {
   renderFindings(payload.findings || []);
   renderLegend(payload.fit_map);
   renderNotes(payload.delta?.notes || [], payload.commit);
+  implantView?.onEnvelope(payload);
   syncPanel();
   // A change to the plan invalidates the arc the server computed for the old one.
   state.arc = null;
@@ -434,19 +439,20 @@ function note(message) {
 // Modes
 // --------------------------------------------------------------------
 
+const MODES = ["anatomy", "plan", "implant", "reduce", "build", "review", "pick"];
+
 function setMode(mode) {
-  if ((mode === "review" || mode === "pick") && !state.sessionId) {
+  if (mode !== "plan" && !state.sessionId) {
     note("Open a case first.");
     return;
   }
   // Leaving Pick puts the planner's scene back; unsaved markers stay as a draft.
   if (state.mode === "pick" && mode !== "pick") study.stopPick();
+  if (state.mode === "anatomy" && mode !== "anatomy") viewer.clearFocus();
   state.mode = mode;
   state.playing = false;
-  el("plan-mode").hidden = mode !== "plan";
-  el("reduce-mode").hidden = mode !== "reduce";
-  el("review-mode").hidden = mode !== "review";
-  el("pick-mode").hidden = mode !== "pick";
+  for (const name of MODES) el(`${name}-mode`).hidden = mode !== name;
+  if (mode !== "implant") el("figures").hidden = true;
   el("study-who").hidden = mode !== "review" && mode !== "pick";
   for (const button of document.querySelectorAll("#modes button")) {
     button.classList.toggle("active", button.dataset.mode === mode);
@@ -454,15 +460,36 @@ function setMode(mode) {
   // Plan mode previews the cut by clipping, and Review judges that same preview.
   // Reduce mode works on geometry that has really been cut, so clipping there would
   // take a second bite out of it. Pick draws its own uncut bones.
-  viewer.setClipping(mode === "plan" || mode === "review");
+  viewer.setClipping(mode === "plan" || mode === "review" || mode === "implant");
   document.body.classList.toggle("picking", mode === "pick");
   viewer.resize();
   if (mode === "review") study.enterReview();
+  if (mode === "anatomy") busy(() => implantView.enterAnatomy());
+  if (mode === "implant") busy(() => implantView.enterImplant());
+  if (mode === "build") busy(() => implantView.enterBuild());
+  if (mode === "reduce") busy(() => implantView.enterReduce());
   syncPanel();
 }
 
 async function playArc() {
   if (state.playing) { state.playing = false; return; }
+  // A kinematic motion plays its own frames, on the femoral component shown.
+  if (implantView?.motion() !== "planner") {
+    const frames = await implantView.frames();
+    if (!frames) return;
+    state.playing = true;
+    el("play").textContent = "Stop";
+    for (const frame of frames) {
+      if (!state.playing) break;
+      viewer.setPose("tibial", frame.pose);
+      implantView.kinNow(frame);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    state.playing = false;
+    el("play").textContent = "Play arc";
+    await sendTrial({ flexion_deg: state.trial.flexion_deg ?? 0 });
+    return;
+  }
   if (!state.arc) {
     const payload = await api("POST", `/api/sessions/${state.sessionId}/arc`, {
       max_deg: Number(el("arc-max").value) || 120,
@@ -562,8 +589,10 @@ el("reset").addEventListener("click", () =>
 
 el("reset-trial").addEventListener("click", () =>
   busy(async () => {
-    const payload = await api("POST", `/api/sessions/${state.sessionId}/trial/reset`);
+    const payload = await api("POST", `/api/sessions/${state.sessionId}/trial/reset`,
+                              { model: implantView?.motion() });
     await applyEnvelope(payload);
+    implantView?.kinNow(payload.kinematics);
   })
 );
 
@@ -601,6 +630,11 @@ el("clean").addEventListener("change", (event) =>
 for (const button of document.querySelectorAll("#modes button")) {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 }
+
+state.sendControls = sendControls;
+implantView = new Implant({ api, el, state, viewer, note, busy, applyEnvelope });
+// For scripted walkthroughs and screenshots: read-only access to what is drawn.
+window.__planner = { viewer, state };
 
 const study = new Study({
   viewer, api, el, note, busy, state,

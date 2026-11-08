@@ -844,7 +844,7 @@ class PlanningSession:
         if self.library is None or self.plan is None:
             return None
         cached = getattr(self, "_derived_cache", None)
-        if cached is None or cached[0] != id(self.plan):
+        if cached is None or cached[0] != self._geometry_key():
             from tka_planner.implant import derive_parameters
 
             try:
@@ -854,9 +854,25 @@ class PlanningSession:
                     box=self.femoral_cut_box), None
             except (ValueError, KeyError, IndexError, TypeError) as error:
                 job, reason = None, str(error)
-            cached = (id(self.plan), job, reason)
+            cached = (self._geometry_key(), job, reason)
             self._derived_cache = cached
         return cached[1]
+
+    def _geometry_key(self) -> bytes:
+        """What the implant on a plan depends on: the components' poses, the cuts, the
+        size and the insert. A display toggle re-plans to the same key, and pays for
+        neither the derivation nor the stand-in again."""
+        import numpy as np
+
+        plan = self.plan
+        parts = [np.asarray(plan.components[name], float).tobytes()
+                 for name in sorted(plan.components)]
+        for name in sorted(plan.resections):
+            parts += [np.asarray(plan.resections[name].point, float).tobytes(),
+                      np.asarray(plan.resections[name].normal, float).tobytes()]
+        parts.append(repr((self.sizing.size_parameter, self.sizing.implant_ml_mm,
+                           plan.diagnostics.get("insert_thickness_mm"))).encode("utf-8"))
+        return b"|".join(parts)
 
     @property
     def derived_reason(self) -> str | None:
@@ -1125,7 +1141,7 @@ class PlanningSession:
             return None
         # Measuring the cuts takes a few tenths of a second, and this is read several
         # times per re-plan, so it is kept for as long as the plan it measured.
-        key = (id(self.plan), self.controls.implant_mode)
+        key = (self._geometry_key(), self.controls.implant_mode)
         cached = getattr(self, "_transforms_cache", None)
         if cached is None or cached[0] != key:
             derived = (self.derived if self.controls.implant_mode == "patient_specific"
