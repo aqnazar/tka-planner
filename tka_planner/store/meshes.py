@@ -14,6 +14,7 @@ preserve the geometry nor preserve the id.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -54,14 +55,25 @@ class MeshStore:
         # Written beside the target and moved into place, so a reader can never open a
         # half-written file: the id promises the content, and a truncated file would
         # break that promise permanently.
-        staging = path.with_suffix(".npz.part")
-        with staging.open("wb") as handle:
-            np.savez_compressed(
-                handle,
-                vertices=np.ascontiguousarray(mesh.vertices, dtype=np.float64),
-                faces=np.ascontiguousarray(mesh.faces, dtype=np.int64),
-            )
-        staging.replace(path)
+        # The staging name is unique to this write: two commits of the same knee store the
+        # same digest at once, and a shared name made the second one fail (2026-11-08).
+        staging = path.with_name(f"{digest}.{uuid.uuid4().hex[:8]}.part")
+        try:
+            with staging.open("wb") as handle:
+                np.savez_compressed(
+                    handle,
+                    vertices=np.ascontiguousarray(mesh.vertices, dtype=np.float64),
+                    faces=np.ascontiguousarray(mesh.faces, dtype=np.int64),
+                )
+            try:
+                staging.replace(path)
+            except PermissionError:
+                # Windows refuses to replace a file another writer is moving into place
+                # or a reader holds open. Same digest, same content: theirs will do.
+                if not path.is_file():
+                    raise
+        finally:
+            staging.unlink(missing_ok=True)
         return digest
 
     def get(self, digest: str) -> Mesh:

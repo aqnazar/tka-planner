@@ -13,6 +13,18 @@ Nothing here imports ``bpy`` at module level, so ``import tka_planner`` still wo
 plain Python and the test suite stays Blender-free.
 """
 
+import os as _os
+
+# One BLAS thread per caller, set before numpy is first imported (it is read only then).
+# numpy's bundled OpenBLAS (0.3.31 in the 2.4 wheels) kills the process with an access
+# violation, or hangs it, when two Python threads enter a multithreaded BLAS routine at
+# once, and the planner server runs every request on its own thread: a knee opened while
+# the browser fetched meshes died with exit 139 and no traceback (2026-11-08,
+# tests/test_concurrent_blas.py). The BLAS work here is (N, 3) @ (3, 3), bound by memory
+# rather than arithmetic, so one thread costs nothing measurable. A value already set in
+# the environment is respected.
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 __version__ = "0.1.0"
 
 bl_info = {
