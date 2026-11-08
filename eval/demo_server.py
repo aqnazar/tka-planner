@@ -1,5 +1,10 @@
 """The parametric TKA demo: the planner, with the implant built in Fusion from the plan.
 
+Superseded (2026-11-08): the planner itself now does all of this -- `tka serve` has
+Anatomy, Plan, Implant, Reduce, Build, Review and Pick, the rules live in
+tka_planner/implant and the Fusion build in tka_planner/fusion. This server still runs
+for comparison until the one app has been reviewed; it is then retired.
+
 Private (patient-derived). Runs the planner's own server (sessions, plan controls,
 commit, trial reduction, arc) with the demo app as its web root, and adds:
 
@@ -410,6 +415,8 @@ def main():
     server.api = api
     server._server.RequestHandlerClass = httpd._make_handler(api, APP)
     print(f"Parametric TKA demo at {server.url}", flush=True)
+    print("  (superseded: the planner does all of this now -- tka serve --builds patient_builds)",
+          flush=True)
     server.serve_forever()
     if api.leaving.is_set():         # restart or stop from the page: its thread ends the process
         time.sleep(30)

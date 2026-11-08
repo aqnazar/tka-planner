@@ -166,6 +166,22 @@ Until Fusion builds the insert, the viewer stretches the library insert along it
 axis about its floor, so that its dish (the polyethylene under the condyle) is the solved
 thickness. The library's dish is 4.6 mm at S1 and 7.0 mm at L4, on a 3.0–5.0 mm tray.
 
+**The insert minimum** (author 2026-11-08). The plan accepts no insert thinner than
+8 mm by default (the control *Minimum insert*; zero turns it off). The insert it checks is
+the one the parts will be built with: with the parametric design in the library, the
+Fusion rule (the femoral origin's height above the tibial cut, the component slid onto
+its cut surfaces, less the 5 mm plate floor and the distal cut; see below), otherwise the
+planner's closing insert above. The surgeon's thicker or thinner choice is on top of it.
+When it is thinner, the tibial resection deepens by the shortfall rounded up to the next
+0.5 mm, then 0.5 mm at a time while it is still short (the cut is sloped, so it does not
+gain one for one), never past the resection control's +10 mm. A minimum that cannot be met
+there is reported (`INSERT_MINIMUM_CLAMPED`), not forced. The plan keeps the surgeon's own
+adjustments and records the extra as `tibial_resection_auto_mm`; the readout says
+"+1.5 mm tibial resection for the 8 mm insert minimum". This is the rule the demo knees
+were built on (`eval/demo_cases.jobs`): the insert design does not build below about 7 mm.
+On the reference knee it takes 1.0 mm more tibia (7.4 to 8.4 mm insert), on P009L 1.5 mm
+(6.5 to 8.0 mm).
+
 The gap is seen in **Reduce** mode. A distraction pulls the tibia away from the femur
 along its own axis, a rigid pose that does not touch the plan, and it composes with
 flexion, varus/valgus stress and the drawer.
@@ -182,6 +198,14 @@ library loaded, the posed femoral component and the stretched insert are compare
 to surface, and a collision is flagged with its location. Placing each component from its
 own bone, as the planner did before 2026-09-26, put P009's components 9.8° and 8.9 mm out
 of register, with the femoral component 5 mm into the insert's anterior lip.
+
+**Tray rotation** (author 2026-11-08). The control *Tray rotation* chooses what the tray's
+rotation follows: the femoral component (the default, the shared pose above) or the tibial
+axis, the tibial frame's anterior direction. With the tibial axis the tray reads 0° off
+the tibial axis, and the register reports the femoral component's rotation on the tray
+instead: the tray offset of the default plan, moved from one readout to the other
+(reference knee −9.9°, P009L −17.1°). The tray stays under the femoral origin either way,
+and the tibial rotation control turns it from there.
 
 ## Alignment planning
 
@@ -333,10 +357,63 @@ table: distal, posterior medial and lateral, anterior, and tibial medial and lat
 scan that ends less than 100 mm above the distal cut can't show the shaft, so the box
 isn't placed there, and the specification says why.
 
-**Display and fit until the CAD model builds it.** In the default *patient-specific*
-mode, the library parts are scaled per axis to the patient's width and depth (keeping the
-size's scale along the component axis) and slid in their own plane onto the centre of the
-cut. The surgeon's slide is applied on top of that. *Catalogue* mode keeps the library
+**The Fusion sizing rules** (`tka_planner/implant/`, moved from `eval/` on 2026-11-08
+without changing a number: the parity fixtures in `tests/fixtures/implant_rules/` hold
+them to the eval derivation). From the plan, the parameters of the three parametric Fusion
+designs:
+
+- **Femoral component.** The box lengths C, B, D come from the cut box above. Femur_ML is
+  the bone's common medio-lateral band on the distal, posterior chamfer and posterior cut
+  surfaces, less a 1 mm inset each side, plus 1 (the component is Femur_ML − 1 wide). The
+  component slides along its own ML axis onto the centre of that band; no cut moves,
+  since every femoral cut plane contains that axis. The slide re-centres the component
+  whatever ML slide the surgeon set, because the part is made for the cut surfaces. The
+  tray origin takes the same slide in its own plane.
+- **Tibial plate.** The two-circle Base Sketch outline (condyle circles on the shared
+  ML axis, the anterior arc tangent to both, the PCL notch) is rebuilt on a 0.25 mm raster
+  and the largest one 1 mm inside the tibial cut, with no overhang, is searched for; each
+  condyle on its own compartment; AP is the larger condyle's diameter + 4. Tray_Offset
+  centres the outline on the cut section.
+- **Insert.** Insert_Thickness = h − 5 − Distal_Cut: h the femoral origin's height above
+  the tibial cut along the tray normal, 5 mm the plate floor, Distal_Cut = 9 mm ×
+  (C + B + D) / 52.1.
+
+The Implant view lists each parameter with the rule that set it, and the J-curve through
+each condyle (bone and component, with fitted arcs and the cut box) and the tray outline
+on the cut.
+
+**Built parts.** A knee's Fusion build lives in the server's builds folder (`--builds`,
+by default `builds` in the store; never in the repository), one folder per knee: the
+femoral (CAD frame), plate and insert (tray frame), the two cutting blocks, the job it was
+built from and the build report. When the knee has a build the planner shows the built
+parts, at the plan's poses with the build's femoral ML slide, and measures the fit on
+them. The build's parameters are compared with this plan's derivation (0.01 mm or 0.01°):
+a build made for another plan is still shown, its parts following the new poses at their
+built sizes, but labelled *built for another plan* with every parameter that differs
+(`BUILD_STALE`), and Commit then cuts with the library blocks instead of the knee's own,
+which belong to the other plan. The control *Parts shown* switches to the stand-in.
+
+**Build** in the planner sends the derived parameters to Fusion through its MCP add-in
+(127.0.0.1:27182; `tka_planner/fusion/`), which copies the five parametric designs into
+the knee's Fusion folder, sets the parameters, rebuilds, checks every feature's health,
+saves a version and exports the parts. Before each save the **save gate** compares the
+rebuilt part with its previous build: when the parameters that drive it (its own, and for
+the insert and the blocks those of the parts they are built on) are unchanged, a change
+over 2% in volume or 1 mm in any bounding-box side means a feature rebuilt differently,
+and the save is refused with the feature health. The parts replace the knee's builds
+folder only when the femoral, plate and insert were all saved. Fusion not running is a
+clear error naming the address; nothing else depends on it. The Fusion design
+identifiers are read from `fusion/local.json`, which stays local.
+
+**The stand-in, when nothing is built.** In the default *patient-specific* mode, without
+a build (or with *Parts shown* set to the stand-in), the library parts are stretched to
+the derived dimensions: the femoral component to Femur_ML − 1 wide at the rule's ML
+slide, keeping its measured AP depth over the flange; the tray to the tray rule's ML and
+AP, centred on its outline; each keeping the size's scale along the component axis. It is
+labelled *stand-in, not built*. Where the rules cannot size the plan (no parametric
+design in the library, no femoral box), the parts are scaled per axis to the patient's
+width and depth measured on the cuts and slid onto the centre of the cut, with the
+surgeon's slide on top. *Catalogue* mode keeps the library
 part at the size's single scale, as the legacy pipeline did. On P009 tibial coverage rises
 from 73% to 93% and femoral from 68% to 73%. What remains is shape rather than size: a
 scaled symmetric tray cannot follow an asymmetric tibia, and the outline in the
