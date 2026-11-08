@@ -1032,6 +1032,32 @@ def _insert_check(plan: SurgicalPlan, specs: dict, m: CaseMeasurement,
 _SET_FOR_BONE = {"femur": "femoral", "tibia": "tibial", "fibula": "tibial"}
 
 
+def _sizing_sentence(flag, sizing: SizingDecision) -> str:
+    """A sizing flag in words, for the findings panel and the report."""
+    flag = str(flag).upper()
+    nearest = getattr(sizing, "nearest_discrete_size", None)
+    if flag == "AP_ASPECT_MISMATCH" and sizing.ap_mismatch_mm is not None:
+        larger = "larger" if sizing.ap_mismatch_mm > 0 else "smaller"
+        return (f"The femoral component, sized by width, is "
+                f"{abs(sizing.ap_mismatch_mm):.1f} mm {larger} front to back (AP) than "
+                f"the femur.")
+    sentences = {
+        "AP_ASPECT_MISMATCH": "The femoral component, sized by width, does not match "
+                              "the femur front to back (AP).",
+        "BEYOND_DISCRETE_CHART_RANGE": "The solved size falls outside the catalogue's "
+                                       "range of sizes"
+                                       + (f"; the nearest catalogue size is {nearest}."
+                                          if nearest else "."),
+        "SIZE_OVERRIDDEN": "The size was set by hand, not solved from the measurement.",
+        "CLAMPED_TO_CHART_LIMIT": "The measured width is outside the catalogue's sizes, "
+                                  "so the size is held at the end of the chart"
+                                  + (f" ({nearest})." if nearest else "."),
+        "EXCEEDS_LARGEST_SIZE": "The measured width is larger than the largest "
+                                "catalogue size.",
+    }
+    return sentences.get(flag, f"Sizing: {flag.lower().replace('_', ' ')}.")
+
+
 def findings_case(
     measurement: CaseMeasurement,
     plan: SurgicalPlan,
@@ -1083,7 +1109,8 @@ def findings_case(
     for warning in plan.warnings:
         add("PLAN_WARNING", "warning", warning, "plan")
     for flag in sizing.flags:
-        add(f"SIZING_{str(flag).upper()}", "warning", f"Sizing: {flag}.", "sizing")
+        add(f"SIZING_{str(flag).upper()}", "warning", _sizing_sentence(flag, sizing),
+            "sizing")
 
     if box is not None and not box.get("available"):
         add("FEMORAL_BOX_NOT_PLACED", "warning",

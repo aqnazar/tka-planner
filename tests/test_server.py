@@ -595,6 +595,16 @@ def test_every_envelope_carries_the_findings(api, session_id, opened):
     assert "FEMORAL_BOX_NOT_PLACED" in codes
 
 
+def test_findings_carry_their_sentence(api, session_id, opened):
+    """The panel shows the sentence first; a code is never the only thing said."""
+    committed = post(api, f"/api/sessions/{session_id}/commit")
+    for finding in opened["findings"] + committed["findings"]:
+        message = finding["message"]
+        assert isinstance(message, str) and message.strip(), finding
+        flag = finding["code"].removeprefix("SIZING_")
+        assert flag not in message and flag.lower() not in message, finding
+
+
 def test_a_fit_finding_says_where_it_is(api, session_id):
     payload = post(api, f"/api/sessions/{session_id}/commit")
     located = [f for f in payload["findings"] if f["code"].startswith("OVERHANG_")]

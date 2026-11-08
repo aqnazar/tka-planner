@@ -283,8 +283,9 @@ function splitLine(line) {
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 };
 
-// The server's findings, most severe first, as it worded them. One with a place gets a
-// button that turns the view to it.
+// The server's findings, most severe first, as it worded them: the sentence first, on
+// one line (all of it on hover, or click the row to unfold it), then the code, small.
+// One with a place gets a button that turns the view to it.
 function renderFindings(findings) {
   const host = el("findings");
   host.textContent = "";
@@ -302,14 +303,18 @@ function renderFindings(findings) {
   for (const finding of sorted) {
     const row = document.createElement("details");
     row.className = `finding ${finding.severity}`;
-    if (finding.severity !== "info") row.open = finding.severity === "error";
     const summary = document.createElement("summary");
+    summary.title = finding.message || finding.code;
     const badge = document.createElement("span");
     badge.className = "badge";
     badge.textContent = finding.severity;
+    const sentence = document.createElement("span");
+    sentence.className = "sentence";
+    sentence.textContent = finding.message || finding.code;
     const code = document.createElement("code");
     code.textContent = finding.code;
-    summary.append(badge, code);
+    code.title = finding.code;
+    summary.append(badge, sentence, code);
     if (finding.location) {
       const show = document.createElement("button");
       show.type = "button";
@@ -336,10 +341,7 @@ function renderFindings(findings) {
       });
       summary.append(remove);
     }
-    const message = document.createElement("div");
-    message.className = "message";
-    message.textContent = finding.message;
-    row.append(summary, message);
+    row.append(summary);
     host.append(row);
   }
 }

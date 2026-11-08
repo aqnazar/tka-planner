@@ -42,6 +42,24 @@ def test_the_plan_s_own_warnings_are_findings(session):
     assert all(f["source"] for f in findings)
 
 
+def test_every_sizing_flag_is_said_in_words(session):
+    from dataclasses import replace
+
+    flags = ("AP_ASPECT_MISMATCH", "BEYOND_DISCRETE_CHART_RANGE", "SIZE_OVERRIDDEN",
+             "CLAMPED_TO_CHART_LIMIT", "EXCEEDS_LARGEST_SIZE", "SOMETHING_NEW")
+    sizing = replace(session.sizing, flags=flags, ap_mismatch_mm=-4.2)
+
+    findings = findings_case(session.measurement, session.plan, sizing)
+    said = {f["code"]: f["message"] for f in findings if f["source"] == "sizing"}
+
+    assert set(said) == {f"SIZING_{flag}" for flag in flags}
+    for flag, message in zip(flags, (said[f"SIZING_{flag}"] for flag in flags)):
+        assert message.endswith("."), message
+        assert flag not in message and flag.lower() not in message, message
+    assert "4.2 mm" in said["SIZING_AP_ASPECT_MISMATCH"]
+    assert "something new" in said["SIZING_SOMETHING_NEW"]
+
+
 def test_a_mesh_finding_names_its_bone():
     """A mesh check does not know which bone it was given; the pipeline says."""
     from tka_planner.pipeline import _for_bone
