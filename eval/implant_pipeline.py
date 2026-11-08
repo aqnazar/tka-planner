@@ -283,6 +283,12 @@ def build_part(app, df, sets, export, msg, prepare=None, strict=True, finish=Non
         if finish:
             rec["finish"] = finish(des)
         rec["health"] = health(des); rec["bodies"] = bodies(des)
+        # The insert is one body: a second visible body means a part of it was left out of
+        # the features that follow (2026-11-08: P047L in two halves, health clean).
+        if any(n == "*" for n, _ in export):
+            shown = [b for b in rec["bodies"].values() if b["visible"]]
+            if len(shown) != 1:
+                rec["health"].append(["Bodies", 2, "%d visible bodies; the insert must be one" % len(shown)])
         # A warning on the femoral or plate has meant a feature that did not build (the
         # body comes out partial), so those are not saved either. The insert keeps its
         # known Base Sketch warning until its outline is rebuilt.

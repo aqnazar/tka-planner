@@ -425,6 +425,16 @@ without a section refuses a new one. The build therefore remakes the design's se
 the box before it puts the knee's femoral in, while the femoral is still the one the
 design was drawn on, and again on the knee's femoral.
 
+The insert's base joins the two halves of the plate's pocket with two arcs over the
+ledge, each continuing the outline it meets (tangent to it, so on its circle). Where
+Fusion cannot solve that tangent against the pocket's offset outline it remakes the
+offset and can drag the bridges off their circles (P047L: one bridge solved to a 2.1 mm
+radius against 49.9 mm, and the insert came out as two bodies with a clean feature
+health). A bridge off its arc's radius by more than 2%, or a base in more than one body,
+makes the outline again with bridges that touch nothing but their own ends; on every
+other knee the bridges equal their arcs' radii to 0.01 mm. An insert with more than one
+visible body is never saved.
+
 **The stand-in, when nothing is built.** In the default *patient-specific* mode, without
 a build (or with *Parts shown* set to the stand-in), the library parts are stretched to
 the derived dimensions: the femoral component to Femur_ML − 1 wide at the rule's ML
