@@ -21,6 +21,14 @@ rem Python: prefer the launcher, fall back to whatever is on PATH.
 set "PY=py -3"
 where py >nul 2>&1 || set "PY=python"
 
+rem Windows lets a second server bind the same port while the first keeps answering.
+rem Refuse to start if anything already listens here.
+netstat -ano | findstr /r /c:":%PORT% .*LISTENING" >nul && (
+  echo Something is already running on port %PORT%. Close the other planner window first.
+  pause
+  exit /b 1
+)
+
 if not exist "%CASES%" (
   echo No case folder at "%CASES%".
   echo Put one folder per patient there, each holding FD1Left.stl and TD1Left.stl.
