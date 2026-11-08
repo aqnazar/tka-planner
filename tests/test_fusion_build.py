@@ -231,3 +231,159 @@ def test_the_script_blocks_are_eval_s_own():
     assert scripts.BLOCK == femoral_block.BLOCK
     assert scripts.TBLOCK == tibial_block.TBLOCK
     assert scripts.BUILD_EVAL == implant_pipeline.BUILD
+
+
+# -- the insert's Condylar Profile ------------------------------------------------------
+
+
+def _finish_functions():
+    from tka_planner.fusion import scripts
+
+    namespace = {}
+    exec(scripts.FINISH, namespace)        # noqa: S102 - definitions only; adsk is used in Fusion
+    return namespace
+
+
+def test_the_design_s_own_condylar_profile_is_told_from_the_remade_box():
+    design_profile = _finish_functions()["design_profile"]
+    # The source design's sketch: sides tangent to the condyle curve, top perpendicular.
+    assert design_profile(["TangentConstraint", "TangentConstraint", "PerpendicularConstraint"])
+    # remake_profile's box: ends coincident with the curve, sides vertical, top horizontal.
+    assert not design_profile(["CoincidentConstraint", "CoincidentConstraint", "VerticalConstraint",
+                               "VerticalConstraint", "HorizontalConstraint"])
+    # A box that lost a side's constraint, or no constraints at all, is remade too.
+    assert design_profile(["CoincidentConstraint", "VerticalConstraint", "HorizontalConstraint"])
+    assert design_profile([])
+
+
+def test_the_design_s_profile_is_remade_before_the_femoral_is_replaced():
+    from tka_planner.fusion.build import BUILD
+
+    repoint = BUILD[BUILD.index("def repoint(des, doc):"):BUILD.index("def block_repoint(")]
+    assert repoint.index("profile_before_replace(des)") < repoint.index("o.replace(")
+    assert repoint.index("profile_before_replace(des)") < repoint.index("tray_offset(des)")
+
+
+# -- a stale knee document is retried once from a fresh copy -------------------------------
+
+
+def _staged_fusion(attempts, calls):
+    """Stands in for Fusion over several calls: a build script gets the next report of
+    ``attempts`` (part -> "saved" / "failed" / "refused", and "copied"), a rename script
+    its renames."""
+    from tka_planner.geom import mesh as gm
+
+    attempts = iter(attempts)
+
+    def value(script, name):
+        return eval(script.split(name + " = ", 1)[1].splitlines()[0])      # noqa: S307 - our repr
+
+    def fake(script, read_only, url=None, timeout=None):
+        compile(script, "fusion-script", "exec")
+        if "SUFFIX = " in script:
+            parts, suffix = value(script, "PARTS"), value(script, "SUFFIX")
+            calls.append(("rename", parts, suffix))
+            names = {"plate": "Tibial Plate", "insert": "Tibial Insert New"}
+            return json.dumps({"renamed": {p: names[p] + suffix for p in parts}})
+        out = Path(value(script, "OUT"))
+        job_path = eval(script.split("JOB = json.load(open(", 1)[1].split(", encoding")[0])  # noqa: S307
+        job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+        calls.append(("build", job.get("only")))
+        spec = next(attempts)
+        report = {"name": "K1", "copied": spec["copied"]}
+        files = {"femoral": "femoral", "plate": "plate", "insert": "insert",
+                 "block": "femoral_block", "tblock": "tibial_block"}
+        for part, stem in files.items():
+            if part not in spec:
+                continue
+            if spec[part] == "saved":
+                gm.write_stl(gm.box(10.0), out / f"{stem}.stl")
+                report[part] = {"saved": True, "version": 5, "health": [], "bodies": _bodies(1000.0)}
+            elif spec[part] == "refused":
+                report[part] = {"saved": False, "refused": True,
+                                "gate": {"ok": False, "reason": "volume +9.0%"}}
+            else:
+                report[part] = {"saved": False,
+                                "health": [["Condylar Profile", 1, "Failed to solve"],
+                                           ["Anterior Sweep", 1, "Profile 1 missing"]]}
+        (out / "build.json").write_text(json.dumps(report))
+        return json.dumps({"name": "K1", "error": None})
+
+    return fake
+
+
+ALL_REUSED = {p: False for p in ("femoral", "plate", "insert", "block", "tblock")}
+
+
+def _mock(monkeypatch, attempts, calls):
+    monkeypatch.setattr(transport, "ping", lambda url, timeout=5: None)
+    monkeypatch.setattr(transport, "call_fusion", _staged_fusion(attempts, calls))
+
+
+def test_an_insert_failing_on_a_reused_document_is_built_again_from_a_fresh_copy(tmp_path,
+                                                                                   monkeypatch):
+    from tka_planner.implant.builds import BuildStore
+
+    calls, lines = [], []
+    first = dict(femoral="saved", plate="saved", insert="failed", block="saved", tblock="saved",
+                 copied=ALL_REUSED)
+    second = dict(insert="saved", copied=dict(ALL_REUSED, insert=True))
+    _mock(monkeypatch, [first, second], calls)
+    result = build_case(JOB, tmp_path / "K1", FusionConfig(sources=SOURCES), log=lines.append)
+    assert [c[0] for c in calls] == ["build", "rename", "build"]
+    assert calls[1][1] == ["insert"] and calls[1][2].startswith(" (stale 20")
+    assert calls[2] == ("build", ["insert"])            # only what was not saved
+    assert result.ok and "insert" in result.saved
+    retried = result.report["retried"]
+    assert retried["parts"] == ["insert"] and "Profile 1 missing" in retried["first"]["insert"]
+    assert retried["renamed"]["insert"].startswith("Tibial Insert New (stale ")
+    assert result.report["copied"]["insert"] is True
+    assert BuildStore(tmp_path).get("K1", "right") is not None
+    # The job kept beside the parts is the knee's job, not the retry's.
+    kept = json.loads((tmp_path / "K1" / "job.json").read_text(encoding="utf-8"))
+    assert "only" not in kept
+    assert any("fresh copy" in line for line in lines)
+
+
+def test_a_plate_failing_on_a_reused_document_rebuilds_what_stands_on_it(tmp_path, monkeypatch):
+    calls = []
+    # The plate failed, so the insert and the tibial block were never tried.
+    first = dict(femoral="saved", plate="failed", block="saved", copied=ALL_REUSED)
+    second = dict(plate="saved", insert="saved", tblock="saved",
+                  copied=dict(ALL_REUSED, plate=True))
+    _mock(monkeypatch, [first, second], calls)
+    result = build_case(JOB, tmp_path / "K1", FusionConfig(sources=SOURCES), log=lambda line: None)
+    assert calls[1][1] == ["plate"]                     # the insert is not renamed: never tried
+    assert calls[2] == ("build", ["plate", "insert", "tblock"])
+    assert result.ok and set(result.saved) == {"femoral", "plate", "insert", "block", "tblock"}
+
+
+def test_a_fresh_copy_that_fails_is_not_retried(tmp_path, monkeypatch):
+    calls = []
+    first = dict(femoral="saved", plate="saved", insert="failed", block="saved", tblock="saved",
+                 copied=dict(ALL_REUSED, insert=True))
+    _mock(monkeypatch, [first], calls)
+    result = build_case(JOB, tmp_path / "K1", FusionConfig(sources=SOURCES), log=lambda line: None)
+    assert [c[0] for c in calls] == ["build"]
+    assert not result.ok and "insert" in result.refused and "retried" not in result.report
+
+
+def test_a_gate_refusal_is_not_taken_for_a_stale_document(tmp_path, monkeypatch):
+    calls = []
+    first = dict(femoral="saved", plate="saved", insert="refused", block="saved", tblock="saved",
+                 copied=ALL_REUSED)
+    _mock(monkeypatch, [first], calls)
+    result = build_case(JOB, tmp_path / "K1", FusionConfig(sources=SOURCES), log=lambda line: None)
+    assert [c[0] for c in calls] == ["build"] and not result.ok
+
+
+def test_a_retry_that_fails_again_keeps_the_last_good_build(tmp_path, monkeypatch):
+    calls = []
+    first = dict(femoral="saved", plate="saved", insert="failed", block="saved", tblock="saved",
+                 copied=ALL_REUSED)
+    second = dict(insert="failed", copied=dict(ALL_REUSED, insert=True))
+    _mock(monkeypatch, [first, second], calls)
+    result = build_case(JOB, tmp_path / "K1", FusionConfig(sources=SOURCES), log=lambda line: None)
+    assert [c[0] for c in calls] == ["build", "rename", "build"]      # once, not again
+    assert not result.ok and not (tmp_path / "K1" / "job.json").exists()
+    assert result.report["retried"]["parts"] == ["insert"]

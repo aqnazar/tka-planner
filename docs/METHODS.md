@@ -405,6 +405,26 @@ folder only when the femoral, plate and insert were all saved. Fusion not runnin
 clear error naming the address; nothing else depends on it. The Fusion design
 identifiers are read from `fusion/local.json`, which stays local.
 
+A knee's Fusion documents are reused from build to build (copied from the designs only
+when the knee has none), and a document can carry state from earlier builds that a fresh
+copy does not. When the plate or the insert fails on a reused document (a feature fails;
+not a save-gate refusal, which is a healthy part that came out different), the build
+renames that document "<name> (stale <date>)", kept and never deleted, and builds once
+more from a fresh copy: the failed part and every part not saved the first time, keeping
+the femoral and whatever was saved. A part that fails on a fresh copy is not retried. The
+report records the first failure, the rename and what was rebuilt (`retried`).
+
+The insert's dish is swept along the femoral with a section (its Condylar Profile) on the
+femoral's coronal plane: the femoral's condyle curve, projected and linked, closed by a
+2 mm box with vertical sides and a horizontal top, held to the curve's ends by explicit
+constraints so it follows each knee's femoral. The design's own section closes its box by
+sides tangent to the curve through points shared with the projection; when a knee's
+condyle ends lower than the design's (DEMO_SMALL, P007L and P007R end 0.27 to 0.65 mm
+lower), those joins let go, the box opens and both sweeps lose their section, and a sweep
+without a section refuses a new one. The build therefore remakes the design's section as
+the box before it puts the knee's femoral in, while the femoral is still the one the
+design was drawn on, and again on the knee's femoral.
+
 **The stand-in, when nothing is built.** In the default *patient-specific* mode, without
 a build (or with *Parts shown* set to the stand-in), the library parts are stretched to
 the derived dimensions: the femoral component to Femur_ML − 1 wide at the rule's ML

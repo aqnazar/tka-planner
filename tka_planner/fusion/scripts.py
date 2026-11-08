@@ -331,6 +331,27 @@ def coronal_profile(des):
     made = remake_profile(des, sk, plane)
     return "y = %.2f mm, %s, box %s" % (plane.geometry.origin.y * 10, made, profile_box_up(des))
 
+def design_profile(kinds):
+    """Whether a Condylar Profile, by its constraint kinds, is still the design's own
+    (sides held tangent to the condyle curve) and not the box remake_profile draws
+    (sides vertical, top horizontal)."""
+    box = kinds.count("VerticalConstraint") >= 2 and "HorizontalConstraint" in kinds
+    return "TangentConstraint" in kinds or not box
+
+def profile_before_replace(des):
+    """The design's own Condylar Profile joins its box to the projected condyle curve by
+    shared points. When the next femoral's condyle ends lower than the design's, the
+    joins let go, the box opens, both sweeps lose their profile ("Profile 1 missing"),
+    and a sweep without a profile refuses a new one (InternalValidationError
+    curProfile || curSolidBody), so the remake after the replace cannot mend it
+    (2026-11-08: DEMO_SMALL, P007L, P007R on fresh copies). Remade first, on the femoral
+    the design was drawn on, the box follows the next femoral by its explicit constraints."""
+    sk = des.rootComponent.sketches.itemByName("Condylar Profile")
+    if sk is None: return "no Condylar Profile"
+    if not design_profile([g.objectType.split("::")[-1] for g in sk.geometricConstraints]):
+        return "box already"
+    return "remade before the replace: " + coronal_profile(des)
+
 def femoral_condyle(des):
     """The femoral's coronal condyle curve (its Condylar profile sketch's spline), in this
     document's context: the curve the dish section is the projection of."""
@@ -1057,6 +1078,9 @@ def run(_context: str):
             # features, before anything recomputes on new parts (insert_finish.py).
             stripped = strip_insert(des)
             synced = sync(des, src_params["insert"], JOB["insert"])
+            # The design's own Condylar Profile is remade while its femoral is still the
+            # one it was drawn on (insert_finish.profile_before_replace).
+            synced["profile_first"] = profile_before_replace(des)
             done, errs = [], []
             # A replace recomputes the insert; if Fillet2 fails then, Fusion rolls the
             # replace back. Suppress it first, try it again once the parts are in.

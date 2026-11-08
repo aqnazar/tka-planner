@@ -362,6 +362,9 @@ def run(_context: str):
             # features, before anything recomputes on new parts (insert_finish.py).
             stripped = strip_insert(des)
             synced = sync(des, src_params["insert"], JOB["insert"])
+            # The design's own Condylar Profile is remade while its femoral is still the
+            # one it was drawn on (insert_finish.profile_before_replace).
+            synced["profile_first"] = profile_before_replace(des)
             done, errs = [], []
             # A replace recomputes the insert; if Fillet2 fails then, Fusion rolls the
             # replace back. Suppress it first, try it again once the parts are in.
