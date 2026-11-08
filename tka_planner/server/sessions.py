@@ -99,7 +99,14 @@ class SessionManager:
         found = {}
         if self.cases_root and self.cases_root.is_dir():
             for folder in sorted(p for p in self.cases_root.iterdir() if p.is_dir()):
+                # A folder named for one side (FD1Right/TD1Right) is that side only;
+                # otherwise the filename fallback offers it on the other side too.
+                named = {side for side in ("left", "right")
+                         if (folder / f"FD1{side.capitalize()}.stl").is_file()
+                         and (folder / f"TD1{side.capitalize()}.stl").is_file()}
                 for side in ("left", "right"):
+                    if named and side not in named:
+                        continue
                     try:
                         femur, tibia = _find(folder, side)
                     except FileNotFoundError:

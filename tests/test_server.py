@@ -99,6 +99,29 @@ def test_a_case_folder_is_listed_once_it_is_openable(api, folder, manager):
     assert any(case["case_id"] == folder.name for case in payload["cases"])
 
 
+def test_a_folder_named_for_one_side_is_listed_only_on_that_side(api, manager, tmp_path):
+    # A folder holding FD1Right/TD1Right must not also be offered as a left knee: the
+    # filename fallback would open the right bones under the left side.
+    root = tmp_path / "cases"
+    for name, side in (("K1", "Right"), ("K2", "Left")):
+        (root / name).mkdir(parents=True)
+        (root / name / f"FD1{side}.stl").write_bytes(b"")
+        (root / name / f"TD1{side}.stl").write_bytes(b"")
+    (root / "K3").mkdir()
+    (root / "K3" / "femur.stl").write_bytes(b"")
+    (root / "K3" / "tibia.stl").write_bytes(b"")
+    manager.cases_root = root
+
+    status, payload = api.dispatch("GET", "/api/cases")
+
+    listed = {(c["case_id"], c["side"]) for c in payload["cases"]}
+    assert status == 200
+    assert ("K1", "right") in listed and ("K1", "left") not in listed
+    assert ("K2", "left") in listed and ("K2", "right") not in listed
+    # Files with no side in their name stay available on both sides.
+    assert {("K3", "left"), ("K3", "right")} <= listed
+
+
 def test_opening_without_a_folder_is_a_bad_request(api):
     status, payload = api.dispatch("POST", "/api/sessions", {})
     assert status == 400
