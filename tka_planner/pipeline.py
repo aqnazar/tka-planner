@@ -400,12 +400,15 @@ def plan_case(
     tibial_reference: str = "less_affected_plateau",
     library=None,
     insert_minimum_mm: float = 8.0,
+    tray_rotation: str = "femoral",
 ) -> tuple[SurgicalPlan, SizingDecision]:
     """Size the implant and plan the cuts for one set of controls.
 
     ``insert_minimum_mm`` is the thinnest insert the plan accepts (author 2026-11-08,
     8 mm): below it the tibial resection deepens in half millimetres, recorded in the
     plan's diagnostics as ``tibial_resection_auto_mm``; zero turns it off.
+    ``tray_rotation`` is what the tray's rotation follows, the femoral component (the
+    default) or the tibial axis (see :data:`tka_planner.core.planning.TRAY_ROTATIONS`).
 
     ``size_label`` picks a chart size by hand; empty, or a size the chart does not
     publish, means solve it from the anatomy.
@@ -447,6 +450,7 @@ def plan_case(
             adjustments=replace(adjustments, tibial_resection_delta_mm=tibial_delta_mm),
             femur_mesh=measurement.femur,
             tibia_mesh=measurement.tibia,
+            tray_rotation=tray_rotation,
         )
 
     # The insert minimum (author 2026-11-08): an insert thinner than it takes more

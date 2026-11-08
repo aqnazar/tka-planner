@@ -76,6 +76,12 @@ FEMORAL_SAGITTAL_REFERENCES = ("femoral_axis", "scanner")
 # below the most affected plateau. The third is the datum of the size chart and the
 # legacy pipeline, kept so the two can be compared like for like.
 TIBIAL_REFERENCES = ("less_affected_plateau", "more_affected_plateau", "top_of_tibia")
+# What the tray's rotation follows (author 2026-11-08). "femoral", the default, keeps it
+# in register with the femoral component (ruling 2026-09-26): the shared pose. "tibial"
+# squares it to the tibia's own rotational reference, the tibial frame's anterior axis,
+# and leaves the femoral component turned on it by the difference.
+TRAY_ROTATIONS = ("femoral", "tibial")
+
 TIBIAL_REFERENCE_DEFAULT_MM = {
     "less_affected_plateau": 9.0,
     "more_affected_plateau": 2.0,
@@ -288,6 +294,7 @@ def plan_alignment(
     femur_mesh=None,
     tibia_mesh=None,
     femoral_sagittal_reference: str = "femoral_axis",
+    tray_rotation: str = "femoral",
 ) -> SurgicalPlan:
     """Compute the correction, the resection planes and the component poses.
 
@@ -327,8 +334,15 @@ def plan_alignment(
     ``tibial_tray_thickness_mm`` is the tray under the insert. With the implant library
     loaded it is measured from the library; without it, it is zero and the solved insert
     stands for tray and insert together.
+
+    ``tray_rotation`` (:data:`TRAY_ROTATIONS`) is what the tray's rotation follows: the
+    femoral component, by default, or the tibia's own rotational reference. Either way
+    the tray sits under the femoral origin and the tibial rotation control turns it
+    from there.
     """
     warnings: list[str] = []
+    if tray_rotation not in TRAY_ROTATIONS:
+        raise ValueError(f"tray_rotation must be one of {', '.join(TRAY_ROTATIONS)}.")
     if femoral_sagittal_reference not in FEMORAL_SAGITTAL_REFERENCES:
         raise ValueError(
             f"femoral_sagittal_reference must be one of "
@@ -584,7 +598,8 @@ def plan_alignment(
         ml_mm=adjustments.femoral_shift_ml_mm,
     )
     tibial_anterior = _rotate_in_plane(
-        _in_plane_of(femoral_anterior, tibial_normal),
+        _in_plane_of(femoral_anterior if tray_rotation == "femoral"
+                     else tibial_frame.x_anterior, tibial_normal),
         tibial_normal,
         adjustments.tibial_rotation_delta_deg,
         toward=tibial_frame.lateral,
@@ -698,6 +713,7 @@ def plan_alignment(
             **register,
             **tray_on_tibia,
             "femoral_sagittal_reference": femoral_sagittal_reference,
+            "tray_rotation": tray_rotation,
             "cut_angle_between_deg": round(float(np.degrees(
                 angle_between(femoral_normal, tibial_normal)
             )), 2),

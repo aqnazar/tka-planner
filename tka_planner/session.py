@@ -58,7 +58,7 @@ FEMORAL_ONLY = frozenset(
 TIBIAL_ONLY = frozenset(
     name for name in ADJUSTMENT_FIELDS if name.startswith("tibial_")
 )
-TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference", "insert_minimum_mm"}
+TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference", "insert_minimum_mm", "tray_rotation"}
 BOTH_BONES = frozenset({
     "coronal_correction_deg", "philosophy", "size_override", "implant_mode",
     "resection_mode", "build_bone_shells",
@@ -94,6 +94,9 @@ class Controls:
     philosophy: str = "mechanical"
     size_override: str = ""
     tibial_reference: str = "less_affected_plateau"
+    # What the tray's rotation follows: the femoral component (the shared pose, ruling
+    # 2026-09-26) or the tibia's own axis.
+    tray_rotation: str = "femoral"
     # Patient-specific: the implant takes the patient's own dimensions from the cuts.
     # Catalogue: the library part at the size's single scale, as the legacy pipeline.
     implant_mode: str = "patient_specific"
@@ -531,6 +534,9 @@ class PlanningSession:
             lines += [
                 "",
                 "HEAD|Tray on the tibia",
+                "Tray rotation|" + ("square to the tibial axis"
+                                    if diagnostics.get("tray_rotation") == "tibial"
+                                    else "follows the femoral component"),
                 f"Rotation off tibial axis|"
                 f"{diagnostics['tray_rotation_from_tibial_axis_deg']:+.1f} deg",
                 f"Offset from cut centre AP|"
@@ -826,6 +832,7 @@ class PlanningSession:
             tibial_reference=self.controls.tibial_reference,
             library=self.library,
             insert_minimum_mm=self.controls.insert_minimum_mm,
+            tray_rotation=self.controls.tray_rotation,
         )
 
     def _adjustments(self) -> Adjustments:

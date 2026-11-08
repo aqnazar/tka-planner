@@ -85,6 +85,13 @@ CONTROL_SCHEMA = (
              "kind": "float", "min": -10.0, "max": 10.0, "step": 0.5, "unit": "deg",
              "help": "Coronal angle of the tibial cut alone. This breaks the shared "
                      "mediolateral slope with the femoral cut, and the plan says so."},
+            {"name": "tray_rotation", "label": "Tray rotation", "kind": "choice",
+             "choices": [["femoral", "Follows the femoral component"],
+                         ["tibial", "Tibial axis"]],
+             "help": "What the tray's rotation is set from. By default it follows the "
+                     "femoral component, so the two sit square on each other; the tibial "
+                     "axis squares it to the tibia instead, and the readout then shows "
+                     "the femoral component's rotation on the tray."},
             {"name": "tibial_rotation_delta_deg", "label": "Rotation",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Turn the tray out of register with the femoral component, about "
