@@ -57,6 +57,9 @@ def test_every_adjustment_can_be_set_and_reaches_the_plan(session):
 
 
 def test_every_adjustment_moves_something_in_the_scene(session):
+    # The insert minimum would take a tibial resection change into the extra resection
+    # it adds on a thin knee; this is about the controls themselves.
+    session.replan(insert_minimum_mm=0.0)
     for name in ADJUSTMENT_FIELDS:
         delta = session.replan(**{name: 2.0})
         assert delta.poses, name

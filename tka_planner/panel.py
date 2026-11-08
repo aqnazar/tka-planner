@@ -106,6 +106,11 @@ CONTROL_SCHEMA = (
              "kind": "float", "min": -4.0, "max": 6.0, "step": 0.5, "unit": "mm",
              "help": "The insert is made to close the joint in extension with no gap. "
                      "Positive makes it thicker, tightening the knee."},
+            {"name": "insert_minimum_mm", "label": "Minimum insert",
+             "kind": "float", "min": 0.0, "max": 12.0, "step": 0.5, "unit": "mm",
+             "help": "The thinnest insert the plan accepts. Below it the tibial cut goes "
+                     "deeper in half millimetres, up to the resection control's limit, "
+                     "and the readout says by how much. Zero turns it off."},
         ),
     },
     {

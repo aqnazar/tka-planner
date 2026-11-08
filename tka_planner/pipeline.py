@@ -17,7 +17,7 @@ on two pipelines that agree only by coincidence, so both now call the functions 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +41,7 @@ from .core.planning import (
     TIBIAL_REFERENCE_DEFAULT_MM,
     Adjustments,
     SurgicalPlan,
+    deepen_for_insert_minimum,
     plan_alignment,
 )
 from .core.qc import (
@@ -398,8 +399,13 @@ def plan_case(
     adjustments: Adjustments = NO_ADJUSTMENT,
     tibial_reference: str = "less_affected_plateau",
     library=None,
+    insert_minimum_mm: float = 8.0,
 ) -> tuple[SurgicalPlan, SizingDecision]:
     """Size the implant and plan the cuts for one set of controls.
+
+    ``insert_minimum_mm`` is the thinnest insert the plan accepts (author 2026-11-08,
+    8 mm): below it the tibial resection deepens in half millimetres, recorded in the
+    plan's diagnostics as ``tibial_resection_auto_mm``; zero turns it off.
 
     ``size_label`` picks a chart size by hand; empty, or a size the chart does not
     publish, means solve it from the anatomy.
@@ -425,21 +431,107 @@ def plan_case(
         parameter_override=override,
     )
     default_depth = TIBIAL_REFERENCE_DEFAULT_MM.get(tibial_reference, 0.0)
-    plan = plan_alignment(
-        measurement.landmarks, measurement.femoral_frame, measurement.tibial_frame,
-        target=MECHANICAL if philosophy == "mechanical" else KINEMATIC,
-        femoral_thickness_mm=sizing.femoral_thickness_mm,
-        tibial_resection_mm=(
-            sizing.tibial_resection_mm if default_depth is None else default_depth
-        ),
-        tibial_reference=tibial_reference,
-        tibial_tray_thickness_mm=tray_thickness(measurement, sizing, library),
-        native_slope_deg=measurement.native_slope_deg,
-        adjustments=adjustments,
-        femur_mesh=measurement.femur,
-        tibia_mesh=measurement.tibia,
-    )
+    tray_mm = tray_thickness(measurement, sizing, library)
+
+    def replan(tibial_delta_mm):
+        return plan_alignment(
+            measurement.landmarks, measurement.femoral_frame, measurement.tibial_frame,
+            target=MECHANICAL if philosophy == "mechanical" else KINEMATIC,
+            femoral_thickness_mm=sizing.femoral_thickness_mm,
+            tibial_resection_mm=(
+                sizing.tibial_resection_mm if default_depth is None else default_depth
+            ),
+            tibial_reference=tibial_reference,
+            tibial_tray_thickness_mm=tray_mm,
+            native_slope_deg=measurement.native_slope_deg,
+            adjustments=replace(adjustments, tibial_resection_delta_mm=tibial_delta_mm),
+            femur_mesh=measurement.femur,
+            tibia_mesh=measurement.tibia,
+        )
+
+    # The insert minimum (author 2026-11-08): an insert thinner than it takes more
+    # tibial resection, in half millimetres, within the control's own range. The
+    # insert is the one the parts will be built with (insert_of_record).
+    outcome = deepen_for_insert_minimum(
+        replan, lambda plan: insert_of_record(measurement, plan, library)[0],
+        minimum_mm=float(insert_minimum_mm),
+        user_delta_mm=float(adjustments.tibial_resection_delta_mm),
+        limit_mm=tibial_resection_limit_mm())
+    # The plan records the surgeon's own adjustments: the extra resection is the plan's
+    # rule, reported beside them (diagnostics), and the plan re-derives from the two.
+    plan = replace(outcome.plan, adjustments=adjustments)
+    insert, source = insert_of_record(measurement, plan, library)
+    plan.diagnostics.update({
+        "insert_minimum_mm": float(insert_minimum_mm),
+        "tibial_resection_auto_mm": float(outcome.auto_mm),
+        "insert_of_record_mm": None if insert is None else round(float(insert), 3),
+        "insert_of_record_source": source,
+        "insert_minimum_clamped": bool(outcome.clamped),
+        "insert_minimum_warning": outcome.warning,
+    })
     return plan, sizing
+
+
+INSERT_MINIMUM_MM = 8.0
+
+
+def tibial_resection_limit_mm() -> float:
+    """The deepest the tibial resection control goes: the panel's own limit, so an
+    automatic resection never passes what a surgeon could set by hand."""
+    from .panel import CONTROL_SCHEMA
+
+    for group in CONTROL_SCHEMA:
+        for control in group["controls"]:
+            if control["name"] == "tibial_resection_delta_mm":
+                return float(control["max"])
+    raise KeyError("tibial_resection_delta_mm is not in the panel schema")
+
+
+def insert_of_record(measurement: CaseMeasurement, plan: SurgicalPlan,
+                     library) -> tuple[float | None, str]:
+    """The insert the parts will be built with, and where it comes from.
+
+    With the parametric design in the library (its femoral box placed on this plan),
+    the Fusion rule: the femoral origin's height above the tibial cut, the component
+    slid onto the cut surfaces, less the plate floor and the distal cut
+    (:mod:`tka_planner.implant`). Otherwise the planner's insert that closes the
+    tighter compartment over the library's tray and femoral thickness. Neither includes
+    the surgeon's thicker or thinner choice, which is made on top of it.
+    """
+    from .implant.job import insert_thickness_mm
+    from .implant.rules import ml_slide
+
+    box = _femoral_cut_box(measurement, plan, library)
+    if box is not None and box.get("available"):
+        try:
+            F = np.asarray(plan.components["femoral_component"], dtype=float)
+            T = np.asarray(plan.components["tibial_component"], dtype=float)
+            ffit = femoral_fit_case(measurement, plan, box)
+            F2, T2, _ = ml_slide(F, T, ffit["ml_shift_mm"])
+            return (float(insert_thickness_mm(F2, T2, box["cad_parameters"])),
+                    "parametric")
+        except (ValueError, KeyError, IndexError):
+            pass
+    solved = plan.diagnostics.get("insert_thickness_to_close_mm")
+    return (None if solved is None else float(solved)), "solved"
+
+
+def femoral_fit_case(measurement: CaseMeasurement, plan: SurgicalPlan, box: dict) -> dict:
+    """:func:`tka_planner.implant.femoral_fit` on this plan, kept for the femur and the
+    femoral pose last asked about: a tibial change re-plans without moving either."""
+    from .implant.rules import femoral_fit
+
+    pose = np.asarray(plan.components["femoral_component"], dtype=float)
+    key = (pose.tobytes(), json.dumps(box["cad_parameters"], sort_keys=True))
+    held = _FEMORAL_FIT.get(id(measurement.femur))
+    if held is None or held[0] is not measurement.femur or held[1] != key:
+        held = (measurement.femur, key, femoral_fit(measurement.femur, pose, box))
+        _FEMORAL_FIT.clear()
+        _FEMORAL_FIT[id(measurement.femur)] = held
+    return held[2]
+
+
+_FEMORAL_FIT: dict = {}
 
 
 def tray_thickness(measurement: CaseMeasurement, sizing: SizingDecision,
@@ -562,6 +654,11 @@ def femoral_cut_box_case(measurement: CaseMeasurement, plan: SurgicalPlan,
 
     ``None`` with no implant library: without the implant there is no box to place.
     """
+    return _femoral_cut_box(measurement, plan, library)
+
+
+def _femoral_cut_box(measurement: CaseMeasurement, plan: SurgicalPlan,
+                     library) -> dict | None:
     from .core.femoral_box import femoral_cut_box
 
     if library is None:
@@ -579,14 +676,25 @@ def femoral_cut_box_case(measurement: CaseMeasurement, plan: SurgicalPlan,
                 "reason": "The implant library has no femoral_box.json, the femoral "
                           "component's box design."}
     medial_sign = 1.0 if str(measurement.side).lower().startswith("r") else -1.0
+    pose = np.asarray(plan.components["femoral_component"], dtype=float)
+    # Kept for the femur, pose and design last asked about: the plan, the insert minimum
+    # and the implant rules all ask for the same box on every re-plan.
+    key = (pose.tobytes(), medial_sign, repr(design))
+    held = _BOX.get("held")
+    if held is not None and held[0] is measurement.femur and held[1] == key:
+        return held[2]
     try:
-        box = femoral_cut_box(measurement.femur,
-                              plan.components["femoral_component"],
+        box = femoral_cut_box(measurement.femur, pose,
                               medial_sign=medial_sign, design=design,
                               samples=_femur_samples(measurement.femur))
+        result = {"available": True, **box.to_dict()}
     except ValueError as error:
-        return {"available": False, "reason": str(error)}
-    return {"available": True, **box.to_dict()}
+        result = {"available": False, "reason": str(error)}
+    _BOX["held"] = (measurement.femur, key, result)
+    return result
+
+
+_BOX: dict = {}
 
 
 def _femur_samples(femur: Mesh) -> np.ndarray:
@@ -1108,6 +1216,9 @@ def findings_case(
             f"picks.", "landmarks")
     for warning in plan.warnings:
         add("PLAN_WARNING", "warning", warning, "plan")
+    if plan.diagnostics.get("insert_minimum_clamped"):
+        add("INSERT_MINIMUM_CLAMPED", "warning", plan.diagnostics["insert_minimum_warning"],
+            "plan")
     for flag in sizing.flags:
         add(f"SIZING_{str(flag).upper()}", "warning", _sizing_sentence(flag, sizing),
             "sizing")

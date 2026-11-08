@@ -709,6 +709,55 @@ def plan_alignment(
     )
 
 
+@dataclass(frozen=True)
+class InsertMinimum:
+    """What :func:`deepen_for_insert_minimum` did: the plan it settled on, the extra
+    tibial resection it took beyond the surgeon's own, the insert it gives, and whether
+    the control's limit stopped it short (with the warning to show)."""
+
+    plan: object
+    auto_mm: float
+    insert_mm: float | None
+    clamped: bool = False
+    warning: str = ""
+
+
+INSERT_MINIMUM_STEP_MM = 0.5
+
+
+def deepen_for_insert_minimum(replan, insert_of, *, minimum_mm: float,
+                              user_delta_mm: float, limit_mm: float) -> InsertMinimum:
+    """Deepen the tibial cut until the insert reaches ``minimum_mm``.
+
+    ``replan(delta_mm)`` plans with that total tibial resection delta, ``insert_of(plan)``
+    is the insert that plan gives (``None`` when there is none to measure). The extra is
+    first the shortfall rounded up to the next half millimetre (eval/demo_cases.jobs, the
+    rule the demo knees were built on), then half millimetres more while the insert is
+    still short: the cut is sloped, so it does not gain one for one everywhere. The total
+    never passes ``limit_mm``, the resection control's own range; a minimum it cannot
+    meet there is reported, not forced. A minimum of zero is off.
+    """
+    plan = replan(user_delta_mm)
+    insert = insert_of(plan)
+    if minimum_mm <= 0 or insert is None or insert >= minimum_mm - 1e-9:
+        return InsertMinimum(plan=plan, auto_mm=0.0, insert_mm=insert)
+    total = min(user_delta_mm + float(np.ceil((minimum_mm - insert) * 2) / 2), limit_mm)
+    while True:
+        plan = replan(total)
+        insert = insert_of(plan)
+        if insert is None or insert >= minimum_mm - 1e-9 or total >= limit_mm - 1e-9:
+            break
+        total = min(total + INSERT_MINIMUM_STEP_MM, limit_mm)
+    auto = round(total - user_delta_mm, 3)
+    clamped = insert is not None and insert < minimum_mm - 1e-9
+    warning = ""
+    if clamped:
+        warning = (f"The {minimum_mm:g} mm insert minimum is not met: the tibial resection "
+                   f"stops at its +{limit_mm:g} mm limit with a {insert:.1f} mm insert.")
+    return InsertMinimum(plan=plan, auto_mm=auto, insert_mm=insert, clamped=clamped,
+                         warning=warning)
+
+
 def _in_plane_of(vector: np.ndarray, normal: np.ndarray) -> np.ndarray:
     """The part of ``vector`` lying in the plane whose normal is ``normal``."""
     normal = unit(normal)

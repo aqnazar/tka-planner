@@ -58,7 +58,7 @@ FEMORAL_ONLY = frozenset(
 TIBIAL_ONLY = frozenset(
     name for name in ADJUSTMENT_FIELDS if name.startswith("tibial_")
 )
-TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference"}
+TIBIAL_ONLY = TIBIAL_ONLY | {"tibial_reference", "insert_minimum_mm"}
 BOTH_BONES = frozenset({
     "coronal_correction_deg", "philosophy", "size_override", "implant_mode",
     "resection_mode", "build_bone_shells",
@@ -99,6 +99,9 @@ class Controls:
     implant_mode: str = "patient_specific"
     # The insert is solved to close the joint; this is the surgeon's thicker or thinner.
     insert_thickness_delta_mm: float = 0.0
+    # The thinnest insert the plan accepts (author 2026-11-08); below it the tibial cut
+    # goes deeper, by the plan's own rule. Zero turns it off.
+    insert_minimum_mm: float = 8.0
     resection_mode: str = "block"
     build_bone_shells: bool = True
     show_planes: bool = True
@@ -507,6 +510,15 @@ class PlanningSession:
                 f"Gap medial|{diagnostics['extension_gap_medial_mm']:.1f} mm",
                 f"Gap lateral|{diagnostics['extension_gap_lateral_mm']:.1f} mm",
             ]
+        if (diagnostics.get("insert_of_record_source") == "parametric"
+                and diagnostics.get("insert_of_record_mm") is not None):
+            lines.append(f"Insert of the parts|{diagnostics['insert_of_record_mm']:.1f} mm")
+        if diagnostics.get("tibial_resection_auto_mm"):
+            lines.append(
+                f"Insert minimum|+{diagnostics['tibial_resection_auto_mm']:.1f} mm tibial "
+                f"resection for the {diagnostics['insert_minimum_mm']:g} mm insert minimum")
+        if diagnostics.get("insert_minimum_clamped"):
+            lines.append(f"WARN|{diagnostics['insert_minimum_warning']}")
         if diagnostics.get("component_rotation_mismatch_deg") is not None:
             lines += [
                 "",
@@ -813,6 +825,7 @@ class PlanningSession:
             adjustments=self._adjustments(),
             tibial_reference=self.controls.tibial_reference,
             library=self.library,
+            insert_minimum_mm=self.controls.insert_minimum_mm,
         )
 
     def _adjustments(self) -> Adjustments:

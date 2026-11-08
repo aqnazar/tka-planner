@@ -33,7 +33,8 @@ def planned():
     out = {}
     for name in KNEES:
         m = measure_case(BONES / name / "FD.stl", BONES / name / "TD.stl", "right", case_id=name)
-        p, sizing = plan_case(m, library=LIBRARY)
+        # The fixture was made before the insert minimum existed: plan as it did.
+        p, sizing = plan_case(m, library=LIBRARY, insert_minimum_mm=0.0)
         out[name] = (m, p, sizing)
     return out
 

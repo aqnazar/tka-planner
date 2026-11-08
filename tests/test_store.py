@@ -124,6 +124,7 @@ def test_owners_do_not_see_each_others_cases(tmp_path):
 
 
 def test_the_plan_key_changes_when_a_cut_moves(session):
+    session.replan(insert_minimum_mm=0.0)    # else the minimum absorbs the change
     before = plan_key(session)
 
     session.replan(tibial_resection_delta_mm=3.0)
