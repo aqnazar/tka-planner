@@ -85,68 +85,17 @@ def cases():
 
 
 def femoral_fit(femur, F, box):
-    """Femur_ML and the ML slide that keep the component FEMORAL_INSET inside the bone's
-    cut surfaces (distal, posterior chamfer, posterior), from their common ML band. The
-    component is ML - 1 wide (v19), centred on its origin."""
-    from fit_check import facet_extents, to_frame
-    cad = box["cad_parameters"]
-    ext = facet_extents(to_frame(femur, F), cad["C_Distal_cut_surface"], cad["B_Posterior_chamfer_projection"],
-                        cad["D_Anterior_chamfer_projection"])
-    lo, hi = max(e[0] for e in ext.values()), min(e[1] for e in ext.values())
-    width = hi - lo - 2 * FEMORAL_INSET
-    return {"femur_ml_mm": round(width + 1.0, 3), "ml_shift_mm": round((lo + hi) / 2, 3),
-            "facet_ml_extent_mm": {k: [round(a, 2), round(b, 2)] for k, (a, b) in ext.items()},
-            "band_mm": [round(lo, 2), round(hi, 2)]}
+    """Femur_ML and the ML slide on the cut surfaces: the planner's rule
+    (tka_planner.implant.femoral_fit)."""
+    from tka_planner.implant import femoral_fit as rule
+    return rule(femur, F, box)
 
 
 def derive(name, side, m, p, sizing, library):
-    """The three parts' Fusion parameters from one measured, planned knee (any plan,
-    adjusted or not): femoral box and width, tray rule, insert thickness."""
-    from fusion_driver import job as femoral_job
-    from implant_pipeline import make_job
-    from tka_planner.pipeline import femoral_cut_box_case, implant_spec_case
-    from tray_rule import fit
-    box = femoral_cut_box_case(m, p, library)
-    if not box or not box.get("available"):
-        raise RuntimeError(f"{name}: no femoral box: {(box or {}).get('reason')}")
-    F = np.asarray(p.components["femoral_component"], float)
-    T = np.asarray(p.components["tibial_component"], float)
-    # Femoral width from the bone at the cuts, not the catalogue chart; the component
-    # slides along its own ML axis onto the cut surfaces (no resection changes: every
-    # cut plane contains the ML axis). The tray origin takes the same slide, so the
-    # two stay in register (the planner's rule); the tray's own outline then centres
-    # on the tibial cut through Tray_Offset, as before.
-    ffit = femoral_fit(m.femur, F, box)
-    s = ffit["ml_shift_mm"]
-    world = F[:3, 1] * s
-    t_shift = T[:3, :2].T @ world
-    F2, T2 = F.copy(), T.copy()
-    F2[:3, 3] += world
-    T2[:3, 3] += T[:3, :2] @ t_shift
-    f = femoral_job(name, side, F2, ffit["femur_ml_mm"], box)
-    spec = implant_spec_case(m, p, sizing, library, with_cut_box=False)
-    t = spec["tibial_component"]
-    row = {"name": name, "side": side, "femur_ml_mm": f["femur_ml_mm"], "tibial": t["dimensions_mm"],
-           "section_centre_mm": (np.asarray(t["diagnostics"]["section_centre_mm"]) - t_shift).tolist(),
-           "outline_mm": (np.asarray(t["outline_mm"]) - t_shift).tolist(),
-           "tray_pose": T2.tolist(), "femoral_pose": F2.tolist()}
-    tray = fit(row, row["section_centre_mm"])
-    j = make_job(f, row, tray)
-    j["femoral_box"] = {k: f[k] for k in ("flange_height_mm", "posterior_cut_x_mm", "anterior_cut_x_at_distal_mm")}
-    j["femoral_fit"] = dict(ffit, chart_femur_ml_mm=round(float(sizing.implant_ml_mm), 3),
-                            tray_origin_shift_mm=np.round(t_shift, 3).tolist())
-    j["anatomy"] = {"tibial_cut_ml_mm": round(t["dimensions_mm"]["ml"], 1),
-                    "tibial_cut_ap_mm": round(t["dimensions_mm"]["ap"], 1),
-                    "tibial_ap_over_ml": round(t["dimensions_mm"]["ap"] / t["dimensions_mm"]["ml"], 3),
-                    "nearest_catalogue_size": spec["catalogue_equivalent"]["nearest_size"]}
-    from tka_planner.core.implant_spec import traced_outline
-    shift = np.asarray(tray["shift_mm"])
-    plate = np.asarray(traced_outline(tray["_mask"], tray["_xs"], tray["_ys"])) + shift
-    j["tray_rule"] = {"c": tray["c"], "coverage": tray["coverage"], "bone_area_mm2": tray["bone_area_mm2"],
-                      "tray_area_mm2": tray["tray_area_mm2"], "outline_mm": row["outline_mm"],
-                      "plate_outline_mm": plate.round(2).tolist(), "shift_mm": tray["shift_mm"],
-                      "notch_w": tray["params"]["Intercondylar_Notch_Width"]}
-    return j
+    """The three parts' Fusion parameters from one measured, planned knee. The rules
+    live in the planner now (tka_planner.implant.derive_parameters); this is a call."""
+    from tka_planner.implant import derive_parameters
+    return derive_parameters(m, p, sizing, library, name=name, side=side)
 
 
 def jobs(names=()):
