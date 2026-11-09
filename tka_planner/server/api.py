@@ -14,15 +14,19 @@ clipping half-spaces, the report lines, both sets of control values and the stal
 
 from __future__ import annotations
 
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from tka_planner.core.phantom_femur import entered_femur_record
 from tka_planner.geom.gltf import write_glb
 from tka_planner.panel import TRIAL_SCHEMA, with_sizes
 from tka_planner.report.bundle import export_session
 from tka_planner.scene.model import SceneDelta
+from tka_planner.study import pick_targets, save_picks, save_review, study_schema
 
 from .encode import clip_planes, node_payload, scene_snapshot
+from .implant import ImplantRoutes
 
 __all__ = ["Api", "Binary", "ApiError"]
 
@@ -45,20 +49,37 @@ class ApiError(Exception):
         self.message = message
 
 
-class Api:
+class Api(ImplantRoutes):
     """Routes over a :class:`~tka_planner.server.sessions.SessionManager`."""
 
     def __init__(self, manager):
         self.manager = manager
+        self._implant_init()
+        # The server is threaded so meshes load while a commit cuts; a request that
+        # plans, cuts or derives must still not run beside another on the same state.
+        self._turn = threading.RLock()
 
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
 
     def dispatch(self, method: str, path: str, body=None):
-        """Route a request. Returns ``(status, payload)``; never raises for a caller."""
+        """Route a request. Returns ``(status, payload)``; never raises for a caller.
+
+        Every request takes its turn except the ones that only read: a mesh by its
+        content hash, and the progress of a Fusion build.
+        """
+        parts = _segments(path)
+        reads_only = method.upper() == "GET" and (
+            "meshes" in parts or parts[1:] == ["build"] or parts[1:] == ["health"])
+        if reads_only:
+            return self._dispatch(method, parts, body)
+        with self._turn:
+            return self._dispatch(method, parts, body)
+
+    def _dispatch(self, method, parts, body):
         try:
-            return 200, self._route(method.upper(), _segments(path), body or {})
+            return 200, self._route(method.upper(), parts, body or {})
         except ApiError as error:
             return error.status, {"error": error.message}
         except KeyError as error:
@@ -79,8 +100,12 @@ class Api:
             return {"cases": self.manager.available_cases()}
         if rest == ["schema"] and method == "GET":
             return self.schema()
+        if rest == ["study", "schema"] and method == "GET":
+            return study_schema()
         if rest == ["sessions"] and method == "POST":
             return self.open_session(body)
+        if rest == ["build"] and method == "GET":
+            return self.build_progress()
 
         if len(rest) >= 2 and rest[0] == "sessions":
             return self._session_route(method, rest[1], rest[2:], body)
@@ -103,15 +128,27 @@ class Api:
         elif tail == ["commit"] and method == "POST":
             return self.commit(entry)
         elif tail == ["trial"] and method == "POST":
-            return self.set_trial(entry, body)
+            return self.kinematic_trial(entry, self.set_trial(entry, body), body.get("model"))
         elif tail == ["trial", "reset"] and method == "POST":
-            return self.reset_trial(entry)
+            return self.kinematic_trial(entry, self.reset_trial(entry), body.get("model"))
         elif tail == ["arc"] and method == "POST":
             return self.arc(entry, body)
         elif tail == ["export"] and method == "POST":
             return self.export(entry, body)
         elif len(tail) == 2 and tail[0] == "meshes" and method == "GET":
             return self.mesh(entry, tail[1])
+        elif tail == ["report"] and method == "GET":
+            return self.report(entry)
+        elif tail == ["study", "targets"] and method == "POST":
+            return pick_targets(entry, body.get("mode"))
+        elif tail == ["study", "picks"] and method == "POST":
+            return save_picks(entry, self._study_dir(), body)
+        elif tail == ["study", "review"] and method == "POST":
+            return save_review(entry, self._study_dir(), body)
+        else:
+            answer = self._implant_route(method, entry, tail, body)
+            if answer is not None:
+                return answer
 
         raise ApiError(404, f"No route for {method} on session {session_id}")
 
@@ -123,9 +160,20 @@ class Api:
         folder = body.get("folder")
         if not folder:
             raise ApiError(400, "A folder is required to open a session.")
+        femur_length_mm = _optional_float(body.get("femur_length_mm"))
+        femur_length_type = _optional_text(body.get("femur_length_type"))
+        sex = _optional_text(body.get("sex"))
+        # Refused here, before the case is measured, by the pipeline's own rule.
+        try:
+            entered_femur_record(femur_length_mm, femur_length_type, sex)
+        except ValueError as error:
+            raise ApiError(400, str(error)) from None
         entry = self.manager.open(
             folder, side=body.get("side", "left"), library=body.get("library"),
             landmarks=body.get("landmarks"),
+            remove_large_islands=bool(body.get("remove_large_islands", False)),
+            femur_length_mm=femur_length_mm,
+            femur_length_type=femur_length_type, sex=sex,
         )
         return self.snapshot(entry)
 
@@ -177,7 +225,10 @@ class Api:
         )
 
     def set_trial(self, entry, body) -> dict:
-        changes = body.get("changes") or body
+        changes = body.get("changes") or {k: v for k, v in body.items() if k != "model"}
+        if not changes and body.get("model"):
+            # Only the motion model changed: re-pose at the flexion already set.
+            changes = {"flexion_deg": entry.session.trial.flexion_deg}
         if not isinstance(changes, dict) or not changes:
             raise ApiError(400, "No trial changes were given.")
         return _envelope(entry, entry.session.set_trial(**changes))
@@ -201,6 +252,21 @@ class Api:
             entry.session, Path(out), write_meshes=bool(body.get("meshes", True))
         )
         return {"written": written, "out": str(Path(out).resolve())}
+
+    def report(self, entry) -> Binary:
+        """The HTML report on the current plan, to read in the browser beside the plan.
+
+        The same document Export writes, so what is read here is what is kept.
+        """
+        return Binary("text/html; charset=utf-8",
+                      entry.session.report_html().encode("utf-8"))
+
+    def _study_dir(self) -> Path:
+        """Where observer picks and verdicts go: the server's study folder."""
+        folder = self.manager.study_dir
+        if folder is None:
+            raise ApiError(400, "No study folder is configured (start with --study).")
+        return Path(folder)
 
     def mesh(self, entry, filename: str) -> Binary:
         """One mesh as binary glTF, addressed by content hash.
@@ -229,6 +295,13 @@ def _envelope(entry, delta=None, **extra) -> dict:
         "delta": _delta_payload(entry, delta or SceneDelta()),
         "clip": clip_planes(session.plan),
         "report": session.report_lines(),
+        # Every finding with its place, and the fit map's legend and status: the viewer
+        # lists the one and draws the other, and works out neither.
+        "findings": session.findings(),
+        "fit_map": session.fit_map_state(),
+        # What the implant shown is: built in Fusion, or a stand-in, and what a build
+        # made for another plan differs in. The viewer labels it; it decides nothing.
+        "implant": session.implant_state(),
         "controls": asdict(session.controls),
         "trial": asdict(session.trial),
         "stale": bool(session.stale),
@@ -256,3 +329,22 @@ def _delta_payload(entry, delta) -> dict:
 
 def _segments(path: str) -> list:
     return [part for part in str(path).split("?")[0].split("/") if part]
+
+
+def _optional_float(value) -> float | None:
+    """A number from a request body, where empty means not given."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, f"Not a number: {value!r}") from None
+
+
+def _optional_text(value) -> str | None:
+    """A choice from a request body, where empty means not given."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ApiError(400, f"Not a text value: {value!r}")
+    return value

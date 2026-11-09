@@ -44,6 +44,9 @@ vendor/*
 # Fusion CAD sources and parameter exports: design IP and the reference bone. Never public.
 fusion/Fusion files/
 fusion/Parameter-Export/
+# Fusion file identifiers (lineage URNs) of the author's account: local only. The layout
+# is fusion/local.example.json.
+fusion/local.json
 # Patient scans. Folder names carry identities: never public.
 Patient Dataset/
 # Planning, specs and design documents stay private (the repo is public).
@@ -59,3 +62,6 @@ media/*.mp4
 docs/Отчёт_о_разработке_планировщика_ТЭКС.md
 docs/Report-formatting.txt
 docs/report_assets/
+
+# Paper harness results: derived from patient data, never public.
+paper/out/

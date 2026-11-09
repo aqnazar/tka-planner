@@ -104,6 +104,7 @@ export class Viewer {
       this.setPose(setId, matrix);
     }
     await Promise.all(snapshot.nodes.map((node) => this.addNode(node)));
+    this.updateXray();
     this.frame();
   }
 
@@ -128,7 +129,7 @@ export class Viewer {
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(toMatrix(node.rest));
     mesh.visible = node.visible;
-    mesh.renderOrder = node.tags?.landmark ? 2 : 0;
+    mesh.renderOrder = node.tags?.landmark ? 2 : node.tags?.fit_map ? 3 : 0;
 
     const group = this.groups.get(node.set) || this.groups.get("world");
     group.add(mesh);
@@ -156,6 +157,19 @@ export class Viewer {
   }
 
   material(node) {
+    // A fit map is drawn unlit, in exactly the colours the server chose, so a colour
+    // on the screen matches the legend rather than the lighting. The server lifts it a
+    // fraction of a millimetre off the cut; a small depth offset settles the rest. A
+    // large one would push it through the bone when the cut is seen edge-on.
+    if (node.tags?.fit_map) {
+      return new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -0.5,
+        polygonOffsetUnits: -1,
+      });
+    }
     const colour = new THREE.Color(...(node.colour || [0.6, 0.6, 0.6]));
     const transparent = (node.alpha ?? 1) < 1;
     return new THREE.MeshLambertMaterial({
@@ -176,10 +190,13 @@ export class Viewer {
         return response.arrayBuffer();
       })
       .then((buffer) => {
-        const { positions, indices } = parseGlb(buffer);
+        const { positions, indices, colours, values } = parseGlb(buffer);
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        if (colours) geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+        // The value each vertex stands for, kept to be read back under the pointer.
+        if (values) geometry.userData.values = values;
         // The server sends no normals: for flat-shaded bone they are cheaper to derive
         // here than to transfer, and it halves what crosses the wire.
         geometry.computeVertexNormals();
@@ -214,6 +231,7 @@ export class Viewer {
       const entry = this.nodes.get(name);
       if (!entry) continue;
       entry.mesh.visible = visible;
+      entry.node.visible = visible;
       if (entry.cap) entry.cap.visible = visible && this.clipping;
     }
 
@@ -224,6 +242,90 @@ export class Viewer {
         this.replaceMesh(name, meshId, delta.nodes?.[name])
       )
     );
+    this.updateXray();
+  }
+
+  // While a fit map is shown, the components and the bone shells are drawn see-through:
+  // a tray sits on the very surface its map colours, and would otherwise hide it.
+  updateXray() {
+    const mapShown = [...this.nodes.values()].some(
+      ({ mesh, node }) => node.tags?.fit_map && mesh.visible
+    );
+    for (const { mesh, node } of this.nodes.values()) {
+      if (!node.tags?.component && !node.tags?.shell) continue;
+      const alpha = node.alpha ?? 1;
+      const opacity = mapShown ? Math.min(alpha, 0.28) : alpha;
+      mesh.material.transparent = opacity < 1;
+      mesh.material.opacity = opacity;
+      mesh.material.depthWrite = opacity >= 1;
+      mesh.material.needsUpdate = true;
+    }
+  }
+
+  // --------------------------------------------------------------
+  // Findings and readback
+  // --------------------------------------------------------------
+
+  // Turn to a point the server named, in scan millimetres in a set's frame. The marker
+  // is drawn over everything, so a fault inside a bone can still be seen.
+  focus(location) {
+    if (!location?.point_mm) return;
+    const group = this.groups.get(location.set) || this.groups.get("world");
+    group.updateMatrixWorld(true);
+    const point = new THREE.Vector3(...location.point_mm.map((v) => v / MM_PER_M))
+      .applyMatrix4(group.matrixWorld);
+
+    if (!this.marker) {
+      this.marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.0035, 24, 16),
+        new THREE.MeshBasicMaterial({
+          color: 0xff2bd6, depthTest: false, transparent: true, opacity: 0.9,
+        })
+      );
+      this.marker.renderOrder = 10;
+      this.scene.add(this.marker);
+    }
+    this.marker.position.copy(point);
+    this.marker.visible = true;
+
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    offset.setLength(0.16);
+    this.controls.target.copy(point);
+    this.camera.position.copy(point).add(offset);
+    this.controls.update();
+  }
+
+  clearFocus() {
+    if (this.marker) this.marker.visible = false;
+  }
+
+  // The fit value under the pointer, read from the vertex nearest the hit. Nothing is
+  // computed: the value is the one the server attached to that vertex.
+  valueAt(clientX, clientY) {
+    const maps = [...this.nodes.values()]
+      .filter(({ mesh, node }) => node.tags?.fit_map && mesh.visible)
+      .map(({ mesh }) => mesh);
+    if (!maps.length) return null;
+    const box = this.renderer.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((clientX - box.left) / box.width) * 2 - 1,
+      -((clientY - box.top) / box.height) * 2 + 1
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(pointer, this.camera);
+    const hit = ray.intersectObjects(maps, false)[0];
+    const values = hit?.object.geometry.userData.values;
+    if (!hit || !values) return null;
+    const local = hit.object.worldToLocal(hit.point.clone());
+    const position = hit.object.geometry.attributes.position;
+    let best = hit.face.a;
+    let bestDistance = Infinity;
+    for (const index of [hit.face.a, hit.face.b, hit.face.c]) {
+      const corner = new THREE.Vector3().fromBufferAttribute(position, index);
+      const d = local.distanceToSquared(corner);
+      if (d < bestDistance) { bestDistance = d; best = index; }
+    }
+    return { name: hit.object.name, value: values[best] };
   }
 
   async replaceMesh(name, meshId, description) {
@@ -292,8 +394,12 @@ export class Viewer {
   }
 
   frame() {
+    this.frameObjects([...this.nodes.values()].map(({ mesh }) => mesh));
+  }
+
+  frameObjects(meshes) {
     const box = new THREE.Box3();
-    for (const { mesh } of this.nodes.values()) {
+    for (const mesh of meshes) {
       if (mesh.visible && mesh.geometry.boundingSphere) {
         box.expandByObject(mesh);
       }
@@ -316,6 +422,220 @@ export class Viewer {
     this.grid.scale.setScalar(Math.max(radius * 4, 0.2));
     this.grid.position.set(centre.x, centre.y, box.min.z);
   }
+
+  // --------------------------------------------------------------
+  // The pick layer (observer study)
+  // --------------------------------------------------------------
+  //
+  // Picking is done on the whole uncut bones, in a layer of their own. The planner's
+  // scene -- cuts, components, its own landmarks -- is hidden, not changed, and comes
+  // back as it was when picking ends. A marker is a child of its bone's mesh and sits
+  // at a position in that mesh's own coordinates, which are the scan's millimetres:
+  // what is read back is exactly the point on the surface that was clicked.
+
+  async enterPick(bones) {
+    this.exitPick();
+    this.root.visible = false;
+    this.clearFocus();
+    const layer = new THREE.Group();
+    this.scene.add(layer);
+    this.pick = { layer, bones: new Map(), markers: new Map(), ghosts: new Map() };
+    for (const [name, bone] of Object.entries(bones)) {
+      const geometry = await this.geometry(bone.mesh);
+      const mesh = new THREE.Mesh(
+        geometry, new THREE.MeshLambertMaterial({ color: PICK_BONE_COLOUR })
+      );
+      mesh.name = name;
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(toMatrix(bone.rest));
+      layer.add(mesh);
+      this.pick.bones.set(name, mesh);
+    }
+    layer.updateMatrixWorld(true);
+    this.frameObjects([...this.pick.bones.values()]);
+  }
+
+  exitPick() {
+    if (!this.pick) return;
+    this.pick.layer.traverse((object) => {
+      if (object.isMesh || object.isLine || object.isSprite) {
+        object.material.map?.dispose();
+        object.material.dispose();
+        // Bone geometry belongs to the shared cache; marker geometry is the pick's own.
+        if (!this.pick.bones.has(object.name)) object.geometry?.dispose();
+      }
+    });
+    this.scene.remove(this.pick.layer);
+    this.pick = null;
+    this.root.visible = true;
+    this.setControlsEnabled(true);
+  }
+
+  // Which bones are drawn: "Femur", "Tibia" or "both". A hidden bone cannot be hit.
+  showPickBones(which) {
+    if (!this.pick) return;
+    for (const [name, mesh] of this.pick.bones) {
+      mesh.visible = which === "both" || which === name;
+    }
+  }
+
+  framePickBone(name) {
+    const mesh = this.pick?.bones.get(name);
+    if (mesh) this.frameObjects([mesh]);
+  }
+
+  // The point on a bone's surface under the pointer, in the scan's millimetres.
+  pickHit(clientX, clientY, boneName) {
+    const mesh = this.pick?.bones.get(boneName);
+    if (!mesh || !mesh.visible) return null;
+    const hit = this.ray(clientX, clientY).intersectObject(mesh, false)[0];
+    if (!hit) return null;
+    const local = mesh.worldToLocal(hit.point.clone());
+    return [local.x * MM_PER_M, local.y * MM_PER_M, local.z * MM_PER_M];
+  }
+
+  // Whether the pointer is on marker ``id``. Only that one is tested: the others are
+  // never in the way of a click on the bone.
+  isOnMarker(clientX, clientY, id) {
+    const sphere = this.pick?.markers.get(id)?.sphere;
+    if (!sphere || !sphere.parent.visible) return false;
+    return this.ray(clientX, clientY).intersectObject(sphere, false).length > 0;
+  }
+
+  ray(clientX, clientY) {
+    const box = this.renderer.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((clientX - box.left) / box.width) * 2 - 1,
+      -((clientY - box.top) / box.height) * 2 + 1
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(pointer, this.camera);
+    return ray;
+  }
+
+  // Place or move a marker. ``state`` is "current" or "placed".
+  setMarker(id, { bone, mm, number, state }) {
+    const parent = this.pick?.bones.get(bone);
+    if (!parent) return;
+    let marker = this.pick.markers.get(id);
+    if (!marker) {
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(MARKER_RADIUS_M, 24, 16),
+        new THREE.MeshLambertMaterial({ color: MARKER_COLOUR.placed })
+      );
+      sphere.userData.markerId = id;
+      sphere.renderOrder = 4;
+      const label = numberSprite(number);
+      parent.add(sphere, label);
+      marker = { sphere, label };
+      this.pick.markers.set(id, marker);
+    }
+    const position = new THREE.Vector3(...mm.map((v) => v / MM_PER_M));
+    marker.sphere.position.copy(position);
+    marker.label.position.copy(position);
+    marker.sphere.material.color.setHex(MARKER_COLOUR[state] ?? MARKER_COLOUR.placed);
+    marker.sphere.scale.setScalar(state === "current" ? 1.35 : 1);
+    marker.label.material.opacity = state === "current" ? 1 : 0.75;
+    this.updateLink(id);
+  }
+
+  removeMarker(id) {
+    const marker = this.pick?.markers.get(id);
+    if (!marker) return;
+    for (const object of [marker.sphere, marker.label]) {
+      object.parent?.remove(object);
+      object.material.map?.dispose();
+      object.material.dispose();
+      object.geometry?.dispose();
+    }
+    this.pick.markers.delete(id);
+    this.updateLink(id);
+  }
+
+  // The automatic position a marker started from, drawn as a see-through ghost with a
+  // line to where the marker is now. ``null`` removes it.
+  setGhost(id, ghost) {
+    if (!this.pick) return;
+    const old = this.pick.ghosts.get(id);
+    if (old) {
+      for (const object of [old.sphere, old.link]) {
+        object.parent?.remove(object);
+        object.material.dispose();
+        object.geometry.dispose();
+      }
+      this.pick.ghosts.delete(id);
+    }
+    const parent = ghost && this.pick.bones.get(ghost.bone);
+    if (!parent) return;
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(MARKER_RADIUS_M, 20, 14),
+      new THREE.MeshBasicMaterial({
+        color: GHOST_COLOUR, transparent: true, opacity: 0.45, depthWrite: false,
+      })
+    );
+    sphere.position.set(...ghost.mm.map((v) => v / MM_PER_M));
+    sphere.renderOrder = 3;
+    const link = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([sphere.position, sphere.position]),
+      new THREE.LineBasicMaterial({
+        color: GHOST_COLOUR, transparent: true, opacity: 0.8, depthTest: false,
+      })
+    );
+    link.renderOrder = 5;
+    parent.add(sphere, link);
+    sphere.visible = link.visible = this.pick.ghostsShown !== false;
+    this.pick.ghosts.set(id, { sphere, link });
+    this.updateLink(id);
+  }
+
+  setGhostsVisible(visible) {
+    if (!this.pick) return;
+    this.pick.ghostsShown = visible;
+    for (const { sphere, link } of this.pick.ghosts.values()) {
+      sphere.visible = link.visible = visible;
+    }
+  }
+
+  updateLink(id) {
+    const ghost = this.pick?.ghosts.get(id);
+    if (!ghost) return;
+    const marker = this.pick.markers.get(id);
+    const end = marker ? marker.sphere.position : ghost.sphere.position;
+    ghost.link.geometry.setFromPoints([ghost.sphere.position, end]);
+  }
+
+  // Orbiting is off while a marker is dragged, or the bone would turn under it.
+  setControlsEnabled(enabled) {
+    this.controls.enabled = enabled;
+  }
+}
+
+const PICK_BONE_COLOUR = 0xe8dcc4;
+const MARKER_RADIUS_M = 0.0025;
+const MARKER_COLOUR = { current: 0xff2bd6, placed: 0xffc533 };
+const GHOST_COLOUR = 0x7fe3ff;
+
+// A marker's number, drawn over the bone so it reads from any side.
+function numberSprite(number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "rgba(20, 23, 26, 0.85)";
+  context.beginPath();
+  context.arc(32, 32, 26, 0, 2 * Math.PI);
+  context.fill();
+  context.fillStyle = "#ffffff";
+  context.font = "bold 30px Segoe UI, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(String(number), 32, 34);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(canvas), depthTest: false, transparent: true,
+  }));
+  sprite.scale.setScalar(0.0065);
+  sprite.center.set(-0.35, -0.35);   // beside the marker, not over it
+  sprite.renderOrder = 6;
+  return sprite;
 }
 
 function toMatrix(rows) {

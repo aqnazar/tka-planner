@@ -11,6 +11,12 @@ the parts in Fusion from them.
 
 ## Run the demo
 
+> **Superseded by the planner (2026-11-08).** `tka serve` now has every step of the demo
+> (Anatomy, Plan, Implant, Reduce, Build) beside Review and Pick, with the rules in
+> `tka_planner/implant/` and the Fusion build in `tka_planner/fusion/`. To see the demo
+> knees there with their built parts: `tka serve --cases eval/demo_cases --builds
+> eval/patient_builds --library data/implants` (open them as right knees). The demo server below still runs for comparison.
+
 ```
 cd eval
 python demo_server.py --port 8770

@@ -38,8 +38,13 @@ def update_scene(
     implant_ml_mm: float | None = None,
     insert_stretch: dict | None = None,
     component_scales: dict | None = None,
+    built: dict | None = None,
 ) -> SceneDelta:
-    """Apply a plan to a scene and report what moved."""
+    """Apply a plan to a scene and report what moved.
+
+    A node tagged ``built`` holds a Fusion-built part: it is placed at its bone's pose,
+    slid by ``built["shifts"][group]`` and never scaled or stretched.
+    """
     delta = SceneDelta()
 
     for name, resection in plan.resections.items():
@@ -72,10 +77,13 @@ def update_scene(
         # catalogue's single factor for every part of that bone's set.
         transforms = component_scales or {}
         per_axis = transforms.get("scales", {}).get(node.tags["group"])
-        matrix = place(pose, scale if per_axis is None else per_axis,
-                       transforms.get("shifts", {}).get(node.tags["group"]))
-        if node.name == "tibial_insert":
-            matrix = matrix @ insert_stretch_matrix(insert_stretch)
+        if node.tags.get("built"):
+            matrix = place(pose, 1.0, (built or {}).get("shifts", {}).get(node.tags["group"]))
+        else:
+            matrix = place(pose, scale if per_axis is None else per_axis,
+                           transforms.get("shifts", {}).get(node.tags["group"]))
+            if node.name == "tibial_insert":
+                matrix = matrix @ insert_stretch_matrix(insert_stretch)
         if not np.allclose(matrix, node.rest, atol=POSE_TOLERANCE):
             node.rest = matrix
             delta.poses[node.name] = matrix

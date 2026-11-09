@@ -131,6 +131,27 @@ def coronal_profile(des):
     made = remake_profile(des, sk, plane)
     return "y = %.2f mm, %s, box %s" % (plane.geometry.origin.y * 10, made, profile_box_up(des))
 
+def design_profile(kinds):
+    """Whether a Condylar Profile, by its constraint kinds, is still the design's own
+    (sides held tangent to the condyle curve) and not the box remake_profile draws
+    (sides vertical, top horizontal)."""
+    box = kinds.count("VerticalConstraint") >= 2 and "HorizontalConstraint" in kinds
+    return "TangentConstraint" in kinds or not box
+
+def profile_before_replace(des):
+    """The design's own Condylar Profile joins its box to the projected condyle curve by
+    shared points. When the next femoral's condyle ends lower than the design's, the
+    joins let go, the box opens, both sweeps lose their profile ("Profile 1 missing"),
+    and a sweep without a profile refuses a new one (InternalValidationError
+    curProfile || curSolidBody), so the remake after the replace cannot mend it
+    (2026-11-08: DEMO_SMALL, P007L, P007R on fresh copies). Remade first, on the femoral
+    the design was drawn on, the box follows the next femoral by its explicit constraints."""
+    sk = des.rootComponent.sketches.itemByName("Condylar Profile")
+    if sk is None: return "no Condylar Profile"
+    if not design_profile([g.objectType.split("::")[-1] for g in sk.geometricConstraints]):
+        return "box already"
+    return "remade before the replace: " + coronal_profile(des)
+
 def femoral_condyle(des):
     """The femoral's coronal condyle curve (its Condylar profile sketch's spline), in this
     document's context: the curve the dish section is the projection of."""
@@ -163,17 +184,27 @@ def remake_profile(des, old, plane):
     a, b = sp.startSketchPoint, sp.endSketchPoint
     up = lambda p, dz: sk.modelToSketchSpace(adsk.core.Point3D.create(p.worldGeometry.x, p.worldGeometry.y, p.worldGeometry.z + dz))
     L = sk.sketchCurves.sketchLines
-    l1 = L.addByTwoPoints(a, up(a, 0.2))
+    l1 = L.addByTwoPoints(up(a, 0), up(a, 0.2))
     l2 = L.addByTwoPoints(l1.endSketchPoint, up(b, 0.2))
-    l3 = L.addByTwoPoints(l2.endSketchPoint, b)
+    l3 = L.addByTwoPoints(l2.endSketchPoint, up(b, 0))
     gc = sk.geometricConstraints
     errs = []
+    # Explicit constraints, not shared points: a point shared with projected geometry
+    # loses the join when the curve moves (a new Tray_Offset or Insert_Thickness) and
+    # the box is left behind, so the sweeps lose their profile (2026-10-25: DEMO_LARGE
+    # insert v17; reproduced on five knees by moving Tray_Offset_X 0.8 mm).
+    for end, pt in ((l1.startSketchPoint, a), (l3.endSketchPoint, b)):
+        try:
+            gc.addCoincident(end, pt)
+        except Exception as ex:
+            errs.append("coincident " + str(ex)[:60])
     # Sides vertical (the curve's ends are vertical, so they meet it tangent) and equal,
     # top horizontal. Tangent sides with one length and a perpendicular top solved where
     # drawn but not when the linked curve moved with the next femoral (2026-10-11:
     # DEMO_LARGE sides 2.39 against 2 mm, "Failed to solve").
-    for f in (lambda: gc.addVertical(l1), lambda: gc.addVertical(l3), lambda: gc.addHorizontal(l2),
-              lambda: gc.addEqual(l1, l3)):
+    # The two sides' equal length is not added: with both ends coincident to the curve it is
+    # always refused as redundant (the "over constrained" noise of every build, 2026-10-25).
+    for f in (lambda: gc.addVertical(l1), lambda: gc.addVertical(l3), lambda: gc.addHorizontal(l2)):
         try: f()
         except Exception as ex: errs.append(str(ex)[:60])
     try:

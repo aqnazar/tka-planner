@@ -149,7 +149,8 @@ def health(des):
     tl = des.timeline; out = []
     for i in range(tl.count):
         it = tl.item(i)
-        if it.healthState:
+        # A suppressed item (state 3) is a choice, not a fault (plate "Tray offset").
+        if it.healthState and not it.isSuppressed:
             try: m = it.errorOrWarningMessage.split("<")[0][:200]
             except Exception: m = ""
             out.append([it.name, it.healthState, m])
@@ -282,10 +283,19 @@ def build_part(app, df, sets, export, msg, prepare=None, strict=True, finish=Non
         if finish:
             rec["finish"] = finish(des)
         rec["health"] = health(des); rec["bodies"] = bodies(des)
+        # The insert is one body: a second visible body means a part of it was left out of
+        # the features that follow (2026-11-08: P047L in two halves, health clean).
+        if any(n == "*" for n, _ in export):
+            shown = [b for b in rec["bodies"].values() if b["visible"]]
+            if len(shown) != 1:
+                rec["health"].append(["Bodies", 2, "%d visible bodies; the insert must be one" % len(shown)])
         # A warning on the femoral or plate has meant a feature that did not build (the
         # body comes out partial), so those are not saved either. The insert keeps its
         # known Base Sketch warning until its outline is rebuilt.
-        errors = [h for h in rec["health"] if h[1] == 2 or (strict and h[1] == 1)]
+        # A warning on a sweep means it lost its profile and runs on cached geometry, so the
+        # part is wrong even though Fusion calls it a warning: never save or export it.
+        errors = [h for h in rec["health"] if h[1] == 2 or (strict and h[1] == 1)
+                  or (h[1] == 1 and "Sweep" in h[0])]
         if errors:
             rec["saved"] = False
         else:
@@ -358,6 +368,9 @@ def run(_context: str):
             # features, before anything recomputes on new parts (insert_finish.py).
             stripped = strip_insert(des)
             synced = sync(des, src_params["insert"], JOB["insert"])
+            # The design's own Condylar Profile is remade while its femoral is still the
+            # one it was drawn on (insert_finish.profile_before_replace).
+            synced["profile_first"] = profile_before_replace(des)
             done, errs = [], []
             # A replace recomputes the insert; if Fillet2 fails then, Fusion rolls the
             # replace back. Suppress it first, try it again once the parts are in.

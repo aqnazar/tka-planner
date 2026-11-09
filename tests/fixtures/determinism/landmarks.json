@@ -1,0 +1,263 @@
+{
+  "schema_version": "tka-landmarks/1.0.0",
+  "case_id": "SYNTHETIC_DETERMINISM",
+  "side": "left",
+  "coordinate_system": "LPS",
+  "units": "mm",
+  "source": {
+    "kind": "synthetic",
+    "constructed": {
+      "mldfa_deg": 87.5,
+      "mpta_deg": 87.0,
+      "ama_deg": 6.0,
+      "condylar_twist_deg": 3.0,
+      "posterior_slope_deg": 7.0
+    }
+  },
+  "points": [
+    {
+      "id": "femur.notch_centre",
+      "position_mm": [
+        80.0,
+        0.0,
+        -550.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.head_centre",
+      "position_mm": null,
+      "status": "out_of_scan",
+      "origin": "unknown",
+      "reason": "knee-only field of view"
+    },
+    {
+      "id": "femur.canal_centre_distal",
+      "position_mm": [
+        86.271708,
+        0.0,
+        -490.328686
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.canal_centre_proximal",
+      "position_mm": [
+        100.905693,
+        0.0,
+        -351.095621
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.epicondyle_lateral",
+      "position_mm": [
+        117.5,
+        0.0,
+        -550.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.epicondyle_medial_sulcus",
+      "position_mm": [
+        42.5,
+        0.0,
+        -550.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.epicondyle_medial_prominence",
+      "position_mm": [
+        38.5,
+        0.0,
+        -550.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.condyle_distal_lateral",
+      "position_mm": [
+        117.464308,
+        0.0,
+        -573.364273
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.condyle_distal_medial",
+      "position_mm": [
+        42.535692,
+        0.0,
+        -576.635727
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.condyle_posterior_lateral",
+      "position_mm": [
+        117.448608,
+        28.037402,
+        -550.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.condyle_posterior_medial",
+      "position_mm": [
+        42.551392,
+        31.962598,
+        -550.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "femur.trochlear_groove_anterior",
+      "position_mm": [
+        80.0,
+        -35.0,
+        -540.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.spine_medial",
+      "position_mm": [
+        74.0,
+        0.0,
+        -558.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.spine_lateral",
+      "position_mm": [
+        86.0,
+        0.0,
+        -558.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.ankle_centre",
+      "position_mm": null,
+      "status": "out_of_scan",
+      "origin": "unknown",
+      "reason": "knee-only field of view"
+    },
+    {
+      "id": "tibia.canal_centre_proximal",
+      "position_mm": [
+        80.0,
+        0.0,
+        -618.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.canal_centre_distal",
+      "position_mm": [
+        80.0,
+        0.0,
+        -758.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.pcl_insertion_midpoint",
+      "position_mm": [
+        80.0,
+        18.0,
+        -558.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.tubercle_patellar_tendon_medial_border",
+      "position_mm": [
+        80.0,
+        -42.0,
+        -593.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.tubercle_medial_third",
+      "position_mm": [
+        76.0,
+        -42.0,
+        -593.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.plateau_medial_lowest",
+      "position_mm": [
+        44.049337,
+        0.0,
+        -565.884094
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.plateau_lateral_lowest",
+      "position_mm": [
+        115.950663,
+        0.0,
+        -562.115906
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.plateau_medial_anterior",
+      "position_mm": [
+        62.0,
+        -21.836015,
+        -561.318874
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "tibia.plateau_medial_posterior",
+      "position_mm": [
+        62.0,
+        21.836015,
+        -566.681126
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    },
+    {
+      "id": "fibula.head_apex",
+      "position_mm": [
+        110.0,
+        0.0,
+        -573.0
+      ],
+      "status": "present",
+      "origin": "synthetic"
+    }
+  ]
+}

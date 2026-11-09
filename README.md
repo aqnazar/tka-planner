@@ -104,7 +104,7 @@ without a screen at all.
 ### The application
 
 ```bash
-tka serve --cases path/to/cases --library path/to/implant/library
+tka serve --cases path/to/cases --library data/implants
 ```
 
 That starts a local server and opens a browser at `http://127.0.0.1:8731/`. Nothing
@@ -133,8 +133,17 @@ launcher uses it by itself. To plan with another library, set `TKA_IMPLANT_LIBRA
 its folder. Without any library the planner still measures the knee, builds the frames,
 plans the cuts and carves them; only the components are missing from the scene.
 
+The window has seven modes: **Anatomy · Plan · Implant · Reduce · Build · Review ·
+Pick**.
+
+**Anatomy.** The bones and the landmarks found on them, each with what the plan uses it
+for; click one to go to it.
+
 **Plan.** The panel carries every control: alignment philosophy, implant size, resection
-depths, slope, rotation, component position and insert thickness. The planned cut is
+depths, slope, rotation, component position, insert thickness, the minimum insert (8 mm
+by default: a thinner one takes more tibial resection, and the readout says how much),
+the tray rotation (follows the femoral component, or the tibial axis) and which parts
+are shown (the knee's Fusion build, or a stand-in). The planned cut is
 previewed by clipping the bone against the planned half-space, so the cut follows the
 slider at the refresh rate of the screen. Nothing is carved yet. The readout on the
 right rebuilds on every change, so it cannot lag the plan.
@@ -145,11 +154,29 @@ bones whose cut actually moved are recomputed, and a cut computed once is stored
 back to a plan already committed takes under a second, in this session or in a later
 one.
 
+**Implant.** The parameters the Fusion sizing rules derive from this plan for the femoral
+component, tibial plate and insert, each with the rule that set it, and the J-curve and
+tray figures. A value that differs from the knee's build is marked. The readout says
+which parts the scene shows: *built* (the knee's Fusion parts, for this plan), *built for
+another plan* (with every parameter that differs; Commit then cuts with the library
+blocks) or *stand-in, not built* (the library parts at the derived dimensions).
+
 **Reduce.** Flexion, a varus or valgus stress, an anteroposterior drawer, and a scripted
-flexion arc, all on the committed geometry. Every one is a rigid transform of the tibial
+flexion arc, all on the committed geometry. The motion is the planner's trajectory
+(S1 to S3) or the kinematic model on the femoral component shown (a medial pivot with the
+published rollback, or J-curve rolling only), with its rotation and contact charts. Every one is a rigid transform of the tibial
 set, so the response is immediate and stays immediate on integrated graphics. Editing a
 plan control here says so and offers the way back to Plan, because the application never
 shows a pose of geometry that no longer matches the plan.
+
+**Build.** Builds the derived parts in Fusion 360 through its MCP add-in
+(`127.0.0.1:27182`), with progress, and puts them in the knee's builds folder (`--builds`,
+by default `builds` in the store; never in the repository). A part whose parameters did
+not change but whose volume or size did is not saved (the save gate). Without Fusion
+running, Build says so and everything else works. The Fusion documents are named in
+`fusion/local.json` (copy `fusion/local.example.json`; it stays local).
+
+**Review** and **Pick** are the observer studies (see `docs/OBSERVER_STUDY.md`).
 
 `Export plan` writes `plan.json`, `report.html`, `landmarks.json` and the geometry as
 STL, including the manual adjustments, which the command line has no way to record.
@@ -260,7 +287,7 @@ planned cuts, as dimensions and outlines in each component's CAD frame. `fusion/
 describes how the Fusion scripts put it into the parametric model, and
 `tka cad-params --spec ... --map ...` previews the parameters without Fusion.
 
-Pass `--library` with the implant library folder to add the fit check: coverage of
+Pass `--library` with the implant library folder (`data/implants` for the catalogue) to add the fit check: coverage of
 each cut, and overhang and underhang by quadrant, for the tray and the femoral component.
 `--implant-mode catalogue` fits the library part at one scale instead of the
 patient-specific shape.

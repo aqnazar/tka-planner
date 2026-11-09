@@ -37,7 +37,7 @@ MSG = ("Claude: insert outline from the plate's section at the ledge level (Base
 
 # Shared with implant_pipeline.py (pasted into its Fusion script).
 OUTLINE = r'''
-def rebuild_outline(des):
+def rebuild_outline(des, plain=False):
     V = adsk.core.ValueInput.createByString
     root = des.rootComponent
     log = {}
@@ -137,9 +137,14 @@ def rebuild_outline(des):
                     best = c
             if best is None: return None
             return sorted((best.startSketchPoint, best.endSketchPoint), key=lambda p: p.geometry.y)
-        def neighbour_arc(cur, sp):
-            for c in cur:
-                if c.objectType.endswith("SketchArc") and any(
+        def neighbour_arc(cur, sp, skip=None):
+            # The offset arc that meets sp, from the offset's curves or, when those are
+            # gone, from the sketch as it is now: a constraint Fusion cannot solve against
+            # the offset makes it remake the whole offset loop ("failed to create offset"),
+            # and the offset's curves are then deleted objects (2026-11-08: P047L, "An API
+            # Object refers to a deleted Object").
+            for c in list(cur) + list(sk.sketchCurves.sketchArcs):
+                if c.isValid and c != skip and c.objectType.endswith("SketchArc") and any(
                         q.geometry.distanceTo(sp.geometry) < 1e-4 for q in (c.startSketchPoint, c.endSketchPoint)):
                     return c
             return None
@@ -150,28 +155,48 @@ def rebuild_outline(des):
             m = adsk.core.Point3D.create((p.geometry.x + q.geometry.x) / 2, (p.geometry.y + q.geometry.y) / 2, 0)
             d = c.vectorTo(m); d.normalize(); d.scaleBy(R)
             mid = adsk.core.Point3D.create(c.x + d.x, c.y + d.y, 0)
+            if plain:
+                # The same arc on its own, joined to nothing: no constraint reaches the
+                # offset, so Fusion has nothing to re-solve (see the end of this function).
+                log.setdefault("bridge_fix", []).append("plain")
+                return sk.sketchCurves.sketchArcs.addByThreePoints(p.geometry, mid, q.geometry)
             new = sk.sketchCurves.sketchArcs.addByThreePoints(p, mid, q)
+            def same(a):
+                # The arc it continues, found again when Fusion has remade the offset.
+                return a if a.isValid else (neighbour_arc([], p, new) or a)
             # Tangent to the arc it continues. Fusion has refused this on one build (the
             # arc then solved up to 2 mm off), so the fallback puts it on that arc's own
             # circle, which is the same curve; the log says which held.
             try:
                 sk.geometricConstraints.addTangent(new, arc); log.setdefault("bridge_fix", []).append("tangent")
+                # Solved, it continues the arc's circle (every good build: the same radius).
+                # A radius far off means Fusion solved it the wrong way round (2026-11-08:
+                # P047L anterior, 2.1 mm against 49.9 mm).
+                try:
+                    r0 = same(arc).radius
+                    off = "r %.2f mm, arc %.2f mm" % (new.radius * 10, r0 * 10) if abs(new.radius - r0) > 0.02 * r0 else None
+                except Exception as ex:
+                    off = "unreadable: " + str(ex)[:60]
+                if off: log["bridge_off"] = log.get("bridge_off", []) + [off]
             except Exception:
                 if new.isFullyConstrained:          # nothing left to drift (P007R)
                     log.setdefault("bridge_fix", []).append("held")
                     return new
                 try:
+                    arc = same(arc)
                     sk.geometricConstraints.addConcentric(new, arc); sk.geometricConstraints.addEqual(new, arc)
                     log.setdefault("bridge_fix", []).append("concentric")
                 except Exception:
                     # Already on that circle (both refused as redundant): the radius
                     # alone holds its bulge, which the ends leave free.
                     try:
+                        arc = same(arc)
                         sk.geometricConstraints.addEqual(new, arc); log.setdefault("bridge_fix", []).append("equal")
                     except Exception:
                         # Fusion takes no constraint against an offset curve here; a radius
                         # on the bridge itself (it was built on that circle) pins it.
                         try:
+                            arc = same(arc)
                             c0 = new.centerSketchPoint.geometry
                             d = sk.sketchDimensions.addRadialDimension(new, adsk.core.Point3D.create(c0.x, c0.y + arc.radius, 0))
                             d.parameter.value = arc.radius
@@ -270,6 +295,17 @@ def rebuild_outline(des):
     try: des.computeAll()
     except Exception as ex: log["compute"] = str(ex)[:120]
     log["timeline"] = [tl.item(i).name for i in range(tl.count)]
+    # The two halves and their bridges must make one body, each bridge on its arc's
+    # circle. A bridge constraint Fusion could not solve against the offset can remake
+    # the offset and drag the bridges off (2026-11-08: P047L, anterior bridge solved to
+    # 2.1 mm radius, posterior a 1.6 mm dip; the insert came out as two bodies, the ledge
+    # slot and clearances on one of them). Made again with bridges that touch nothing
+    # but their own ends.
+    log["base_bodies"] = f.bodies.count
+    if (f.bodies.count > 1 or log.get("bridge_off")) and not plain:
+        again = rebuild_outline(des, plain=True)
+        again["first_try"] = {k: log.get(k) for k in ("bridge_fix", "bridge_off", "halves_mm2", "base_bodies")}
+        return again
     return log
 '''
 

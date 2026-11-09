@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper 1 vs Planner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Paper 1 script vs current planner</h1>
+  <span id="caption"></span>
+</header>
+<main>
+  <nav id="cases" aria-label="Knees"></nav>
+  <section id="stage">
+    <div id="toolbar">
+      <span class="label">View</span>
+      <button data-view="anterior">Anterior</button>
+      <button data-view="posterior">Posterior</button>
+      <button data-view="medial">Medial</button>
+      <button data-view="lateral">Lateral</button>
+      <button data-view="proximal">Proximal</button>
+      <button data-view="distal">Distal</button>
+      <span class="sep"></span>
+      <label><input type="checkbox" id="measure"> Measure (click two points)</label>
+      <button id="clear">Clear points</button>
+    </div>
+    <div id="canvas"></div>
+    <div id="readout"></div>
+  </section>
+  <aside id="panel">
+    <div id="status"></div>
+    <h2>Layers</h2>
+    <div id="layers"></div>
+    <div id="tables"></div>
+    <div id="notes"></div>
+  </aside>
+</main>
+<script type="importmap">{"imports": {"three": "./vendor/three.module.js"}}</script>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>

@@ -172,6 +172,27 @@ class TestFemoralAxisLadder:
         assert np.allclose(measured.z_proximal, estimated.z_proximal, atol=1e-9)
         assert measured.quality is not estimated.quality
 
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("axial_deg", [-30.0, -15.0, 15.0, 30.0])
+    def test_the_assumed_ama_is_applied_in_the_femurs_own_coronal_plane(
+        self, side, axial_deg
+    ):
+        """A leg turned about its long axis in the scanner keeps its mechanical axis.
+
+        The AMA is a coronal angle of the femur, and the femur's coronal plane is the
+        one holding its shaft and its epicondylar axis. The rotation used to be taken in
+        the plane holding the shaft and the scanner's left-right axis, which is that
+        plane only while the knee lies square. Turned 30 degrees, the recovered axis
+        was 3.1 degrees off and mLDFA 0.8 degrees off (6 x (1 - cos 30)).
+        """
+        from tka_planner.validation.synthetic import posed, scanner_rotation
+
+        rotation = scanner_rotation(axial_deg=axial_deg)
+        square = build_femoral_frame(synthetic_knee(side))
+        turned = build_femoral_frame(posed(synthetic_knee(side), rotation))
+
+        assert np.allclose(turned.z_proximal, rotation @ square.z_proximal, atol=1e-9)
+
     def test_records_the_diaphyseal_lever_arm(self):
         """Angular uncertainty scales inversely with it, so it must be visible."""
         frame = build_femoral_frame(synthetic_knee("left", include_head=False))
@@ -422,3 +443,70 @@ class TestSerialisation:
 
         assert record["quality"] == "measured"
         assert record["assumptions"] == []
+
+
+# ----------------------------------------------------------------------
+# The frames read the landmarks, not the scanner
+# ----------------------------------------------------------------------
+
+
+def _turned(landmarks: LandmarkSet, rotation: np.ndarray) -> LandmarkSet:
+    moved = [
+        Landmark(id=lm.id, position_mm=None if lm.position_mm is None
+                 else rotation @ lm.position_mm, status=lm.status, origin=lm.origin,
+                 reason=lm.reason, metadata=dict(lm.metadata))
+        for lm in landmarks
+    ]
+    return LandmarkSet(case_id=landmarks.case_id, side=landmarks.side,
+                       coordinate_system=landmarks.coordinate_system, landmarks=moved)
+
+
+def _rotation(axis, angle_deg):
+    axis = np.asarray(axis, dtype=float) / np.linalg.norm(axis)
+    angle = np.radians(angle_deg)
+    k = np.array([[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]],
+                  [-axis[1], axis[0], 0.0]])
+    return np.eye(3) + np.sin(angle) * k + (1.0 - np.cos(angle)) * (k @ k)
+
+
+TURNS = [([0, 1, 0], -30.0), ([0, 1, 0], 30.0), ([0, 0, 1], 90.0), ([1, 0, 0], 90.0),
+         ([0, 0, 1], 180.0), ([1, 0, 0], 180.0), ([0.3, -0.5, 0.8], 135.0)]
+
+
+class TestFramesFollowTheirLandmarks:
+    """A frame is a function of its landmarks' labels and positions alone.
+
+    The femoral frame used to orient its epicondylar axis towards scanner +X before
+    projecting it, so a femur lying 30 degrees off in the scanner could get a frame
+    turned 180 degrees, and one lying along the scanner's left-right axis raised a bare
+    ValueError instead of a refusal. Medial and lateral are in the landmarks' names;
+    the side says which of them is patient-left.
+    """
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    @pytest.mark.parametrize("axis,angle", TURNS)
+    def test_the_frames_turn_with_the_knee(self, side, axis, angle):
+        rotation = _rotation(axis, angle)
+        knee = synthetic_knee(side)
+        for build in (build_femoral_frame, build_tibial_frame):
+            before, after = build(knee), build(_turned(knee, rotation))
+            for name in ("x_anterior", "y_patient_left", "z_proximal"):
+                np.testing.assert_allclose(getattr(after, name),
+                                           rotation @ getattr(before, name), atol=1e-9)
+
+    def test_swapped_tibial_references_are_still_refused(self):
+        knee = synthetic_knee("left")
+        pcl = knee.position("tibia.pcl_insertion_midpoint")
+        tendon = knee.position("tibia.tubercle_patellar_tendon_medial_border")
+        swap = {"tibia.pcl_insertion_midpoint": tendon,
+                "tibia.tubercle_patellar_tendon_medial_border": pcl}
+        swapped = [
+            Landmark(id=lm.id, position_mm=swap.get(lm.id, lm.position_mm),
+                     status=lm.status, origin=lm.origin, reason=lm.reason,
+                     metadata=dict(lm.metadata))
+            for lm in knee
+        ]
+        with pytest.raises(FrameConstructionError):
+            build_tibial_frame(LandmarkSet(case_id=knee.case_id, side=knee.side,
+                                           coordinate_system=knee.coordinate_system,
+                                           landmarks=swapped))

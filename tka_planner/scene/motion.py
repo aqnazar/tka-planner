@@ -19,7 +19,7 @@ from tka_planner.geom.mesh import rotation_to
 
 __all__ = [
     "flexion_axis", "pivot_frame", "pose_about", "flexion_pose", "trial_pose",
-    "rotation_about",
+    "rotation_about", "trajectory_pose",
 ]
 
 
@@ -104,6 +104,27 @@ def flexion_pose(pivot: np.ndarray, *, flexion_deg: float) -> np.ndarray:
     return pose_about(pivot, rotation_about(np.array([1.0, 0.0, 0.0]), flexion_deg))
 
 
+def trajectory_pose(pivot: np.ndarray, flexion_deg: float, trajectory, *,
+                    anterior, medial) -> np.ndarray:
+    """The tibial set pose at a point in the arc, following a prescribed trajectory.
+
+    The hinge is the same one :func:`flexion_pose` turns about; the trajectory's own
+    motion of the tibia (axial rotation about its pivot, AP slide) is applied in the
+    tibia's rest frame first -- see :mod:`tka_planner.core.kinematics`. ``anterior``
+    and ``medial`` are the tibial frame's directions. The neutral trajectory returns
+    exactly :func:`flexion_pose`, so the hinge Reduce mode has always used is one case
+    of this rather than a separate path.
+    """
+    from tka_planner.core.kinematics import scenario, tibial_motion
+
+    trajectory = scenario(trajectory)
+    hinge = flexion_pose(pivot, flexion_deg=flexion_deg)
+    if trajectory.is_neutral:
+        return hinge
+    return hinge @ tibial_motion(trajectory, flexion_deg, centre=pivot[:3, 3],
+                                 anterior=anterior, medial=medial)
+
+
 def trial_pose(
     pivot: np.ndarray,
     *,
@@ -112,6 +133,9 @@ def trial_pose(
     drawer_ap_mm: float = 0.0,
     distraction_mm: float = 0.0,
     distal=None,
+    trajectory=None,
+    anterior=None,
+    medial=None,
 ) -> np.ndarray:
     """The tibial set pose under the trial controls.
 
@@ -130,12 +154,34 @@ def trial_pose(
     opens it without touching the plan. It is applied first, in the tibia's rest frame,
     so in flexion it still runs along the tibia. ``distal`` is the tibia's distal
     direction at rest; it is required whenever the distraction is not zero.
+
+    ``trajectory`` (a name such as ``"S2"``, or a
+    :class:`~tka_planner.core.kinematics.Trajectory`) replaces the pure hinge with a
+    prescribed flexion trajectory; ``anterior`` and ``medial`` are then the tibial
+    frame's directions. The stress is still applied in the flexed tibia's frame, after
+    the trajectory's own motion. ``None`` or the neutral trajectory is the hinge, by the
+    same arithmetic as before, so an existing trial pose is unchanged to the bit.
     """
-    rotation = (
-        rotation_about(np.array([1.0, 0.0, 0.0]), flexion_deg)
-        @ rotation_about(np.array([0.0, 1.0, 0.0]), varus_valgus_deg)
-    )
-    turned = pose_about(pivot, rotation)
+    from tka_planner.core.kinematics import scenario, tibial_motion
+
+    chosen = None if trajectory is None else scenario(trajectory)
+    if chosen is None or chosen.is_neutral:
+        rotation = (
+            rotation_about(np.array([1.0, 0.0, 0.0]), flexion_deg)
+            @ rotation_about(np.array([0.0, 1.0, 0.0]), varus_valgus_deg)
+        )
+        turned = pose_about(pivot, rotation)
+    else:
+        if anterior is None or medial is None:
+            raise ValueError("A flexion trajectory needs the tibia's anterior and "
+                             "medial directions.")
+        turned = (
+            flexion_pose(pivot, flexion_deg=flexion_deg)
+            @ tibial_motion(chosen, flexion_deg, centre=pivot[:3, 3],
+                            anterior=anterior, medial=medial)
+            @ pose_about(pivot, rotation_about(np.array([0.0, 1.0, 0.0]),
+                                               varus_valgus_deg))
+        )
     if distraction_mm:
         if distal is None:
             raise ValueError("A distraction needs the tibia's distal direction.")

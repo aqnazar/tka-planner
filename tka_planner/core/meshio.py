@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["Mesh", "read_stl", "weld_vertices"]
+__all__ = ["Mesh", "read_stl", "weld_vertices", "face_components"]
 
 
 # One binary STL triangle: a normal, three vertices, and a 2-byte attribute word.
@@ -156,6 +156,43 @@ def weld_vertices(
         sha256=mesh.sha256,
         metadata={**mesh.metadata, "welded_tolerance_mm": tolerance_mm},
     )
+
+
+def face_components(mesh: Mesh) -> np.ndarray:
+    """Label each face with the connected piece of surface it belongs to.
+
+    Pieces are numbered by size, ``0`` the largest, so ``labels == 0`` is the main body.
+    Faces are connected through shared vertices, so the mesh must be welded first: on
+    STL triangle soup every triangle is a piece of its own.
+
+    Hook and compress, vectorised: each round points every vertex's label at the
+    smaller label across each edge, then follows the pointers to their roots. A bone
+    surface settles in a handful of rounds, which keeps a two-million-vertex mesh to
+    about a second without leaving numpy.
+    """
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    if len(faces) == 0:
+        return np.zeros(0, dtype=np.int64)
+    labels = np.arange(len(mesh.vertices))
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]]])
+    while True:
+        a, b = labels[edges[:, 0]], labels[edges[:, 1]]
+        differ = a != b
+        if not differ.any():
+            break
+        np.minimum.at(labels, np.maximum(a[differ], b[differ]),
+                      np.minimum(a[differ], b[differ]))
+        while True:
+            roots = labels[labels]
+            if np.array_equal(roots, labels):
+                break
+            labels = roots
+    roots, per_face, counts = np.unique(labels[faces[:, 0]], return_inverse=True,
+                                        return_counts=True)
+    # Largest first; ties go by lowest vertex index, so the labels are reproducible.
+    rank = np.empty(len(roots), dtype=np.int64)
+    rank[np.lexsort((roots, -counts))] = np.arange(len(roots))
+    return rank[per_face.ravel()]
 
 
 # ----------------------------------------------------------------------

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Ориентиры коленного сустава</title>
+<link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./online.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+
+<header>
+  <h1>Ориентиры коленного сустава</h1>
+  <span id="who"></span>
+  <button type="button" id="back" hidden>Все суставы</button>
+  <p class="disclaimer">Только для исследований. Не является медицинским изделием.</p>
+</header>
+
+<section id="signin" class="page">
+  <div class="card">
+    <h2>Вход</h2>
+    <label class="wide column">Ваше имя (пишите одинаково каждый раз) <input id="name" type="text" autocomplete="name" maxlength="200"></label>
+    <label class="wide column">Раунд <select id="round"><option>1</option><option>2</option><option>3</option></select></label>
+    <label class="wide column">Пароль исследования <input id="passphrase" type="password" autocomplete="off" placeholder="XXXX-XXXX-XXXX"></label>
+    <div class="actions"><button type="button" id="enter" class="primary" disabled title="Загрузка">Начать</button></div>
+    <p id="signin-error" class="study-warn"></p>
+  </div>
+</section>
+
+<section id="knees" class="page" hidden>
+  <div class="card wide-card">
+    <div class="focal"><b id="total-done">0</b><span id="total-of">из 0 суставов выполнено</span></div>
+    <p class="study-help">Каждый сустав дважды: <b>1 Без маркеров</b> — поставьте все ориентиры сами; затем
+      <b>2 Автоматические маркеры</b> — исправьте неверные точки планировщика.</p>
+    <h3>Пациенты исследования <span class="count" id="count-study"></span></h3>
+    <div id="list-study" class="knee-list"></div>
+    <h3>Суставы из набора данных
+      <select id="group" title="Группа, которую вам назначил руководитель исследования"></select>
+      <span class="count" id="count-group"></span>
+    </h3>
+    <div id="list-group" class="knee-list"></div>
+    <p id="credit" class="credit"></p>
+  </div>
+</section>
+
+<main id="work" hidden>
+  <aside id="panel">
+    <div id="knee-title" class="study-progress"></div>
+    <input id="study-observer" type="hidden">
+    <input id="study-round" type="hidden">
+    <section id="pick-mode">
+      <div id="pick-setup" hidden>
+        <select id="pick-start-mode">
+          <option value="blank">Без маркеров</option>
+          <option value="adjust">Автоматические маркеры</option>
+        </select>
+        <button type="button" id="pick-start">Начать</button>
+      </div>
+      <div id="pick-run" hidden>
+        <div id="pick-progress" class="study-progress"></div>
+        <div id="pick-name" class="study-name"></div>
+        <p id="pick-definition" class="study-definition"></p>
+        <p id="pick-status" class="study-status"></p>
+        <div class="actions">
+          <button type="button" id="pick-prev">Назад</button>
+          <button type="button" id="pick-next" class="primary">Далее</button>
+        </div>
+        <div class="actions">
+          <button type="button" id="pick-reset-one">Удалить маркер</button>
+          <button type="button" id="pick-reset-all">Сбросить все</button>
+        </div>
+        <div class="actions">
+          <select id="pick-skip-reason"></select>
+          <button type="button" id="pick-skip">Не могу поставить</button>
+        </div>
+        <label class="wide">Показать
+          <select id="pick-view">
+            <option value="auto">кость текущего маркера</option>
+            <option value="Femur">бедренную кость</option>
+            <option value="Tibia">большеберцовую кость</option>
+            <option value="both">обе кости</option>
+          </select>
+        </label>
+        <label id="pick-ghost-row" class="check"><input id="pick-ghosts" type="checkbox" checked> Показывать автоматические позиции</label>
+        <div id="pick-list"></div>
+        <div class="actions finish-row">
+          <button type="button" id="pick-finish" class="primary" disabled>Завершить и сохранить</button>
+          <button type="button" id="pick-save">Сохранить прогресс</button>
+          <button type="button" id="pick-quit">Остановить</button>
+        </div>
+      </div>
+    </section>
+    <!-- Review is not online yet; these keep the shared study code's wiring whole. -->
+    <div hidden>
+      <select id="review-plan"></select><button type="button" id="review-save"></button>
+      <div id="review-reasons"></div><div id="review-severity"></div><div id="review-details"></div>
+      <p id="review-adjusted"></p><textarea id="review-comment"></textarea><div id="review-saved"></div>
+    </div>
+    <div id="notes"></div>
+  </aside>
+  <div id="view"></div>
+</main>
+
+<div id="busy" hidden><span></span><p id="busy-text"></p></div>
+
+<script type="module" src="./online.js"></script>
+</body>
+</html>

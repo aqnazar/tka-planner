@@ -22,11 +22,13 @@ is ever clamped or corrected to fit them.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from .frames import AnatomicalFrame
 from .geometry import angle_between, project_out, signed_angle_in_plane, unit
-from .landmarks import LandmarkSet, LandmarkStatus
+from .landmarks import REGISTRY, LandmarkSet, LandmarkStatus
 from .provenance import AUTOMATIC_LANDMARK_ESTIMATE, Assumption, Metric, Quality
 
 
@@ -659,7 +661,61 @@ def compute_all(
         condylar_twist_angle(landmarks, femoral_frame),
         posterior_slope_medial(landmarks, tibial_frame),
     ]
-    return {metric.name: metric for metric in metrics}
+    return {
+        metric.name: replace(metric, sources=_input_sources(
+            metric, landmarks, femoral_frame, tibial_frame))
+        for metric in metrics
+    }
+
+
+# The landmarks behind each frame's proximal axis, by the method that built it. A metric
+# that reads the axis through the frame (mLDFA, MPTA, slope) then still names where the
+# axis's points came from -- for mLDFA, whether the head centre was a camera pivot.
+_FRAME_AXIS_LANDMARKS = {
+    "frames.femur.mechanical.v1": ("femur.head_centre",),
+    "frames.femur.ama_assumed.v1": ("femur.canal_centre_distal",
+                                    "femur.canal_centre_proximal"),
+    "frames.tibia.mechanical.v1": ("tibia.ankle_centre",),
+    "frames.tibia.anatomical_proxy.v1": ("tibia.canal_centre_proximal",
+                                         "tibia.canal_centre_distal"),
+}
+
+# Landmark metadata worth carrying into a metric's record: what an externally measured
+# landmark states about itself (see tka_planner.core.hip_centre.head_centre_landmark).
+_SOURCE_KEYS = ("source", "method", "rms_residual_mm", "centre_sd_mm", "n_samples",
+                "registration", "registration_rms_mm")
+
+
+def _input_sources(
+    metric: Metric,
+    landmarks: LandmarkSet,
+    femoral_frame: AnatomicalFrame,
+    tibial_frame: AnatomicalFrame,
+) -> dict:
+    """Status and origin of every landmark a metric consumed (developer question L-10).
+
+    Recorded only for landmarks that have a position: a missing one is already in
+    ``missing``. A landmark measured outside the CT adds its stated ``source`` and fit
+    residual, which is what the report prints next to the value.
+    """
+    ids: list[str] = []
+    for name in metric.inputs:
+        if name.startswith("frames.femoral."):
+            ids.extend(_FRAME_AXIS_LANDMARKS.get(femoral_frame.method, ()))
+        elif name.startswith("frames.tibial."):
+            ids.extend(_FRAME_AXIS_LANDMARKS.get(tibial_frame.method, ()))
+        elif name in REGISTRY:
+            ids.append(name)
+    sources = {}
+    for landmark_id in dict.fromkeys(ids):
+        landmark = landmarks.get(landmark_id)
+        if not landmark.is_usable:
+            continue
+        record = {"status": landmark.status.value, "origin": landmark.origin}
+        record.update({key: landmark.metadata[key] for key in _SOURCE_KEYS
+                       if key in landmark.metadata})
+        sources[landmark_id] = record
+    return sources
 
 
 def _oriented_laterally(vector: np.ndarray, frame: AnatomicalFrame) -> np.ndarray:

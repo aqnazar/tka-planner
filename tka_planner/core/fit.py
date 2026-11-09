@@ -21,6 +21,12 @@ into the cut plane, so "anteromedial" means the same thing on a left and a right
 The overhang threshold is a convention, not a validated limit. Tibial overhang of more
 than about 2 mm is associated with pain in the literature, and it is used here only to
 raise a flag; the distances themselves are always reported.
+
+The same grid also gives the fit as a map (:class:`FitField`): every cell of the cut
+carries a signed distance -- how far uncovered bone lies beyond the component's edge, or
+how far the component reaches beyond the bone's edge -- so the colour map a viewer draws
+is the very field the maxima in the table were read from, not a second computation that
+could disagree with it.
 """
 
 from __future__ import annotations
@@ -32,12 +38,50 @@ import numpy as np
 from .geometry import unit
 from .meshio import Mesh
 
-__all__ = ["SectionFit", "section_fit", "slice_mesh", "fill_section"]
+__all__ = ["SectionFit", "FitField", "section_fit", "slice_mesh", "fill_section"]
 
 GRID_MM = 0.25
 SECTION_OFFSET_MM = 1.0
 OVERHANG_FLAG_MM = 2.0
 ZONES = ("anteromedial", "anterolateral", "posteromedial", "posterolateral")
+
+
+@dataclass(frozen=True, eq=False)
+class FitField:
+    """The fit on one cut as a signed distance at every cell of the section grid.
+
+    ``signed_mm`` is ``(len(ys), len(xs))``. Its sign says which outline is short:
+
+    * **positive** -- bone the component leaves uncovered (underhang), valued at the
+      distance to the component's edge;
+    * **negative** -- component beyond the bone (overhang), valued at the distance to
+      the bone's edge;
+    * **zero** -- component seated on bone;
+    * **NaN** -- neither bone nor component.
+
+    The grid lies in the cut plane: a cell at ``(xs[i], ys[j])`` is the point
+    ``origin + xs[i] * u + ys[j] * v``, with ``u`` lateral and ``v`` anterior laid into
+    the plane. ``component_side`` is which side of the plane the component sits on
+    (+1 along ``normal``), so a drawing of the map can be lifted off the bone towards
+    the component rather than buried in the cut.
+    """
+
+    cut: str
+    origin: np.ndarray
+    u: np.ndarray
+    v: np.ndarray
+    normal: np.ndarray
+    component_side: float
+    xs: np.ndarray
+    ys: np.ndarray
+    signed_mm: np.ndarray
+
+    def points(self, rows=None, columns=None) -> np.ndarray:
+        """The 3D position of every cell, or of the given rows and columns, in mm."""
+        xs = self.xs if columns is None else self.xs[columns]
+        ys = self.ys if rows is None else self.ys[rows]
+        gx, gy = np.meshgrid(xs, ys)
+        return (self.origin + gx[..., None] * self.u + gy[..., None] * self.v)
 
 
 @dataclass(frozen=True)
@@ -58,6 +102,11 @@ class SectionFit:
     flags: tuple = ()
     method: str = "fit.section.v1"
     diagnostics: dict = field(default_factory=dict)
+    # Where each maximum was found, in scan millimetres, so a finding can be shown where
+    # it is rather than only named. ``None`` where there is none.
+    extreme_points_mm: dict = field(default_factory=dict)
+    # The whole grid, kept only when asked for; it is not part of the record.
+    grid: FitField | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +128,10 @@ class SectionFit:
                 for zone, values in self.zones.items()
             },
             "flags": list(self.flags),
+            "extreme_points_mm": {
+                name: None if point is None else [round(float(c), 2) for c in point]
+                for name, point in self.extreme_points_mm.items()
+            },
             "diagnostics": self.diagnostics,
         }
 
@@ -151,6 +204,7 @@ def section_fit(
     anterior,
     grid_mm: float = GRID_MM,
     offset_mm: float = SECTION_OFFSET_MM,
+    keep_grid: bool = False,
 ) -> SectionFit:
     """Compare the bone's section at a cut with the component's footprint on it.
 
@@ -159,6 +213,10 @@ def section_fit(
     the tibial cut) and -1 when it lies on the other (the femoral component below the
     distal femoral cut). ``lateral`` and ``anterior`` are the bone's anatomical
     directions; they are laid into the cut plane to name the quadrants.
+
+    ``keep_grid`` keeps the signed distance at every cell as :attr:`SectionFit.grid`,
+    for drawing the fit as a colour map. It costs nothing extra: the distances are the
+    ones the maxima are read from.
     """
     point = np.asarray(point, dtype=float)
     normal = unit(np.asarray(normal, dtype=float))
@@ -213,12 +271,28 @@ def section_fit(
     }
     zones = {}
     flags = []
+    extremes = {
+        "max_overhang": _where_max(over_distance, overhang, gx, gy, point, u, v),
+        "max_underhang": _where_max(under_distance, underhang, gx, gy, point, u, v),
+    }
     for zone, in_zone in zone_masks.items():
         over = _max_in(over_distance, overhang & in_zone)
         under = _max_in(under_distance, underhang & in_zone)
         zones[zone] = {"max_overhang_mm": over, "max_underhang_mm": under}
         if over > OVERHANG_FLAG_MM:
             flags.append(f"OVERHANG_{zone.upper()}")
+            extremes[f"overhang_{zone}"] = _where_max(
+                over_distance, overhang & in_zone, gx, gy, point, u, v)
+
+    grid = None
+    if keep_grid:
+        signed = np.full(bone_mask.shape, np.nan)
+        signed[covered] = 0.0
+        signed[underhang] = under_distance[underhang]
+        signed[overhang] = -over_distance[overhang]
+        grid = FitField(cut=cut, origin=point, u=u, v=v, normal=normal,
+                        component_side=float(np.sign(component_side) or 1.0),
+                        xs=xs, ys=ys, signed_mm=signed)
 
     return SectionFit(
         cut=cut,
@@ -242,7 +316,18 @@ def section_fit(
             "n_bone_segments": int(len(bone_segments)),
             "n_component_segments": int(len(component_segments)),
         },
+        extreme_points_mm=extremes,
+        grid=grid,
     )
+
+
+def _where_max(distance, mask, gx, gy, point, u, v):
+    """The scan position of the cell where ``distance`` peaks within ``mask``."""
+    if not mask.any():
+        return None
+    masked = np.where(mask, distance, -np.inf)
+    row, column = np.unravel_index(int(np.argmax(masked)), masked.shape)
+    return point + gx[row, column] * u + gy[row, column] * v
 
 
 def _extent(mask, gx, gy) -> dict:
@@ -265,14 +350,20 @@ def _distance_to(cells: np.ndarray, target: np.ndarray, gx, gy) -> np.ndarray:
     if not cells.any() or not target.any():
         return distance
     edge = _boundary(target)
-    tx, ty = gx[edge], gy[edge]
-    px, py = gx[cells], gy[cells]
-    nearest = np.empty(len(px))
-    for start in range(0, len(px), 2048):
-        stop = start + 2048
-        dx = px[start:stop, None] - tx[None, :]
-        dy = py[start:stop, None] - ty[None, :]
-        nearest[start:stop] = np.sqrt((dx * dx + dy * dy).min(axis=1))
+    targets = np.column_stack([gx[edge], gy[edge]])
+    points = np.column_stack([gx[cells], gy[cells]])
+    # Squared distances as |p|^2 + |t|^2 - 2 p.t, so the pairwise work is one matrix
+    # product per chunk rather than two broadcast differences: ten times faster on a
+    # real cut, and exact to far below the grid at these coordinates.
+    centre = targets.mean(axis=0)
+    targets, points = targets - centre, points - centre
+    target_norms = np.einsum("ij,ij->i", targets, targets)
+    nearest = np.empty(len(points))
+    for start in range(0, len(points), 4096):
+        block = points[start:start + 4096]
+        squared = (np.einsum("ij,ij->i", block, block)[:, None] + target_norms[None, :]
+                   - 2.0 * block @ targets.T)
+        nearest[start:start + 4096] = np.sqrt(np.maximum(squared.min(axis=1), 0.0))
     distance[cells] = nearest
     return distance
 

@@ -38524,7 +38524,7 @@
      "label": "Insert",
      "set": "tibial",
      "file": "data/DEMO_LARGE/insert.glb",
-     "stamp": 1791695938
+     "stamp": 1793205326
     }
    ],
    "folder": "demo_cases/DEMO_LARGE",
@@ -38629,19 +38629,8 @@
     },
     "insert": {
      "folder": "Parametric Work/Patient Builds/DEMO_LARGE",
-     "version": 17,
-     "health": [
-      [
-       "Anterior Sweep",
-       1,
-       "Profile 1 missing"
-      ],
-      [
-       "Posterior Sweep",
-       1,
-       "Profile 1 missing"
-      ]
-     ],
+     "version": 19,
+     "health": [],
      "parameters": {
       "Insert_Thickness": "9.8765 mm",
       "Distal_Cut": "10.1470 mm",

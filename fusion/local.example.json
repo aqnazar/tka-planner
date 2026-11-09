@@ -1,0 +1,11 @@
+{
+ "_comment": "Copy to fusion/local.json (git-ignored) and fill in the lineage identifiers of the five parametric Fusion designs a knee build copies (Fusion: right-click the design > Copy link / data file id). Never commit local.json: the identifiers belong to the Fusion account.",
+ "mcp_url": "http://127.0.0.1:27182/mcp",
+ "sources": {
+  "femoral": "<femoral component design (v20 candidate)>",
+  "plate": "<tibial plate design (v2)>",
+  "insert": "<tibial insert design>",
+  "block": "<femoral cutting block design>",
+  "tblock": "<tibial cutting block design>"
+ }
+}

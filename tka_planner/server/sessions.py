@@ -20,7 +20,6 @@ from pathlib import Path
 
 from tka_planner.scene.build import SHELL_COLOUR
 from tka_planner.scene.model import FEMORAL, TIBIAL, Node, SceneDelta
-from tka_planner.scene.motion import trial_pose
 from tka_planner.session import PlanningSession
 from tka_planner.store import Store, plan_key
 from tka_planner.store.keys import BONES
@@ -72,11 +71,24 @@ class SessionEntry:
 class SessionManager:
     """Opens sessions, keeps them, and puts the store behind their commits."""
 
-    def __init__(self, *, store=None, cases_root=None, library=None, kernel=None):
+    def __init__(self, *, store=None, cases_root=None, library=None, kernel=None,
+                 study_dir=None, builds=None):
         self.store = store if isinstance(store, Store) else (
             Store(store) if store is not None else None
         )
+        # Observer picks and plan verdicts (tka_planner.study); beside the store unless
+        # given, and never in the repository: they hold patient geometry.
+        if study_dir is None and self.store is not None:
+            study_dir = Path(self.store.root) / "study"
+        self.study_dir = Path(study_dir) if study_dir else None
         self.cases_root = Path(cases_root) if cases_root else None
+        # The knees' Fusion builds: beside the store unless given, never in the
+        # repository (patient-derived parts).
+        from tka_planner.implant.builds import BuildStore
+
+        if builds is None and self.store is not None:
+            builds = Path(self.store.root) / "builds"
+        self.builds = BuildStore(builds) if builds else None
         self.library = Path(library) if library else None
         self.kernel = kernel
         self._entries: dict = {}
@@ -94,7 +106,14 @@ class SessionManager:
         found = {}
         if self.cases_root and self.cases_root.is_dir():
             for folder in sorted(p for p in self.cases_root.iterdir() if p.is_dir()):
+                # A folder named for one side (FD1Right/TD1Right) is that side only;
+                # otherwise the filename fallback offers it on the other side too.
+                named = {side for side in ("left", "right")
+                         if (folder / f"FD1{side.capitalize()}.stl").is_file()
+                         and (folder / f"TD1{side.capitalize()}.stl").is_file()}
                 for side in ("left", "right"):
+                    if named and side not in named:
+                        continue
                     try:
                         femur, tibia = _find(folder, side)
                     except FileNotFoundError:
@@ -120,10 +139,17 @@ class SessionManager:
             entry["known"] = True
         return sorted(found.values(), key=lambda case: (case["case_id"], case["side"]))
 
-    def open(self, folder, *, side: str, library=None, landmarks=None) -> SessionEntry:
+    def open(self, folder, *, side: str, library=None, landmarks=None,
+             remove_large_islands: bool = False,
+             femur_length_mm: float | None = None,
+             femur_length_type: str | None = None,
+             sex: str | None = None) -> SessionEntry:
         """Open a patient folder, measure it, and build the first plan."""
         session = PlanningSession.open(
-            folder, side=side, library=library or self.library, landmarks=landmarks
+            folder, side=side, library=library or self.library, landmarks=landmarks,
+            remove_large_islands=remove_large_islands,
+            femur_length_mm=femur_length_mm,
+            femur_length_type=femur_length_type, sex=sex, builds=self.builds,
         )
         session.build()
 
@@ -182,6 +208,14 @@ class SessionManager:
         # Every bone is now either freshly cut, restored from the store or already
         # correct, so the scene matches the plan whatever route each bone took.
         session.stale = False
+        # The fit is measured on the plan rather than on the cut geometry, so it is
+        # refreshed whenever the plan moved since it was last measured, whether or not
+        # any bone needed cutting: a component slide in plane mode cuts nothing but
+        # changes the fit.
+        if not session.fit_is_current:
+            outcome.delta = outcome.delta.merge(session.refresh_fit())
+            if session.fit_seconds is not None and session.library is not None:
+                outcome.notes.append(f"Fit measured in {session.fit_seconds:.2f} s")
         self._record_plan(session)
         outcome.delta.notes.extend(outcome.notes)
         return outcome
@@ -264,14 +298,7 @@ class SessionManager:
             flexion = max_deg * index / steps
             frames.append({
                 "flexion_deg": float(flexion),
-                "pose": trial_pose(
-                    session.scene.pivot,
-                    flexion_deg=flexion,
-                    varus_valgus_deg=session.trial.varus_valgus_deg,
-                    drawer_ap_mm=session.trial.drawer_ap_mm,
-                    distraction_mm=session.trial.distraction_mm,
-                    distal=-session.measurement.tibial_frame.z_proximal,
-                ).tolist(),
+                "pose": session.trial_pose_at(flexion).tolist(),
             })
         return frames
 

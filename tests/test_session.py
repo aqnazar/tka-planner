@@ -57,6 +57,9 @@ def test_every_adjustment_can_be_set_and_reaches_the_plan(session):
 
 
 def test_every_adjustment_moves_something_in_the_scene(session):
+    # The insert minimum would take a tibial resection change into the extra resection
+    # it adds on a thin knee; this is about the controls themselves.
+    session.replan(insert_minimum_mm=0.0)
     for name in ADJUSTMENT_FIELDS:
         delta = session.replan(**{name: 2.0})
         assert delta.poses, name
@@ -177,6 +180,28 @@ def test_the_trial_does_not_move_a_rest_transform(session):
 def test_an_unknown_trial_control_is_refused(session):
     with pytest.raises(ValueError, match="Unknown trial control"):
         session.set_trial(twist_deg=5.0)
+
+
+def test_the_default_trial_is_the_reduce_hinge_bit_for_bit(session):
+    from tka_planner.scene import motion
+
+    delta = session.set_trial(flexion_deg=40.0)
+    assert np.array_equal(delta.poses["TibialSet"],
+                          motion.flexion_pose(session.scene.pivot, flexion_deg=40.0))
+
+
+def test_a_flexion_trajectory_moves_the_tibia_off_the_hinge(session):
+    hinge = session.set_trial(flexion_deg=90.0).poses["TibialSet"]
+    slid = session.set_trial(trajectory="S2").poses["TibialSet"]
+    assert not np.allclose(hinge, slid)
+    assert session.reset_trial().poses["TibialSet"] == pytest.approx(np.eye(4))
+    assert session.trial.trajectory == "S2"
+
+
+def test_an_unknown_trajectory_is_refused(session):
+    with pytest.raises(ValueError, match="Unknown trajectory"):
+        session.set_trial(trajectory="S7")
+    assert session.trial.trajectory == "S3"
 
 
 def test_the_trial_delta_names_the_tibial_set(session):
@@ -311,6 +336,7 @@ def test_the_readout_carries_the_femoral_box_resections(session, monkeypatch):
     import tka_planner.pipeline as pipeline
 
     monkeypatch.setattr(pipeline, "femoral_cut_box_case", lambda *a: PLACED_BOX)
+    session._cut_box_cache = None     # the box the session placed on opening
     session.replan()
     lines = session.report_lines()
 
@@ -326,6 +352,7 @@ def test_the_readout_says_why_the_box_was_not_placed(session, monkeypatch):
 
     monkeypatch.setattr(pipeline, "femoral_cut_box_case",
                         lambda *a: {"available": False, "reason": "too short"})
+    session._cut_box_cache = None     # the box the session placed on opening
     session.replan()
 
     assert "Femoral box|not placed: too short" in session.report_lines()
@@ -336,6 +363,7 @@ def test_a_notching_anterior_cut_is_warned_about(session, monkeypatch):
 
     monkeypatch.setattr(pipeline, "femoral_cut_box_case",
                         lambda *a: {**PLACED_BOX, "anterior_notch_mm": 1.2})
+    session._cut_box_cache = None     # the box the session placed on opening
     session.replan()
 
     assert ("WARN|The anterior femoral cut notches the cortex by 1.2 mm"
@@ -348,9 +376,9 @@ def test_the_box_is_measured_once_per_plan(session, monkeypatch):
     calls = []
     monkeypatch.setattr(pipeline, "femoral_cut_box_case",
                         lambda *a: calls.append(1) or PLACED_BOX)
+    session._cut_box_cache = None         # the box the session placed on opening
+    # Re-planning places it for the implant rules; the readout then reuses it.
     session.replan()
-    # Re-planning measures the implant for the viewer too; count only the readout's.
-    calls.clear()
     session.report_lines()
     session.report_lines()
 

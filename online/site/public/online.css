@@ -1,0 +1,132 @@
+/* The online landmark study in the TKA planner's house style (eval/demo_app/style.css):
+   white theme, blue #005aaa, Verdana, square corners. It overrides the dark tokens of the
+   shared style.css, which the Pick panel's own classes still come from. */
+
+:root {
+  --blue: #005aaa; --blue-dark: #003f78; --blue-light: #e6eff8; --blue-mid: #9dbfe0;
+  --white: #ffffff; --paper: #f3f5f8; --line: #d3dae3;
+  --orange: #e07b00; --green: #2e8540; --red: #c0392b;
+  /* style.css's tokens, mapped onto the house style */
+  --bg: var(--paper); --panel: var(--white); --edge: var(--line);
+  --ink: #1d2733; --dim: #5d6b7a; --accent: var(--blue); --warn: var(--orange);
+}
+* { box-sizing: border-box; border-radius: 0 !important; }
+.pick-item::before, #busy span { border-radius: 50% !important; }
+body {
+  height: 100vh; display: flex; flex-direction: column; margin: 0;
+  font: 12px/1.45 Verdana, Geneva, sans-serif; color: var(--ink); background: var(--paper);
+}
+* { scrollbar-color: var(--line) transparent; scrollbar-width: thin; }
+
+/* -- top bar ------------------------------------------------------------------- */
+header {
+  background: var(--blue); color: var(--white); border: 0; min-height: 48px;
+  display: flex; align-items: center; gap: 16px; padding: 0 18px; flex-wrap: wrap;
+}
+header h1 { font-size: 13px; font-weight: bold; letter-spacing: .08em; text-transform: uppercase; }
+header #who { color: #ffffffcc; font-size: 12px; }
+header #back { background: transparent; color: var(--white); border: 1px solid #ffffff88; }
+header #back:hover { background: var(--blue-dark); }
+.disclaimer { color: #ffffffcc; font-size: 11px; }
+
+/* -- controls -------------------------------------------------------------------- */
+input, select, button, textarea { font: inherit; font-size: 12px; }
+button {
+  background: var(--white); color: var(--blue); border: 1px solid var(--blue);
+  padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--blue-light); border-color: var(--blue); }
+button.primary { background: var(--blue); color: var(--white); border-color: var(--blue); }
+button.primary:hover:not(:disabled) { background: var(--blue-dark); }
+button:disabled { opacity: .45; cursor: default; }
+input[type=text], input[type=password] {
+  background: var(--white); color: var(--ink); border: 1px solid var(--line); padding: 6px 8px;
+}
+select {
+  font: inherit; padding: 5px 26px 5px 8px; border: 1px solid var(--line); color: var(--ink);
+  background: var(--white) no-repeat right 8px center / 10px 6px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M0 0h10L5 6z' fill='%23005aaa'/%3E%3C/svg%3E");
+  appearance: none; cursor: pointer;
+}
+input:focus, select:focus, select:hover { border-color: var(--blue); outline: 0; }
+input[type=checkbox] { accent-color: var(--blue); }
+label { color: var(--dim); }
+
+/* -- sign-in and the knee list ------------------------------------------------ */
+.page { flex: 1; overflow-y: auto; padding: 32px 16px; }
+.card { max-width: 440px; margin: 0 auto; background: var(--white); border: 1px solid var(--line); padding: 22px 24px; }
+.wide-card { max-width: 900px; }
+.card h2 { margin: 0 0 14px; font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--blue); }
+.card h3 { margin: 22px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim);
+           display: flex; gap: 12px; align-items: center; }
+.card h3 select { width: auto; text-transform: none; letter-spacing: 0; }
+.card .column { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin: 0 0 14px; font-size: 11px; }
+.card .column input, .card .column select { margin: 0; width: 100%; font-size: 13px; }
+.card .actions button { width: 100%; padding: 8px; font-size: 13px; }
+.study-help { color: var(--dim); }
+.study-warn { color: var(--red); }
+
+.focal { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; }
+.focal b { font-size: 40px; line-height: 1; color: var(--blue); font-variant-numeric: tabular-nums; }
+.focal span { font-size: 13px; color: var(--dim); }
+.count { color: var(--dim); font-weight: normal; text-transform: none; letter-spacing: 0; }
+.knee-list { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.knee {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center;
+  padding: 6px 4px; border-bottom: 1px solid var(--line);
+}
+.knee:hover { background: var(--paper); }
+.knee .name { font-weight: bold; }
+.knee .name small { font-weight: normal; color: var(--dim); margin-left: 6px; font-size: 11px; }
+.knee button { min-width: 210px; text-align: left; }
+.knee button.done { border-color: var(--green); color: var(--green); }
+.knee button.done::after { content: "  \2713"; }
+.knee button.partial { border-color: var(--orange); }
+.knee button.partial::after { content: "  \2022 сохранено"; color: var(--orange); }
+.credit { color: var(--dim); font-size: 10px; margin-top: 18px; }
+
+/* -- picking ------------------------------------------------------------------- */
+#work { flex: 1; display: grid; grid-template-columns: 340px 1fr; min-height: 0; }
+#work[hidden] { display: none !important; }
+#panel { background: var(--white); border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; }
+#knee-title { margin-bottom: 10px; color: var(--blue); font-weight: bold; }
+.study-progress { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+#pick-name.study-name { font-size: 14px; font-weight: bold; line-height: 1.35; color: var(--ink); margin: 6px 0; }
+.study-definition { color: var(--ink); }
+.study-status { color: var(--blue); }
+#panel .actions { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+#panel .actions button { flex: 1; }
+#panel .actions select { flex: 1; min-width: 0; width: auto; }
+#panel label.wide { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+#panel label.wide select { flex: 1; }
+#pick-list { border-top: 1px solid var(--line); padding-top: 6px; }
+.pick-item { background: transparent; color: var(--ink); border: 1px solid transparent; text-align: left; padding: 3px 6px; }
+.pick-item:hover:not(:disabled) { background: var(--blue-light); border-color: transparent; }
+.pick-item.current { border-color: var(--blue); background: var(--blue-light); }
+#panel .finish-row { flex-direction: column; }
+#panel .finish-row button { flex: none; width: 100%; }
+#notes { color: var(--dim); font-size: 11px; }
+#view { position: relative; min-width: 0; background: var(--paper); }
+
+/* Medial, lateral, front and back beside the bone (orient.js) */
+.compass { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+.compass span {
+  position: absolute; left: 0; top: 0; padding: 2px 6px; white-space: nowrap;
+  font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: .06em;
+  background: #ffffffd9; border: 1px solid var(--line); color: var(--dim);
+}
+.compass .compass-medial, .compass .compass-lateral { color: var(--white); border-color: var(--blue); }
+.compass .compass-medial { background: var(--blue); }
+.compass .compass-lateral { background: var(--orange); border-color: var(--orange); }
+.compass span[hidden] { display: none; }
+
+#busy { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; align-content: center;
+        gap: 10px; background: #0b2440b3; }
+#busy span { border: 3px solid #ffffff44; border-top-color: var(--white); }
+#busy-text { color: var(--white); margin: 0; }
+
+@media (max-width: 720px) {
+  .knee { grid-template-columns: 1fr; }
+  .knee button { min-width: 0; }
+  #work { grid-template-columns: 1fr; grid-template-rows: auto 60vh; }
+}

@@ -22,61 +22,66 @@
   "bodies": {
    "Main Body": {
     "visible": true,
-    "vol": 43060.058,
+    "vol": 41437.204,
     "bb": [
-     -33.532,
-     -40.142,
-     -10.137,
-     41.672,
-     40.142,
-     50.498
+     -32.747,
+     -40.375,
+     -9.901,
+     40.701,
+     40.375,
+     49.345
     ]
    },
    "Offset": {
     "visible": false,
-    "vol": 24319.878,
+    "vol": 23206.325,
     "bb": [
-     -33.715,
+     -32.931,
      -10.0,
-     -10.347,
-     45.327,
+     -10.11,
+     44.271,
      10.0,
-     81.734
+     79.829
     ]
    },
    "Posterior Offset": {
     "visible": false,
-    "vol": 12159.939,
+    "vol": 11603.163,
     "bb": [
-     -33.715,
+     -32.931,
      -5.0,
-     -10.347,
-     45.327,
+     -10.11,
+     44.271,
      5.0,
-     81.734
+     79.829
     ]
    },
    "Main Body (1)": {
     "visible": true,
-    "vol": 43060.058,
+    "vol": 41437.204,
     "bb": [
-     -33.532,
-     -40.142,
-     -10.137,
-     41.672,
-     40.142,
-     50.498
+     -32.747,
+     -40.375,
+     -9.901,
+     40.701,
+     40.375,
+     49.345
     ]
    }
   },
+  "gate": {
+   "ok": true,
+   "checked": false,
+   "reason": "parameters changed: femoral"
+  },
   "exported": {
-   "patient_builds/DEMO_LARGE/femoral.stl": "Main Body"
+   "patient_builds/DEMO_LARGE/staging/femoral.stl": "Main Body"
   },
   "stl_shift_mm": [
    0.0,
    0.0
   ],
-  "version": 12,
+  "version": 13,
   "saved": true
  },
  "plate": {
@@ -85,45 +90,44 @@
   "sync_failed": [],
   "tray_offset_move": "already",
   "was": {
-   "Tibial_Plateau_ML": "73.6600 mm",
-   "Tibial_Plateau_AP": "50.9670 mm",
-   "Left_Condyle_Diameter": "46.9670 mm",
-   "Right_Condyle_Diameter": "46.3520 mm",
-   "Intercondylar_Notch_Width": "20.0000 mm",
+   "Tibial_Plateau_ML": "76.8710 mm",
+   "Tibial_Plateau_AP": "49.9000 mm",
+   "Left_Condyle_Diameter": "45.9000 mm",
+   "Right_Condyle_Diameter": "42.8430 mm",
+   "Intercondylar_Notch_Width": "20.7500 mm",
    "Internal_Notch_Offset": "6.0000 mm",
-   "d11": "2.2330 mm",
-   "Tray_Offset_X": "-6.6000 mm",
-   "Tray_Offset_Y": "5.3300 mm"
+   "d11": "3.7950 mm",
+   "Tray_Offset_X": "-5.8100 mm",
+   "Tray_Offset_Y": "3.9700 mm"
   },
-  "health": [
-   [
-    "Tray offset",
-    3,
-    ""
-   ]
-  ],
+  "health": [],
   "bodies": {
    "Body1": {
     "visible": true,
-    "vol": 19275.538,
+    "vol": 19803.651,
     "bb": [
-     -37.671,
-     -24.95,
+     -38.871,
+     -24.953,
      -34.0,
-     39.2,
-     22.95,
+     40.203,
+     22.953,
      9.0
     ]
    }
   },
+  "gate": {
+   "ok": true,
+   "checked": false,
+   "reason": "parameters changed: plate"
+  },
   "exported": {
-   "patient_builds/DEMO_LARGE/plate.stl": "Body1"
+   "patient_builds/DEMO_LARGE/staging/plate.stl": "Body1"
   },
   "stl_shift_mm": [
-   -5.81,
-   3.97
+   -7.47,
+   3.77
   ],
-  "version": 12,
+  "version": 13,
   "saved": true
  },
  "insert": {
@@ -134,29 +138,28 @@
    "Slot roof clearance",
    "Slot clearance",
    "Bottom fillet",
-   "Top fillet",
-   "Back fillet"
+   "Top fillet"
   ],
   "outline": {
    "cut_curves": 24,
    "loops_mm": [
     [
-     -37.7,
-     -24.9,
-     39.2,
+     -38.9,
+     -25.0,
+     40.2,
      23.0
     ],
     [
      1.0,
-     -22.9,
-     37.2,
+     -23.0,
+     38.2,
      21.0
     ],
     [
-     -35.7,
+     -36.9,
      -22.9,
      -1.0,
-     19.5
+     19.7
     ]
    ],
    "offset_loops": 2,
@@ -169,21 +172,21 @@
     -1.61,
     -23.35,
     1.61,
-    4.33
+    4.3
    ],
    "halves_mm2": [
     51.1,
     15.3,
-    1005.2,
+    1055.7,
     15.4,
-    1111.6
+    1150.9
    ],
    "halves_cx_mm": [
     0.0,
     -1.3,
-    -17.7,
+    -18.3,
     1.3,
-    18.6
+    19.1
    ],
    "retarget": {
     "Anterior Sweep": "ok",
@@ -191,13 +194,13 @@
    },
    "suppressed": [],
    "timeline": [
-    "Component Insert Tibial Plate v12:1",
+    "Component Insert Tibial Plate v13:1",
     "Ledge level",
     "Base Outline",
     "Base Feature",
     "Ledge slot",
     "Top Connection",
-    "Component Insert Knee Prosthesis (Femoral) v12:1",
+    "Component Insert Knee Prosthesis (Femoral) v13:1",
     "Constraint 1",
     "Constraint 2",
     "Constraint 3",
@@ -210,34 +213,34 @@
   "femoral_offset": {
    "Constraint 1": "d22 = -Tray_Offset_Y",
    "Constraint 2": "d23 = Tray_Offset_X",
-   "profile_plane": "y = -5.33 mm, profile remade (1 profiles, sweeps ['Anterior Sweep', 'Posterior Sweep']; 3 : failed to create offset: VCS_SKETCH_OVER_CONSTRAINTS - S), box above"
+   "profile_plane": "y = -3.97 mm, profile remade (1 profiles, sweeps ['Anterior Sweep', 'Posterior Sweep']), box above"
   },
   "restored": [],
   "repointed": [
-   "Tibial Plate v11",
-   "Knee Prosthesis (Femoral) v11"
+   "Tibial Plate v12",
+   "Knee Prosthesis (Femoral) v12"
   ],
   "replace_errors": [],
   "refs": [
    [
-    "Tibial Plate",
-    12,
+    "Knee Prosthesis (Femoral)",
+    13,
     "DEMO_LARGE"
    ],
    [
-    "Knee Prosthesis (Femoral)",
-    12,
+    "Tibial Plate",
+    13,
     "DEMO_LARGE"
    ]
   ],
   "was": {
-   "Insert_Thickness": "14.2695 mm",
+   "Insert_Thickness": "9.8765 mm",
    "Distal_Cut": "10.1470 mm",
    "Femur_ML": "81.2830 mm",
-   "Tibial_Plateau_ML": "73.6600 mm",
-   "Tibial_Plateau_AP": "50.9670 mm",
-   "Tray_Offset_X": "-6.6000 mm",
-   "Tray_Offset_Y": "5.3300 mm"
+   "Tibial_Plateau_ML": "76.8710 mm",
+   "Tibial_Plateau_AP": "49.9000 mm",
+   "Tray_Offset_X": "-5.8100 mm",
+   "Tray_Offset_Y": "3.9700 mm"
   },
   "finish": {
    "made": [
@@ -249,7 +252,7 @@
    "failed": {},
    "counts": {
     "Back fillet": 0,
-    "Top fillet": 9,
+    "Top fillet": 10,
     "Bottom fillet": 12,
     "Slot clearance": 2,
     "Slot roof clearance": 1
@@ -259,40 +262,34 @@
     "Top fillet": "min(Top_Fillet_Radius; 1.5 mm)"
    }
   },
-  "health": [
-   [
-    "Anterior Sweep",
-    1,
-    "Profile 1 missing"
-   ],
-   [
-    "Posterior Sweep",
-    1,
-    "Profile 1 missing"
-   ]
-  ],
+  "health": [],
   "bodies": {
    "Body2": {
     "visible": true,
-    "vol": 29225.312,
+    "vol": 27299.656,
     "bb": [
-     -35.071,
-     -22.35,
+     -36.271,
+     -22.353,
      5.0,
-     36.6,
-     20.35,
-     25.024
+     37.603,
+     20.353,
+     23.341
     ]
    }
   },
+  "gate": {
+   "ok": true,
+   "checked": false,
+   "reason": "parameters changed: insert, femoral, plate"
+  },
   "exported": {
-   "patient_builds/DEMO_LARGE/insert.stl": "Body2"
+   "patient_builds/DEMO_LARGE/staging/insert.stl": "Body2"
   },
   "stl_shift_mm": [
-   -5.81,
-   3.97
+   -7.47,
+   3.77
   ],
-  "version": 17,
+  "version": 20,
   "saved": true
  },
  "block": {
@@ -309,34 +306,34 @@
    "fully_constrained": true,
    "lines": {
     "distal": [
-     15.0,
+     14.65,
      0.0,
-     -15.0,
+     -14.65,
      -0.0
     ],
     "posterior": [
-     -26.96,
-     11.96,
-     -26.96,
-     30.0
+     -26.33,
+     11.68,
+     -26.33,
+     29.3
     ],
     "anterior": [
-     31.78,
-     16.78,
-     40.59,
-     66.74
+     31.04,
+     16.39,
+     39.64,
+     65.19
     ],
     "posterior chamfer": [
-     -15.0,
+     -14.65,
      -0.0,
-     -26.96,
-     11.96
+     -26.33,
+     11.68
     ],
     "anterior chamfer": [
-     15.0,
+     14.65,
      0.0,
-     31.78,
-     16.78
+     31.04,
+     16.39
     ]
    }
   },
@@ -344,7 +341,7 @@
   "refs": [
    [
     "Knee Prosthesis (Femoral)",
-    12,
+    13,
     "DEMO_LARGE"
    ]
   ],
@@ -353,11 +350,11 @@
    "pegs": {
     "side_body": "Main Body",
     "health": 0,
-    "added_mm3": 1475.7
+    "added_mm3": 1495.0
    },
    "state": {
     "block": [
-     23952461.0,
+     24008444.6,
      18,
      -150.0,
      -150.0,
@@ -369,34 +366,34 @@
     "profile_constrained": true,
     "cut_lines": {
      "distal": [
-      15.0,
+      14.65,
       0.0,
-      -15.0,
+      -14.65,
       -0.0
      ],
      "posterior": [
-      -26.96,
-      11.96,
-      -26.96,
-      30.0
+      -26.33,
+      11.68,
+      -26.33,
+      29.3
      ],
      "anterior": [
-      31.78,
-      16.78,
-      40.59,
-      66.74
+      31.04,
+      16.39,
+      39.64,
+      65.19
      ],
      "posterior chamfer": [
-      -15.0,
+      -14.65,
       -0.0,
-      -26.96,
-      11.96
+      -26.33,
+      11.68
      ],
      "anterior chamfer": [
-      15.0,
+      14.65,
       0.0,
-      31.78,
-      16.78
+      31.04,
+      16.39
      ]
     }
    }
@@ -405,7 +402,7 @@
   "bodies": {
    "Block": {
     "visible": true,
-    "vol": 23952460.973,
+    "vol": 24008444.561,
     "bb": [
      -150.0,
      -150.0,
@@ -416,14 +413,19 @@
     ]
    }
   },
+  "gate": {
+   "ok": true,
+   "checked": false,
+   "reason": "parameters changed: femoral"
+  },
   "exported": {
-   "patient_builds/DEMO_LARGE/femoral_block.stl": "Block"
+   "patient_builds/DEMO_LARGE/staging/femoral_block.stl": "Block"
   },
   "stl_shift_mm": [
    0.0,
    0.0
   ],
-  "version": 4,
+  "version": 5,
   "saved": true
  },
  "tblock": {
@@ -442,7 +444,7 @@
   "refs": [
    [
     "Tibial Plate",
-    12,
+    13,
     "DEMO_LARGE"
    ]
   ],
@@ -471,7 +473,7 @@
   "bodies": {
    "Block": {
     "visible": true,
-    "vol": 13503433.035,
+    "vol": 13503433.032,
     "bb": [
      -150.0,
      -150.0,
@@ -482,14 +484,19 @@
     ]
    }
   },
+  "gate": {
+   "ok": true,
+   "checked": false,
+   "reason": "parameters changed: plate"
+  },
   "exported": {
-   "patient_builds/DEMO_LARGE/tibial_block.stl": "Block"
+   "patient_builds/DEMO_LARGE/staging/tibial_block.stl": "Block"
   },
   "stl_shift_mm": [
-   -5.81,
-   3.97
+   -7.47,
+   3.77
   ],
-  "version": 4,
+  "version": 5,
   "saved": true
  }
 }

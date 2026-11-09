@@ -1,5 +1,10 @@
 """The parametric TKA demo: the planner, with the implant built in Fusion from the plan.
 
+Superseded (2026-11-08): the planner itself now does all of this -- `tka serve` has
+Anatomy, Plan, Implant, Reduce, Build, Review and Pick, the rules live in
+tka_planner/implant and the Fusion build in tka_planner/fusion. This server still runs
+for comparison until the one app has been reviewed; it is then retired.
+
 Private (patient-derived). Runs the planner's own server (sessions, plan controls,
 commit, trial reduction, arc) with the demo app as its web root, and adds:
 
@@ -322,6 +327,15 @@ class DemoApi(Api):
         s = entry.session
         t0 = time.time()
         job = derive(name, s.side, s.measurement, s.plan, s.sizing, s.library)
+        # The plan the parts are built on, recorded with them. Without this a build from
+        # the app dropped the knee's controls (P029R, 2026-10-11: +4.0 mm tibial
+        # resection built, nothing recorded), and the app then reopened the knee on a
+        # plan the parts were not built for.
+        from dataclasses import asdict, fields
+        from tka_planner.core.planning import Adjustments
+        defaults = {f.name: f.default for f in fields(Adjustments)}
+        job['plan_controls'] = {k: v for k, v in asdict(s._adjustments()).items()
+                                if v != defaults.get(k)}
         built = self.built_job(name)
         job["label"], job["bones"] = built.get("label", name), built["bones"]
         natural = jcurve_run(job, femur=s.measurement.femur, comp=None, write=False)
@@ -401,6 +415,8 @@ def main():
     server.api = api
     server._server.RequestHandlerClass = httpd._make_handler(api, APP)
     print(f"Parametric TKA demo at {server.url}", flush=True)
+    print("  (superseded: the planner does all of this now -- tka serve --builds patient_builds)",
+          flush=True)
     server.serve_forever()
     if api.leaving.is_set():         # restart or stop from the page: its thread ends the process
         time.sleep(30)

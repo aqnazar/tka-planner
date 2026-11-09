@@ -1,0 +1,28 @@
+# PLACEHOLDER dispersion: 2.0 mm per axis for every landmark a surgeon picks. Not measured.
+# Replace with the inter-observer table from E3 (same columns) before quoting any interval.
+# sd_mm is the SD along each axis of an isotropic Gaussian, in mm; the cov_* columns, if all
+# filled, give a full covariance in mm^2 in the bone frame (anterior, lateral, proximal) instead.
+# Canal centres and the patellar points have no row and are held fixed: the canal centres are
+# derived from the canal cross-section rather than picked, and the patella is not yet planned.
+landmark_id,sd_mm,cov_aa,cov_al,cov_ap,cov_ll,cov_lp,cov_pp
+femur.epicondyle_lateral,2.0,,,,,,
+femur.epicondyle_medial_sulcus,2.0,,,,,,
+femur.epicondyle_medial_prominence,2.0,,,,,,
+femur.condyle_distal_medial,2.0,,,,,,
+femur.condyle_distal_lateral,2.0,,,,,,
+femur.condyle_posterior_medial,2.0,,,,,,
+femur.condyle_posterior_lateral,2.0,,,,,,
+femur.notch_centre,2.0,,,,,,
+femur.trochlear_groove_anterior,2.0,,,,,,
+femur.head_centre,2.0,,,,,,
+tibia.spine_medial,2.0,,,,,,
+tibia.spine_lateral,2.0,,,,,,
+tibia.pcl_insertion_midpoint,2.0,,,,,,
+tibia.tubercle_patellar_tendon_medial_border,2.0,,,,,,
+tibia.tubercle_medial_third,2.0,,,,,,
+tibia.plateau_medial_lowest,2.0,,,,,,
+tibia.plateau_lateral_lowest,2.0,,,,,,
+tibia.plateau_medial_anterior,2.0,,,,,,
+tibia.plateau_medial_posterior,2.0,,,,,,
+tibia.ankle_centre,2.0,,,,,,
+fibula.head_apex,2.0,,,,,,

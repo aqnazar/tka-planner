@@ -76,8 +76,10 @@ def test_the_viewer_insert_is_stretched_to_the_solved_thickness(session):
 
     assert display["insert_thickness_mm"] == pytest.approx(
         session.plan.diagnostics["insert_thickness_mm"], abs=1e-3)
+    # Both thicknesses are reported to 3 decimals, so the product can be out by half a
+    # thousandth of a millimetre times the stretch, and no more.
     assert display["library_thickness_mm"] * display["stretch"] == pytest.approx(
-        max(display["insert_thickness_mm"], 0.5), rel=1e-6)
+        max(display["insert_thickness_mm"], 0.5), abs=1e-3)
     # The node's own axis is scaled by the stretch on top of the size's uniform scale.
     local_z = node.rest[:3, :3] @ np.array([0.0, 0.0, 1.0])
     assert np.linalg.norm(local_z) == pytest.approx(scale * display["stretch"], rel=1e-6)

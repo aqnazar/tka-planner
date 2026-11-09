@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tka_planner.core.meshio import read_stl
+from tka_planner.core.meshio import Mesh, read_stl
 from tka_planner.geom import mesh as gm
 
 from . import motion
@@ -26,16 +26,20 @@ __all__ = ["build_scene", "resolve_component_meshes", "INSERT_SPACER"]
 INSERT_SPACER = "TibialInsertSpacer"
 
 # One colour per category, carried over from the Blender scene so the two look alike
-# while both exist: bone grey, implant blue, cutting-block green, shell red, plane cyan,
-# axis orange, landmark yellow. Cut bone keeps its own warmer grey, so a resected
-# surface still reads as bone rather than as implant.
+# while both exist: bone grey, implant blue, cutting-block green, shell deep orange,
+# plane cyan, axis orange, landmark yellow. Cut bone keeps its own warmer grey, so a
+# resected surface still reads as bone rather than as implant. The shell was red until
+# 2026-10-17, which the fit map also uses for overhang (author's ruling: orange).
 BONE_COLOUR = (0.62, 0.62, 0.62)
 RESECTED_COLOUR = (0.55, 0.52, 0.50)
 IMPLANT_COLOUR = (0.18, 0.38, 0.85)
 PLANE_COLOUR = (0.25, 0.80, 0.85)
 AXIS_COLOUR = (0.95, 0.55, 0.10)
 BLOCK_COLOUR = (0.30, 0.70, 0.35)
-SHELL_COLOUR = (0.85, 0.18, 0.18)
+# The phantom femur is not anatomy, so it takes no bone or implant colour: a pale violet,
+# drawn translucent, that nothing else in the scene uses.
+PHANTOM_COLOUR = (0.62, 0.55, 0.85)
+SHELL_COLOUR = (0.93, 0.42, 0.05)
 # Landmark colour is yellow throughout, per-status shade rather than a different hue,
 # so provenance still reads at a glance without leaving the yellow family the category
 # is known by.
@@ -64,12 +68,20 @@ def build_scene(
     show_axes: bool = True,
     show_landmarks: bool = False,
     show_cutting_blocks: bool = True,
+    phantom=None,
+    show_phantom: bool = True,
     insert_thickness_mm: float | None = None,
     insert_footprint_mm: tuple | None = None,
     insert_stretch: dict | None = None,
     component_scales: dict | None = None,
+    femur_mesh: Mesh | None = None,
+    tibia_mesh: Mesh | None = None,
 ) -> Scene:
     """Build the full scene from an already-computed plan.
+
+    ``femur_mesh`` and ``tibia_mesh`` are the bones as measured -- with the detached
+    pieces quality control removed -- so the scene shows and cuts what was measured.
+    Without them the files are read as they are.
 
     ``components`` maps a component name to ``{"path": ..., "scale": ..., "group": ...}``
     as :func:`resolve_component_meshes` returns, so the implants appear seated on their
@@ -79,11 +91,11 @@ def build_scene(
 
     scene.add(
         Node(name="Femur", set_id=FEMORAL, colour=BONE_COLOUR, tags={"bone": True}),
-        read_stl(femur_path),
+        femur_mesh if femur_mesh is not None else read_stl(femur_path),
     )
     scene.add(
         Node(name="Tibia", set_id=TIBIAL, colour=BONE_COLOUR, tags={"bone": True}),
-        read_stl(tibia_path),
+        tibia_mesh if tibia_mesh is not None else read_stl(tibia_path),
     )
 
     # Planes and axes are always built and their toggles set visibility, rather than
@@ -122,6 +134,27 @@ def build_scene(
             ),
             gm.cylinder(AXIS_RADIUS_MM, abs(length)),
         )
+
+    if phantom is not None:
+        # Already in the scan's frame, so the node sits at the origin with its mesh.
+        from tka_planner.geom.phantom import phantom_mesh
+
+        scene.add(
+            Node(
+                name="PhantomFemur",
+                set_id=FEMORAL,
+                rest=np.eye(4),
+                colour=PHANTOM_COLOUR,
+                alpha=0.45,
+                visible=show_phantom,
+                tags={"phantom": True, "schematic": True},
+            ),
+            phantom_mesh(phantom),
+        )
+        scene.notes.append(
+            "Phantom femur: a schematic drawn from the entered femur length and "
+            "population priors, not measured anatomy (hip-centre error about "
+            f"{phantom.budget['combined']:g} mm, one SD).")
 
     if landmarks is not None:
         # One shared sphere, instanced by rest transform. The Blender builder made a
@@ -175,7 +208,7 @@ def build_scene(
                     "cutting_block": "cutting_block" in name,
                 },
             ),
-            read_stl(spec["path"]),
+            read_component(spec),
         )
 
     if insert_thickness_mm is not None:
@@ -314,28 +347,41 @@ def resolve_component_meshes(
             and not any(term in key for term in exclude)
         ]
         if side_token:
-            sided = [p for p in matches if side_token in normalise(p.name)]
             other = "right" if side_token == "left" else "left"
-            sided = [p for p in sided if other not in normalise(p.name)]
+
+            def handed(token, against):
+                return [p for p in matches if token in normalise(p.name)
+                        and against not in normalise(p.name)]
+
+            sided = handed(side_token, other)
             if sided:
-                return sided[0]
+                return sided[0], False
             # Fall back to a laterality-neutral export, e.g. "(L&R)".
             neutral = [
                 p for p in matches
                 if "left" not in normalise(p.name) and "right" not in normalise(p.name)
             ]
-            return neutral[0] if neutral else None
-        return matches[0] if matches else None
+            if neutral:
+                return neutral[0], False
+            # Then to this size's other hand, mirrored. The library exports most sizes
+            # left-handed only, and the right part is the left one reflected across the
+            # sagittal plane (L4, which exports both, matches vertex for vertex). Taking
+            # the other hand of the right size beats taking the right hand of the wrong
+            # size: searching every size for a right part found only L4's, which is
+            # narrower than the chart says, so every right knee came out 5% narrow.
+            opposite = handed(other, side_token)
+            return (opposite[0], True) if opposite else (None, False)
+        return (matches[0] if matches else None), False
 
     def find(*, must, side_token, exclude=()):
         """Search outwards from the requested size until the part turns up."""
         for folder_label in order:
-            found = find_in(
+            found, mirror = find_in(
                 folder_label, must=must, side_token=side_token, exclude=exclude
             )
             if found is not None:
-                return found, folder_label
-        return None, None
+                return found, folder_label, mirror
+        return None, None, False
 
     resolved = {}
 
@@ -354,7 +400,7 @@ def resolve_component_meshes(
          "tibial", False),
     )
     for name, must, group, sided in wanted:
-        path, found_label = find(
+        path, found_label, mirror = find(
             must=must,
             side_token=("left" if is_left else "right") if sided else None,
             exclude=() if "shell" in name else ("shell",),
@@ -369,11 +415,12 @@ def resolve_component_meshes(
                 "group": group,
                 "source_size": found_label,
                 "source_ml": source_ml,
+                "mirror": mirror,
             }
 
     # The plastic insert is sometimes exported without "tibial" in its name.
     if "tibial_insert" not in resolved:
-        path, found_label = find(
+        path, found_label, _ = find(
             must=("insert",), side_token=None, exclude=("shell",)
         )
         if path is not None:
@@ -386,7 +433,31 @@ def resolve_component_meshes(
                 "group": "tibial",
                 "source_size": found_label,
                 "source_ml": source_ml,
+                "mirror": False,
             }
     return resolved
+
+
+# The CAD axis that points to patient-left, per bone (see the component conventions):
+# femoral parts are +X anterior, +Y patient-left; tibial parts +X patient-left.
+_CAD_LATERAL_AXIS = {"femoral": 1, "tibial": 0}
+
+
+def read_component(spec: dict, reader=None) -> Mesh:
+    """Read a resolved library part, mirrored when the resolver asked for it.
+
+    A mirrored part is the other hand's export reflected across the patient's sagittal
+    plane: the CAD axis to patient-left is negated, and each triangle's winding reversed
+    so its faces still point outwards.
+    """
+    mesh = (reader or read_stl)(spec["path"])
+    if not spec.get("mirror"):
+        return mesh
+    axis = _CAD_LATERAL_AXIS[spec.get("group", "femoral")]
+    vertices = np.array(mesh.vertices, dtype=float, copy=True)
+    vertices[:, axis] *= -1.0
+    return Mesh(vertices=vertices, faces=np.ascontiguousarray(mesh.faces[:, ::-1]),
+                source_path=mesh.source_path, sha256=mesh.sha256,
+                metadata=dict(mesh.metadata, mirrored=True))
 
 

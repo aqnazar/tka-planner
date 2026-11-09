@@ -31,6 +31,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--store", default=str(DEFAULT_STORE),
         help="where cases, plans and committed geometry are kept",
     )
+    parser.add_argument(
+        "--study", default=None,
+        help="where observer-study picks and plan verdicts are written "
+             "(default: a 'study' folder in the store)",
+    )
+    parser.add_argument(
+        "--builds", default=None,
+        help="the knees' Fusion-built parts, one folder per knee (default: a 'builds' "
+             "folder in the store); patient-derived, never in the repository",
+    )
+    parser.add_argument(
+        "--fusion-config", default=None,
+        help="the Fusion source documents and add-in address for Build (default: "
+             "fusion/local.json, or TKA_FUSION_CONFIG)",
+    )
     parser.add_argument("--port", type=int, default=8731)
     parser.add_argument(
         "--host", default="127.0.0.1",
@@ -46,14 +61,18 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
     manager = SessionManager(
-        store=args.store, cases_root=args.cases, library=args.library
+        store=args.store, cases_root=args.cases, library=args.library,
+        study_dir=args.study, builds=args.builds,
     )
     server = PlannerServer(manager, host=args.host, port=args.port)
+    server.api.fusion_config_path = args.fusion_config
 
     print(f"TKA planner running at {server.url}")
     print(f"  store    {args.store}")
     print(f"  cases    {args.cases or '(none configured; open a folder by path)'}")
     print(f"  library  {args.library or '(none configured; implants will not show)'}")
+    print(f"  study    {manager.study_dir}")
+    print(f"  builds   {manager.builds.root if manager.builds else '(none)'}")
     print("Press Ctrl+C to stop.")
 
     if not args.no_browser:

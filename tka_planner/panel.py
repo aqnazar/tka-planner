@@ -31,6 +31,13 @@ CONTROL_SCHEMA = (
              "help": "Patient-specific takes the implant's width and depth from this "
                      "patient's cuts; catalogue uses the library part at one scale, "
                      "as the legacy pipeline did."},
+            {"name": "implant_display", "label": "Parts shown", "kind": "choice",
+             "choices": [["built", "Built in Fusion (when built)"],
+                         ["stand_in", "Stand-in (library parts at the derived size)"]],
+             "help": "The knee's Fusion-built parts when it has a build; a build made "
+                     "for another plan is still shown and flagged with every parameter "
+                     "that differs. The stand-in is the library parts stretched to the "
+                     "dimensions the rules derive: it is not what would be built."},
             {"name": "coronal_correction_deg", "label": "Varus / valgus",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Coronal correction applied to both cuts together, so the "
@@ -85,6 +92,13 @@ CONTROL_SCHEMA = (
              "kind": "float", "min": -10.0, "max": 10.0, "step": 0.5, "unit": "deg",
              "help": "Coronal angle of the tibial cut alone. This breaks the shared "
                      "mediolateral slope with the femoral cut, and the plan says so."},
+            {"name": "tray_rotation", "label": "Tray rotation", "kind": "choice",
+             "choices": [["femoral", "Follows the femoral component"],
+                         ["tibial", "Tibial axis"]],
+             "help": "What the tray's rotation is set from. By default it follows the "
+                     "femoral component, so the two sit square on each other; the tibial "
+                     "axis squares it to the tibia instead, and the readout then shows "
+                     "the femoral component's rotation on the tray."},
             {"name": "tibial_rotation_delta_deg", "label": "Rotation",
              "kind": "float", "min": -15.0, "max": 15.0, "step": 0.5, "unit": "deg",
              "help": "Turn the tray out of register with the femoral component, about "
@@ -106,6 +120,11 @@ CONTROL_SCHEMA = (
              "kind": "float", "min": -4.0, "max": 6.0, "step": 0.5, "unit": "mm",
              "help": "The insert is made to close the joint in extension with no gap. "
                      "Positive makes it thicker, tightening the knee."},
+            {"name": "insert_minimum_mm", "label": "Minimum insert",
+             "kind": "float", "min": 0.0, "max": 12.0, "step": 0.5, "unit": "mm",
+             "help": "The thinnest insert the plan accepts. Below it the tibial cut goes "
+                     "deeper in half millimetres, up to the resection control's limit, "
+                     "and the readout says by how much. Zero turns it off."},
         ),
     },
     {
@@ -127,10 +146,19 @@ CONTROL_SCHEMA = (
             {"name": "show_planes", "label": "Cut planes", "kind": "bool"},
             {"name": "show_axes", "label": "Axes", "kind": "bool"},
             {"name": "show_landmarks", "label": "Landmarks", "kind": "bool"},
+            {"name": "show_phantom", "label": "Phantom femur", "kind": "bool",
+             "help": "A schematic femur (shaft, neck, head sphere) drawn from the "
+                     "entered femur length and population averages. It is not "
+                     "measured anatomy; it appears only when a length was entered."},
             {"name": "show_cutting_blocks", "label": "Cutting blocks", "kind": "bool",
              "help": "Show the instrument that would realise the cut. It is the size "
                      "of the block rather than of the resection, so it stands in "
                      "front of the bone."},
+            {"name": "show_fit_map", "label": "Fit map", "kind": "bool",
+             "help": "Colour each cut by how the component fits it: red where the "
+                     "component overhangs the bone, blue where bone is left "
+                     "uncovered. Measured on Commit; hidden while the plan has moved "
+                     "since."},
             {"name": "isolate_landmarks", "label": "Isolate landmarks", "kind": "bool",
              "help": "Hide everything but the landmarks, for watching how they move "
                      "relative to each other through a trial pose."},
@@ -154,6 +182,16 @@ TRIAL_SCHEMA = (
      "min": 0.0, "max": 20.0, "step": 0.5, "unit": "mm",
      "help": "Pull the tibia away from the femur along its axis. The plan closes the "
              "joint with no gap; this opens one to be seen, without changing the plan."},
+    {"name": "trajectory", "label": "Trajectory", "kind": "choice",
+     "choices": [["S3", "S3 Neutral hinge"],
+                 ["S2", "S2 Observed CR (anterior slide)"],
+                 ["S1", "S1 Native (fitted to published numbers)"]],
+     "help": "How the femur moves on the tibia as the knee flexes. S3 is the pure "
+             "hinge about the transepicondylar axis. S2 adds the paradoxical anterior "
+             "slide and small internal rotation measured in cruciate-retaining knees "
+             "(Bellemans 2002). S1 is a medial pivot with lateral rollback, fitted to "
+             "native-knee fluoroscopy (Pinskerova 2004, Nakagawa 2000); its pivot is "
+             "scaled to this knee's condyle spacing, an assumption."},
 )
 
 

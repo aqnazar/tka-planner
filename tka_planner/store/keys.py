@@ -79,6 +79,14 @@ def plan_key(session, bones=BONES) -> str:
         if group in transforms.get("scales", {}):
             payload["bones"][bone]["scale_xyz"] = _round(transforms["scales"][group])
             payload["bones"][bone]["shift"] = _round(transforms["shifts"][group])
+    # A knee's own Fusion-built cutting block cuts instead of the library's while its
+    # build matches the plan: the block's content and slide are then what the cut reads.
+    blocks = getattr(session, "built_blocks", None)
+    blocks = blocks() if callable(blocks) else {}
+    for bone in sorted(bones):
+        group = "femoral" if bone == "Femur" else "tibial"
+        if group in blocks:
+            payload["bones"][bone]["built_block"] = blocks[group]
 
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
