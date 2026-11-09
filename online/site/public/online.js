@@ -121,6 +121,7 @@ async function signIn() {
   if (!name) { el("signin-error").textContent = "Enter your name."; return; }
   if (!passphrase) { el("signin-error").textContent = "Enter the study passphrase."; return; }
   await busy(async () => {
+    await configReady;
     keys = await deriveKeys(passphrase);
     try {
       manifest = await openFile("data/manifest.bin");
@@ -258,12 +259,19 @@ async function openKnee(item, mode) {
 
 // --------------------------------------------------------------------
 
-(async function start() {
-  config = await (await fetch("config.json")).json();
-  el("name").value = remembered("name");
+// The remembered name and round are filled in at once, and never over what is already
+// typed; the study's settings load beside them, and Start waits for them.
+const configReady = fetch("config.json").then((r) => r.json()).then((c) => { config = c; });
+
+(function start() {
+  if (!el("name").value) el("name").value = remembered("name");
   el("round").value = remembered("round", "1");
-  try { el("passphrase").value = sessionStorage.getItem("landmark-study:pass") || ""; } catch { /* fine */ }
+  try {
+    if (!el("passphrase").value) el("passphrase").value = sessionStorage.getItem("landmark-study:pass") || "";
+  } catch { /* fine */ }
   el("enter").addEventListener("click", signIn);
+  configReady.then(() => { el("enter").disabled = false; el("enter").title = ""; },
+                   () => { el("signin-error").textContent = "The study could not load. Reload the page."; });
   el("passphrase").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
   el("group").addEventListener("change", () => { remember("group", el("group").value); showKnees(); });
   el("back").addEventListener("click", () => {

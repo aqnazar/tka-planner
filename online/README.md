@@ -20,7 +20,8 @@ python -m online.build_site                  # all knees; --only P009L:left VSD0
 cd "<Surgeon Study>/online_site/dist"
 npm install                                  # once: @netlify/blobs for the functions
 npx netlify-cli login                        # once per machine
-npx netlify-cli deploy --prod                # the first time it asks to create the site
+npx netlify-cli sites:create --name knee-study-<random> --account-slug <team>   # once; links dist/
+npx netlify-cli deploy --prod --dir public --functions netlify/functions
 python -m online.pull --site https://<site>.netlify.app
 ```
 
@@ -28,9 +29,17 @@ python -m online.pull --site https://<site>.netlify.app
 
 - `secrets.json`: the passphrase, the admin key and the salt.
 - `groups.json`: which cadavers are in groups A, B and C.
+- `site.json`: the site's address and Netlify project.
 - `dist/`: the deployable site.
 
 None of it belongs in the repository.
+
+A change to the page alone (`site/public/*.js|html|css`) needs no rebuild. Copy the file
+into `dist/public/` and deploy again; the knee files are unchanged.
+
+To check the live site, sign in under a test name, then delete those saves with
+`npx netlify-cli blobs:delete landmark-study <key> --force` (run inside `dist/`). The key
+prefix is `picks/<first 16 hex of sha256(the normalised name)>/`.
 
 ## What is where
 

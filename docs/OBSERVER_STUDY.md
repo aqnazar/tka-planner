@@ -84,3 +84,15 @@ the plan was adjusted by hand beforehand, the panel says so and the verdict reco
 Each verdict is one line of `<study>/reviews/<slug>.jsonl`, with the case, side,
 alignment, verdict, reasons, severity, comment, time taken, every control value and the
 report as the surgeon saw it.
+
+## Online (Pick only)
+
+Surgeons can also do the Pick rounds in their own browser, on a static site that holds no
+readable geometry (see `online/README.md`). The site runs the same viewer and Pick code. Each
+knee was computed beforehand by the planner's own `pick_targets` and is decrypted in the
+browser with the study passphrase. Every surgeon gets the study knees plus one group of 20
+VSD knees (groups A, B, C, with no overlap), and does both rounds: *No markers*, then
+*Automatic markers*, which unlocks only after the first round is finished on that knee.
+`python -m online.pull` writes each online save through `save_picks`, so online picks are
+the same files as local ones, with `"via": "online"` in their source. Review is not online yet.
+
