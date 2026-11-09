@@ -182,8 +182,12 @@ async function showKnees() {
     groups.value = remembered("group", manifest.groups[0]);
   }
   el("credit").textContent = manifest.credit;
-  renderList("list-study", manifest.knees.filter((k) => k.group === "study"), "count-study");
-  renderList("list-group", manifest.knees.filter((k) => k.group === groups.value), "count-group");
+  const study = manifest.knees.filter((k) => k.group === "study");
+  const mine = manifest.knees.filter((k) => k.group === groups.value);
+  const done = renderList("list-study", study, "count-study") +
+    renderList("list-group", mine, "count-group");
+  el("total-done").textContent = String(done);
+  el("total-of").textContent = `of ${study.length + mine.length} knees done`;
 }
 
 function renderList(host, knees, countId) {
@@ -195,12 +199,15 @@ function renderList(host, knees, countId) {
     row.className = "knee";
     const name = document.createElement("span");
     name.className = "name";
-    name.textContent = `${item.case_id}, ${item.side} knee`;
+    name.textContent = item.case_id;
+    const side = document.createElement("small");
+    side.textContent = `${item.side} knee`;
+    name.append(side);
     const blankState = status(item.case_id, item.side, "blank");
     const adjustState = status(item.case_id, item.side, "adjust");
     if (blankState === "done" && adjustState === "done") done += 1;
-    const blank = button("1. No markers", blankState, () => openKnee(item, "blank"));
-    const adjust = button("2. Automatic markers", adjustState, () => openKnee(item, "adjust"));
+    const blank = button("1  No markers", blankState, () => openKnee(item, "blank"));
+    const adjust = button("2  Automatic markers", adjustState, () => openKnee(item, "adjust"));
     if (blankState !== "done") {
       adjust.disabled = true;
       adjust.title = "Finish No markers on this knee first.";
@@ -208,7 +215,8 @@ function renderList(host, knees, countId) {
     row.append(name, blank, adjust);
     list.append(row);
   }
-  el(countId).textContent = `${done} of ${knees.length} done`;
+  el(countId).textContent = `${done} of ${knees.length}`;
+  return done;
 }
 
 function button(label, stateName, onClick) {
@@ -238,8 +246,8 @@ async function openKnee(item, mode) {
     el("work").hidden = false;
     el("back").hidden = false;
     document.body.classList.add("picking");
-    el("knee-title").textContent = `${item.case_id}, ${item.side} knee: ` +
-      (mode === "blank" ? "No markers" : "Automatic markers");
+    el("knee-title").textContent = `${item.case_id} ${item.side} · ` +
+      (mode === "blank" ? "1  No markers" : "2  Automatic markers");
     if (!viewer) {
       viewer = new Viewer(el("view"));
       study = new Study({

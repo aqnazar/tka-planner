@@ -22,9 +22,8 @@
 
 <section id="signin" class="page">
   <div class="card">
-    <h2>Sign in</h2>
-    <p class="study-help">Enter your name the same way each time: everything saved under one name is one surgeon.</p>
-    <label class="wide column">Your name <input id="name" type="text" autocomplete="name" maxlength="200"></label>
+    <h2>Knee landmarks<span></span></h2>
+    <label class="wide column">Your name, written the same way each time <input id="name" type="text" autocomplete="name" maxlength="200"></label>
     <label class="wide column">Round <select id="round"><option>1</option><option>2</option><option>3</option></select></label>
     <label class="wide column">Study passphrase <input id="passphrase" type="password" autocomplete="off" placeholder="XXXX-XXXX-XXXX"></label>
     <div class="actions"><button type="button" id="enter" class="primary" disabled title="Loading the study">Start</button></div>
@@ -34,17 +33,14 @@
 
 <section id="knees" class="page" hidden>
   <div class="card wide-card">
-    <h2>Your knees</h2>
-    <p class="study-help">Do every knee twice: first <b>No markers</b> (place each landmark yourself), then
-      <b>Automatic markers</b> (the planner's points are shown; move the wrong ones). Use a mouse; a
-      session can be stopped and continued later.</p>
+    <div class="focal"><b id="total-done">0</b><span id="total-of">of 0 knees done</span></div>
+    <p class="study-help">Each knee twice: <b>1 No markers</b>, place every landmark; then <b>2 Automatic markers</b>, move the planner's wrong ones.</p>
     <h3>Study patients <span class="count" id="count-study"></span></h3>
     <div id="list-study" class="knee-list"></div>
     <h3>Dataset knees
-      <label>Group <select id="group"></select></label>
+      <select id="group" title="The group the study lead gave you"></select>
       <span class="count" id="count-group"></span>
     </h3>
-    <p class="study-help">Your group is the one the study lead gave you. If you finish it, ask before starting another.</p>
     <div id="list-group" class="knee-list"></div>
     <p id="credit" class="credit"></p>
   </div>
