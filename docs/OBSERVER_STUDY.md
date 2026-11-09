@@ -94,5 +94,5 @@ browser with the study passphrase. Every surgeon gets the study knees plus one g
 VSD knees (groups A, B, C, with no overlap), and does both rounds: *No markers*, then
 *Automatic markers*, which unlocks only after the first round is finished on that knee.
 `python -m online.pull` writes each online save through `save_picks`, so online picks are
-the same files as local ones, with `"via": "online"` in their source. Review is not online yet.
+the same files as local ones, with `"via": "online"` in their source. The online page is in Russian, with landmark names shown in Russian and English. What is saved is the same as locally: landmark ids and English skip reasons. Review is not online yet.
 

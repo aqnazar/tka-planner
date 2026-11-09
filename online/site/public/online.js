@@ -1,12 +1,18 @@
 // The online landmark study. The planner does not run here: every knee was computed on
 // the study lead's machine by the planner itself and packed, encrypted, one file per
 // knee. This page decrypts a knee in the browser and hands it to the planner's own
-// viewer and Pick code (viewer.js, study.js, unchanged), answering the few requests
+// viewer and Pick code (viewer.js, study.js; Russian through study.js's say hook), answering the few requests
 // that code makes from the file instead of from a server. A save goes to the study's
 // store, and from there through the planner's own save_picks on the study lead's machine.
 
 import { Viewer } from "./viewer.js";
 import { Study } from "./study.js";
+import { say, translateTargets } from "./ru.js";
+
+const SIDE = { left: "левый", right: "правый" };
+const MODE = { blank: "1  Без маркеров", adjust: "2  Автоматические маркеры" };
+const CREDIT = "Суставы VSD: Fischer M.C.M., Sci. Data 10, 763 (2023), VSDFullBodyBoneModels, " +
+  "CC BY-NC-SA 4.0; обрезаны до длины КТ коленного сустава.";
 
 const el = (id) => document.getElementById(id);
 const state = { controls: {} };
@@ -42,7 +48,7 @@ async function deriveKeys(passphrase) {
 
 async function openFile(path) {
   const response = await fetch(path);
-  if (!response.ok) throw new Error(`Could not download ${path}.`);
+  if (!response.ok) throw new Error(`Не удалось загрузить ${path}.`);
   const sealed = new Uint8Array(await response.arrayBuffer());
   const plain = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: sealed.slice(0, 12) }, keys.aes, sealed.slice(12));
@@ -59,7 +65,7 @@ async function call(path, options = {}) {
   });
   let payload = {};
   try { payload = await response.json(); } catch { /* empty */ }
-  if (!response.ok) throw new Error(payload.error || `The study store said ${response.status}.`);
+  if (!response.ok) throw new Error(payload.error || `Ошибка хранилища исследования: ${response.status}.`);
   return payload;
 }
 
@@ -69,7 +75,7 @@ async function call(path, options = {}) {
 
 async function api(method, path, body) {
   if (path.endsWith("/study/targets")) {
-    return knee.targets[body.mode];
+    return translateTargets(knee.targets[body.mode]);
   }
   if (path.endsWith("/study/picks")) {
     const saved = await call("/api/save", {
@@ -79,9 +85,9 @@ async function api(method, path, body) {
     const task = taskKey(knee.case_id, knee.side, body.mode, body.round);
     progress.saved[task] = { count: (progress.saved[task]?.count || 0) + 1 };
     progress.complete[task] = Boolean(body.complete);
-    return { ...saved, landmarks: "the study's online store" };
+    return { ...saved, landmarks: "онлайн-хранилище" };
   }
-  throw new Error(`Not available online: ${path}`);
+  throw new Error(`Недоступно онлайн: ${path}`);
 }
 
 function note(message) {
@@ -118,8 +124,8 @@ async function signIn() {
   const name = el("name").value.trim();
   const passphrase = normalisePassphrase(el("passphrase").value);
   el("signin-error").textContent = "";
-  if (!name) { el("signin-error").textContent = "Enter your name."; return; }
-  if (!passphrase) { el("signin-error").textContent = "Enter the study passphrase."; return; }
+  if (!name) { el("signin-error").textContent = "Введите ваше имя."; return; }
+  if (!passphrase) { el("signin-error").textContent = "Введите пароль исследования."; return; }
   await busy(async () => {
     await configReady;
     keys = await deriveKeys(passphrase);
@@ -127,16 +133,16 @@ async function signIn() {
       manifest = await openFile("data/manifest.bin");
     } catch {
       keys = null;
-      throw new Error("That passphrase does not open the study. Check it and try again.");
+      throw new Error("Этот пароль не открывает исследование. Проверьте его и попробуйте снова.");
     }
     remember("name", name);
     remember("round", el("round").value);
     try { sessionStorage.setItem("landmark-study:pass", passphrase); } catch { /* fine */ }
     el("study-observer").value = name;
     el("study-round").value = el("round").value;
-    el("who").textContent = `${name}, round ${el("round").value}`;
+    el("who").textContent = `${name}, раунд ${el("round").value}`;
     await showKnees();
-  }, "Opening the study").then(() => {
+  }, "Открываем исследование").then(() => {
     if (!manifest) el("signin-error").textContent = el("notes").firstChild?.textContent || "";
   });
 }
@@ -159,7 +165,7 @@ async function refreshProgress() {
   try {
     progress = await call(`/api/progress?observer=${encodeURIComponent(el("study-observer").value)}`);
   } catch (error) {
-    note(`Progress could not be read (${error.message}); the list may be behind.`);
+    note(`Не удалось прочитать прогресс (${error.message}); список может быть неактуален.`);
   }
 }
 
@@ -176,18 +182,18 @@ async function showKnees() {
     for (const group of manifest.groups) {
       const option = document.createElement("option");
       option.value = group;
-      option.textContent = `Group ${group}`;
+      option.textContent = `Группа ${group}`;
       groups.append(option);
     }
     groups.value = remembered("group", manifest.groups[0]);
   }
-  el("credit").textContent = manifest.credit;
+  el("credit").textContent = CREDIT;
   const study = manifest.knees.filter((k) => k.group === "study");
   const mine = manifest.knees.filter((k) => k.group === groups.value);
   const done = renderList("list-study", study, "count-study") +
     renderList("list-group", mine, "count-group");
   el("total-done").textContent = String(done);
-  el("total-of").textContent = `of ${study.length + mine.length} knees done`;
+  el("total-of").textContent = `из ${study.length + mine.length} суставов выполнено`;
 }
 
 function renderList(host, knees, countId) {
@@ -201,21 +207,21 @@ function renderList(host, knees, countId) {
     name.className = "name";
     name.textContent = item.case_id;
     const side = document.createElement("small");
-    side.textContent = `${item.side} knee`;
+    side.textContent = `${SIDE[item.side] ?? item.side} коленный сустав`;
     name.append(side);
     const blankState = status(item.case_id, item.side, "blank");
     const adjustState = status(item.case_id, item.side, "adjust");
     if (blankState === "done" && adjustState === "done") done += 1;
-    const blank = button("1  No markers", blankState, () => openKnee(item, "blank"));
-    const adjust = button("2  Automatic markers", adjustState, () => openKnee(item, "adjust"));
+    const blank = button(MODE.blank, blankState, () => openKnee(item, "blank"));
+    const adjust = button(MODE.adjust, adjustState, () => openKnee(item, "adjust"));
     if (blankState !== "done") {
       adjust.disabled = true;
-      adjust.title = "Finish No markers on this knee first.";
+      adjust.title = "Сначала завершите «Без маркеров» на этом суставе.";
     }
     row.append(name, blank, adjust);
     list.append(row);
   }
-  el(countId).textContent = `${done} of ${knees.length}`;
+  el(countId).textContent = `${done} из ${knees.length}`;
   return done;
 }
 
@@ -246,14 +252,14 @@ async function openKnee(item, mode) {
     el("work").hidden = false;
     el("back").hidden = false;
     document.body.classList.add("picking");
-    el("knee-title").textContent = `${item.case_id} ${item.side} · ` +
-      (mode === "blank" ? "1  No markers" : "2  Automatic markers");
+    el("knee-title").textContent = `${item.case_id} ${SIDE[item.side] ?? item.side} · ${MODE[mode]}`;
     if (!viewer) {
       viewer = new Viewer(el("view"));
       study = new Study({
         viewer, api, el, note, busy, state,
         sessionId: () => "online",
         sendControls: async () => {},
+        say,
       });
       const stop = study.stopPick.bind(study);
       study.stopPick = () => { stop(); showKnees(); };
@@ -262,7 +268,7 @@ async function openKnee(item, mode) {
     window.dispatchEvent(new Event("resize"));
     el("pick-start-mode").value = mode;
     await study.startPick();
-  }, "Opening the knee");
+  }, "Открываем сустав");
 }
 
 // --------------------------------------------------------------------
@@ -279,11 +285,11 @@ const configReady = fetch("config.json").then((r) => r.json()).then((c) => { con
   } catch { /* fine */ }
   el("enter").addEventListener("click", signIn);
   configReady.then(() => { el("enter").disabled = false; el("enter").title = ""; },
-                   () => { el("signin-error").textContent = "The study could not load. Reload the page."; });
+                   () => { el("signin-error").textContent = "Исследование не загрузилось. Обновите страницу."; });
   el("passphrase").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
   el("group").addEventListener("change", () => { remember("group", el("group").value); showKnees(); });
   el("back").addEventListener("click", () => {
-    if (study?.pick && !window.confirm("Leave this knee? Unsaved markers stay as a draft in this browser.")) return;
+    if (study?.pick && !window.confirm("Выйти из этого сустава? Несохранённые маркеры останутся черновиком в этом браузере.")) return;
     if (study?.pick) study.stopPick(); else showKnees();
   });
 })();

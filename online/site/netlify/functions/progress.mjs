@@ -6,10 +6,10 @@ import { authorised, observerKey, observerHash, reply } from "../lib/common.mjs"
 
 export default async (request) => {
   if (!(await authorised(request.headers.get("x-study-key"), AUTH_HASH))) {
-    return reply(401, { error: "The study passphrase is not right." });
+    return reply(401, { error: "Неверный пароль исследования." });
   }
   const key = observerKey(new URL(request.url).searchParams.get("observer"));
-  if (!key) return reply(400, { error: "No surgeon named." });
+  if (!key) return reply(400, { error: "Не указано имя хирурга." });
   const prefix = `picks/${await observerHash(key)}/`;
   const store = getStore({ name: "landmark-study", consistency: "strong" });
   const { blobs } = await store.list({ prefix });

@@ -48,7 +48,11 @@ prefix is `picks/<first 16 hex of sha256(the normalised name)>/`.
   - Edges are subdivided to 0.7 mm so the plateau search has enough points.
   - Cadavers lying turned more than 30° are turned square about scanner Z, with the patella in front. The turn is recorded in `orientation.json`.
 - `build_site.py`: the encrypted knee files and the manifest (AES-256-GCM, PBKDF2-SHA256 310 000). Web bones are simplified within 0.05 mm.
-- `site/public/`: the page (`online.js` connects the planner's viewer and Pick code to the knee files).
+- `site/public/`: the page. `online.js` connects the planner's viewer and Pick code to the knee files.
+  - **Language:** the page is in Russian, for the surgeons. `ru.js` holds the messages and each landmark's Russian name (shown as "Русское (English)") and definition.
+  - **How the Russian reaches the shared code:** `web/study.js` takes an optional `say` translator. Without one, as in the planner, every message is the English one as before.
+  - **What is saved:** saves are unchanged by the language. Landmark ids and English skip reasons are stored, so the analysis is language-free.
+  - **Look:** the planner's `style.css` (blue accent). `online.css` only lays out sign-in, the knee list and the panel.
 - `site/netlify/functions/`: `save` (passphrase token), `progress` (a surgeon's own saves) and `list` (admin key, for the pull).
 - `pull.py`: saves → `save_picks` → `<Surgeon Study>/output/picks/`. The ledger is `online_pulled.json`.
 

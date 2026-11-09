@@ -20,9 +20,18 @@ const SKIP_REASONS = [
 // is an orbit and does not.
 const CLICK_SLOP_PX = 5;
 
+// Fill {name} slots in a message from ``vars``.
+export function fill(template, vars = {}) {
+  return template.replace(/\{(\w+)\}/g, (all, key) => (key in vars ? String(vars[key]) : all));
+}
+
 export class Study {
-  constructor({ viewer, api, el, note, busy, sessionId, sendControls, state }) {
-    Object.assign(this, { viewer, api, el, note, busy, sessionId, sendControls, state });
+  // ``say`` turns an English message (with {slots}) into the text shown. The planner
+  // shows the English; the online study passes its Russian table. What is saved never
+  // depends on it: skip reasons, ids and positions are recorded in English as before.
+  constructor({ viewer, api, el, note, busy, sessionId, sendControls, state,
+                say = fill }) {
+    Object.assign(this, { viewer, api, el, note, busy, sessionId, sendControls, state, say });
     this.pick = null;
     this.reviewStarted = null;
     this.reviewSaved = [];
@@ -40,7 +49,7 @@ export class Study {
     const observer = this.el("study-observer").value;
     const observerKey = observer.normalize("NFKC").trim().split(/\s+/).join(" ").toLowerCase();
     const round = Number(this.el("study-round").value);
-    if (!observerKey) throw new Error("Enter the surgeon's name first.");
+    if (!observerKey) throw new Error(this.say("Enter the surgeon's name first."));
     return { observer, observerKey, round };
   }
 
@@ -77,7 +86,7 @@ export class Study {
     this.el("pick-run").hidden = false;
     this.el("pick-ghost-row").hidden = mode !== "adjust";
     this.el("pick-reset-one").textContent =
-      mode === "adjust" ? "Reset to automatic" : "Remove marker";
+      this.say(mode === "adjust" ? "Reset to automatic" : "Remove marker");
     this.drawAll();
     this.go(this.pick.index);
   }
@@ -160,7 +169,7 @@ export class Study {
     const what = this.pick.mode === "adjust"
       ? "Put every marker back at its automatic position?"
       : "Remove every marker placed so far?";
-    if (!window.confirm(what)) return;
+    if (!window.confirm(this.say(what))) return;
     this.pick.positions = new Map(this.pick.auto);
     this.pick.skipped.clear();
     this.drawAll();
@@ -190,21 +199,24 @@ export class Study {
     const pick = this.pick;
     const target = this.current();
     const done = pick.targets.filter((t) => this.statusOf(t) !== "todo").length;
-    this.el("pick-progress").textContent =
-      `Marker ${target.number} of ${pick.targets.length} (${done} done)`;
+    this.el("pick-progress").textContent = this.say(
+      "Marker {number} of {total} ({done} done)",
+      { number: target.number, total: pick.targets.length, done });
     this.el("pick-name").textContent =
-      `${target.number}) ${target.bone}: ${target.name}`;
+      `${target.number}) ${this.say(target.bone)}: ${target.name}`;
     this.el("pick-definition").textContent = target.definition;
     const status = this.statusOf(target);
     const moved = this.movedMm(target);
     this.el("pick-status").textContent =
-      status === "skipped" ? `Skipped: ${pick.skipped.get(target.id)}` :
-      status === "todo" ? "Click the bone to place this marker." :
-      moved === null ? "Placed. Drag it to move it over the surface." :
-      `Placed, ${moved.toFixed(1)} mm from the automatic position. Drag it to move it.`;
+      status === "skipped"
+        ? this.say("Skipped: {reason}", { reason: this.say(pick.skipped.get(target.id)) }) :
+      status === "todo" ? this.say("Click the bone to place this marker.") :
+      moved === null ? this.say("Placed. Drag it to move it over the surface.") :
+      this.say("Placed, {mm} mm from the automatic position. Drag it to move it.",
+               { mm: moved.toFixed(1) });
     this.el("pick-prev").disabled = pick.index === 0;
     this.el("pick-next").textContent =
-      pick.index === pick.targets.length - 1 ? "Last marker" : "Next";
+      this.say(pick.index === pick.targets.length - 1 ? "Last marker" : "Next");
     this.el("pick-next").disabled = pick.index === pick.targets.length - 1;
     this.el("pick-finish").disabled = done < pick.targets.length;
     this.renderList();
@@ -236,7 +248,7 @@ export class Study {
       row.className = `pick-item ${this.statusOf(target)}`;
       if (target === this.current()) row.classList.add("current");
       row.textContent = `${target.number}) ${target.name}`;
-      row.title = `${target.bone}: ${target.definition}`;
+      row.title = `${this.say(target.bone)}: ${target.definition}`;
       row.addEventListener("click", () => this.go(target.number - 1));
       host.append(row);
     }
@@ -254,14 +266,15 @@ export class Study {
         ? { id: target.id, position_mm: null, reason: pick.skipped.get(target.id), seconds }
         : { id: target.id, position_mm: pick.positions.get(target.id), seconds });
     }
-    if (!picks.length) throw new Error("Nothing has been placed yet.");
+    if (!picks.length) throw new Error(this.say("Nothing has been placed yet."));
     const saved = await this.api("POST", `/api/sessions/${this.sessionId()}/study/picks`, {
       observer: pick.observer, round: pick.round, mode: pick.mode, complete,
       started_utc: pick.started,
       total_seconds: Math.round((performance.now() - pick.startedAt) / 100) / 10,
       picks,
     });
-    this.note(`Saved: ${saved.placed} placed, ${saved.skipped} skipped, in ${saved.landmarks}`);
+    this.note(this.say("Saved: {placed} placed, {skipped} skipped, in {where}",
+                       { placed: saved.placed, skipped: saved.skipped, where: saved.landmarks }));
     if (complete) {
       this.clearDraft();
       this.stopPick();
@@ -308,8 +321,9 @@ export class Study {
     if (mm) {
       this.place(mm);
     } else {
-      this.el("pick-status").textContent =
-        `That is not on the ${this.current().bone.toLowerCase()}. Click on its surface.`;
+      this.el("pick-status").textContent = this.say(
+        "That is not on the {bone}. Click on its surface.",
+        { bone: this.say(this.current().bone).toLowerCase() });
     }
   }
 
@@ -337,8 +351,8 @@ export class Study {
       draft = JSON.parse(localStorage.getItem(this.draftKey()) || "null");
     } catch { draft = null; }
     if (!draft) return;
-    if (!window.confirm("Unsaved picks for this case, observer and round were found. " +
-                        "Continue from them?")) {
+    if (!window.confirm(this.say("Unsaved picks for this case, observer and round were found. " +
+                                 "Continue from them?"))) {
       this.clearDraft();
       return;
     }
@@ -457,7 +471,7 @@ export class Study {
     on("pick-save", "click", () => this.busy(() => this.savePicks(false)));
     on("pick-finish", "click", () => this.busy(() => this.savePicks(true)));
     on("pick-quit", "click", () => {
-      if (window.confirm("Stop picking? Unsaved markers stay as a draft in this browser.")) {
+      if (window.confirm(this.say("Stop picking? Unsaved markers stay as a draft in this browser."))) {
         this.stopPick();
       }
     });
@@ -489,7 +503,8 @@ export class Study {
     const reasons = this.el("pick-skip-reason");
     for (const reason of SKIP_REASONS) {
       const option = document.createElement("option");
-      option.value = option.textContent = reason;
+      option.value = reason;
+      option.textContent = this.say(reason);
       reasons.append(option);
     }
   }

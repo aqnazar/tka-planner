@@ -8,17 +8,17 @@ import { authorised, observerKey, observerHash, reply } from "../lib/common.mjs"
 const MAX_BODY = 64 * 1024;
 
 export default async (request) => {
-  if (request.method !== "POST") return reply(405, { error: "POST only." });
+  if (request.method !== "POST") return reply(405, { error: "Только POST." });
   if (!(await authorised(request.headers.get("x-study-key"), AUTH_HASH))) {
-    return reply(401, { error: "The study passphrase is not right." });
+    return reply(401, { error: "Неверный пароль исследования." });
   }
   const text = await request.text();
-  if (text.length > MAX_BODY) return reply(413, { error: "Too large." });
+  if (text.length > MAX_BODY) return reply(413, { error: "Слишком большой запрос." });
   let sent;
-  try { sent = JSON.parse(text); } catch { return reply(400, { error: "Not JSON." }); }
+  try { sent = JSON.parse(text); } catch { return reply(400, { error: "Неверный формат запроса." }); }
 
   const { case_id: caseId, side, body } = sent || {};
-  if (!KNEES.has(`${caseId}:${side}`)) return reply(400, { error: "Unknown knee." });
+  if (!KNEES.has(`${caseId}:${side}`)) return reply(400, { error: "Неизвестный сустав." });
   const problem = check(body);
   if (problem) return reply(400, { error: problem });
 
@@ -36,21 +36,21 @@ export default async (request) => {
 };
 
 function check(body) {
-  if (!body || typeof body !== "object") return "No picks were sent.";
+  if (!body || typeof body !== "object") return "Точки не переданы.";
   if (!observerKey(body.observer) || String(body.observer).length > 200) {
-    return "Enter the surgeon's name.";
+    return "Введите имя хирурга.";
   }
-  if (!Number.isInteger(body.round) || body.round < 1 || body.round > 20) return "Bad round.";
-  if (!MODES.has(body.mode)) return "Bad mode.";
+  if (!Number.isInteger(body.round) || body.round < 1 || body.round > 20) return "Неверный номер раунда.";
+  if (!MODES.has(body.mode)) return "Неверный режим.";
   if (!Array.isArray(body.picks) || !body.picks.length || body.picks.length > 40) {
-    return "No picks were sent.";
+    return "Точки не переданы.";
   }
   for (const pick of body.picks) {
-    if (!LANDMARKS.has(pick?.id)) return `Not a landmark of the study: ${pick?.id}`;
+    if (!LANDMARKS.has(pick?.id)) return `Не ориентир исследования: ${pick?.id}`;
     const at = pick.position_mm;
     if (at !== null && at !== undefined &&
         !(Array.isArray(at) && at.length === 3 && at.every(Number.isFinite))) {
-      return `Bad position for ${pick.id}.`;
+      return `Неверная позиция для ${pick.id}.`;
     }
   }
   return null;
