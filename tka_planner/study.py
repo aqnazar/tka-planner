@@ -199,8 +199,12 @@ def pick_targets(entry, mode: str) -> dict:
     }
 
 
-def save_picks(entry, study_dir, body: dict) -> dict:
-    """Write one observer's finished (or partial) set: a landmark file and a record."""
+def save_picks(entry, study_dir, body: dict, *, saved_utc=None, via=None) -> dict:
+    """Write one observer's finished (or partial) set: a landmark file and a record.
+
+    ``saved_utc`` is when the picks were saved, if not now: a pick made on the online
+    study site is written here later, under the time the surgeon saved it.
+    """
     observer, key, slug = _observer(body.get("observer"))
     round_ = _round(body.get("round"))
     mode = _mode(body.get("mode"))
@@ -244,13 +248,16 @@ def save_picks(entry, study_dir, body: dict) -> dict:
     if not records:
         raise ValueError("No picks were given.")
 
-    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    when = saved_utc or _dt.datetime.now(_dt.timezone.utc)
+    stamp = when.astimezone(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     side = _side(session)
     folder = Path(study_dir) / "picks" / slug
     folder.mkdir(parents=True, exist_ok=True)
     base = f"{session.case_id}_{side}_{mode}_r{round_}_{stamp}"
     source = {"kind": "observer_study", "observer": observer, "observer_key": key,
               "round": round_, "mode": mode, "saved_utc": stamp}
+    if via:
+        source["via"] = str(via)
     landmark_path = write_landmark_set(
         LandmarkSet(case_id=session.case_id, side=side,
                     coordinate_system=automatic.coordinate_system,

@@ -1,0 +1,35 @@
+/* The online landmark study: the planner's own styles, plus the sign-in and knee list. */
+body { height: 100vh; display: flex; flex-direction: column; }
+header #who { color: var(--dim); }
+.page { flex: 1; overflow-y: auto; padding: 24px 16px; }
+.card {
+  max-width: 420px; margin: 0 auto; background: var(--panel);
+  border: 1px solid var(--edge); padding: 18px 20px;
+}
+.wide-card { max-width: 860px; }
+.card h2 { margin: 0 0 10px; font-size: 17px; }
+.card h3 { margin: 18px 0 8px; font-size: 14px; display: flex; gap: 12px; align-items: center; }
+.card .column { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin: 0 0 12px; }
+.card input[type=text], .card input[type=password] { width: 100%; box-sizing: border-box; }
+.count { color: var(--dim); font-weight: 400; font-size: 12px; }
+.knee-list { display: flex; flex-direction: column; gap: 4px; }
+.knee {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center;
+  padding: 6px 8px; border: 1px solid var(--edge);
+}
+.knee .name { font-weight: 600; }
+.knee button { min-width: 168px; text-align: left; }
+.knee button.done { border-color: #3fb27f; }
+.knee button.done::after { content: "  \2713 done"; color: #3fb27f; }
+.knee button.partial::after { content: "  saved, unfinished"; color: var(--warn); }
+.credit { color: var(--dim); font-size: 11px; margin-top: 18px; }
+#work { flex: 1; grid-template-columns: 320px 1fr; }
+#work[hidden] { display: none !important; }
+#busy { display: grid; place-items: center; align-content: center; gap: 10px; }
+#busy-text { color: var(--ink); margin: 0; }
+
+@media (max-width: 720px) {
+  .knee { grid-template-columns: 1fr; }
+  .knee button { min-width: 0; }
+  #work { grid-template-columns: 1fr; grid-template-rows: auto 60vh; }
+}

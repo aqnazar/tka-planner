@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Knee Landmark Study</title>
+<link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./online.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+
+<header>
+  <h1>Knee landmark study</h1>
+  <span id="who"></span>
+  <button type="button" id="back" hidden>All knees</button>
+  <p class="disclaimer">Research use only. Not a medical device.</p>
+</header>
+
+<section id="signin" class="page">
+  <div class="card">
+    <h2>Sign in</h2>
+    <p class="study-help">Enter your name the same way each time: everything saved under one name is one surgeon.</p>
+    <label class="wide column">Your name <input id="name" type="text" autocomplete="name" maxlength="200"></label>
+    <label class="wide column">Round <select id="round"><option>1</option><option>2</option><option>3</option></select></label>
+    <label class="wide column">Study passphrase <input id="passphrase" type="password" autocomplete="off" placeholder="XXXX-XXXX-XXXX"></label>
+    <div class="actions"><button type="button" id="enter" class="primary">Start</button></div>
+    <p id="signin-error" class="study-warn"></p>
+  </div>
+</section>
+
+<section id="knees" class="page" hidden>
+  <div class="card wide-card">
+    <h2>Your knees</h2>
+    <p class="study-help">Do every knee twice: first <b>No markers</b> (place each landmark yourself), then
+      <b>Automatic markers</b> (the planner's points are shown; move the wrong ones). Use a mouse; a
+      session can be stopped and continued later.</p>
+    <h3>Study patients <span class="count" id="count-study"></span></h3>
+    <div id="list-study" class="knee-list"></div>
+    <h3>Dataset knees
+      <label>Group <select id="group"></select></label>
+      <span class="count" id="count-group"></span>
+    </h3>
+    <p class="study-help">Your group is the one the study lead gave you. If you finish it, ask before starting another.</p>
+    <div id="list-group" class="knee-list"></div>
+    <p id="credit" class="credit"></p>
+  </div>
+</section>
+
+<main id="work" hidden>
+  <aside id="panel">
+    <div id="knee-title" class="study-name"></div>
+    <input id="study-observer" type="hidden">
+    <input id="study-round" type="hidden">
+    <section id="pick-mode">
+      <div id="pick-setup" hidden>
+        <select id="pick-start-mode">
+          <option value="blank">No markers (place each one)</option>
+          <option value="adjust">Automatic markers (move the wrong ones)</option>
+        </select>
+        <button type="button" id="pick-start">Start picking</button>
+      </div>
+      <div id="pick-run" hidden>
+        <div id="pick-progress" class="study-progress"></div>
+        <div id="pick-name" class="study-name"></div>
+        <p id="pick-definition" class="study-definition"></p>
+        <p id="pick-status" class="study-status"></p>
+        <div class="actions">
+          <button type="button" id="pick-prev">Previous</button>
+          <button type="button" id="pick-next" class="primary">Next</button>
+        </div>
+        <div class="actions">
+          <button type="button" id="pick-reset-one">Remove marker</button>
+          <button type="button" id="pick-reset-all">Reset all</button>
+        </div>
+        <div class="actions">
+          <select id="pick-skip-reason"></select>
+          <button type="button" id="pick-skip">Cannot place</button>
+        </div>
+        <label class="wide">Show
+          <select id="pick-view">
+            <option value="auto">the marker's bone</option>
+            <option value="Femur">femur</option>
+            <option value="Tibia">tibia</option>
+            <option value="both">both bones</option>
+          </select>
+        </label>
+        <label id="pick-ghost-row" class="check"><input id="pick-ghosts" type="checkbox" checked> Show automatic positions (ghost)</label>
+        <div id="pick-list"></div>
+        <div class="actions">
+          <button type="button" id="pick-save">Save progress</button>
+          <button type="button" id="pick-finish" class="primary" disabled>Finish and save</button>
+          <button type="button" id="pick-quit">Stop</button>
+        </div>
+      </div>
+    </section>
+    <!-- Review is not online yet; these keep the shared study code's wiring whole. -->
+    <div hidden>
+      <select id="review-plan"></select><button type="button" id="review-save"></button>
+      <div id="review-reasons"></div><div id="review-severity"></div><div id="review-details"></div>
+      <p id="review-adjusted"></p><textarea id="review-comment"></textarea><div id="review-saved"></div>
+    </div>
+    <div id="notes"></div>
+  </aside>
+  <div id="view"></div>
+</main>
+
+<div id="busy" hidden><span></span><p id="busy-text"></p></div>
+
+<script type="module" src="./online.js"></script>
+</body>
+</html>
