@@ -5,6 +5,7 @@
 // that code makes from the file instead of from a server. A save goes to the study's
 // store, and from there through the planner's own save_picks on the study lead's machine.
 
+import * as THREE from "./vendor/three.module.js";
 import { Viewer } from "./viewer.js";
 import { Study } from "./study.js";
 import { say, translateTargets } from "./ru.js";
@@ -255,6 +256,9 @@ async function openKnee(item, mode) {
     el("knee-title").textContent = `${item.case_id} ${SIDE[item.side] ?? item.side} · ${MODE[mode]}`;
     if (!viewer) {
       viewer = new Viewer(el("view"));
+      // The house style's light viewport (as in the demo planner): paper, no floor grid.
+      viewer.scene.background = new THREE.Color(0xf3f5f8);
+      viewer.grid.visible = false;
       study = new Study({
         viewer, api, el, note, busy, state,
         sessionId: () => "online",
