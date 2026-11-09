@@ -29,9 +29,12 @@ export class Study {
   // ``say`` turns an English message (with {slots}) into the text shown. The planner
   // shows the English; the online study passes its Russian table. What is saved never
   // depends on it: skip reasons, ids and positions are recorded in English as before.
+  // ``checkPlacement(target, mm, pick)``, if given, looks at a marker once it is put
+  // down and returns a warning (or null); the surgeon keeps the point or takes it back.
   constructor({ viewer, api, el, note, busy, sessionId, sendControls, state,
-                say = fill }) {
-    Object.assign(this, { viewer, api, el, note, busy, sessionId, sendControls, state, say });
+                say = fill, checkPlacement = null }) {
+    Object.assign(this, { viewer, api, el, note, busy, sessionId, sendControls, state, say,
+                          checkPlacement });
     this.pick = null;
     this.reviewStarted = null;
     this.reviewSaved = [];
@@ -289,6 +292,7 @@ export class Study {
     // Only the current marker can be grabbed. Another one is reached from the list or
     // with Previous, so a click beside a placed neighbour places the current marker.
     if (this.viewer.isOnMarker(event.clientX, event.clientY, this.current().id)) {
+      this.before = this.pick.positions.get(this.current().id);
       this.dragging = true;
       this.viewer.setControlsEnabled(false);
       this.el("view").setPointerCapture(event.pointerId);
@@ -309,6 +313,7 @@ export class Study {
       this.dragging = false;
       this.viewer.setControlsEnabled(true);
       this.el("view").releasePointerCapture?.(event.pointerId);
+      this.confirmPlacement(this.before);
       return;
     }
     const pressed = this.pressed;
@@ -319,12 +324,29 @@ export class Study {
     }
     const mm = this.viewer.pickHit(event.clientX, event.clientY, this.current().bone);
     if (mm) {
+      const before = this.pick.positions.get(this.current().id);
       this.place(mm);
+      this.confirmPlacement(before);
     } else {
       this.el("pick-status").textContent = this.say(
         "That is not on the {bone}. Click on its surface.",
         { bone: this.say(this.current().bone).toLowerCase() });
     }
+  }
+
+  // A marker just put down is shown to ``checkPlacement``; if it warns and the surgeon
+  // does not keep the point, the marker goes back to where it was (or off the bone).
+  confirmPlacement(before) {
+    const target = this.current();
+    const mm = target && this.pick.positions.get(target.id);
+    if (!mm || !this.checkPlacement) return;
+    const warning = this.checkPlacement(target, mm, this.pick);
+    if (!warning || window.confirm(warning)) return;
+    if (before) this.pick.positions.set(target.id, before);
+    else this.pick.positions.delete(target.id);
+    this.drawMarker(target);
+    this.renderPrompt();
+    this.saveDraft();
   }
 
   // -- the draft: unsaved picks kept in this browser only -------------------------

@@ -137,3 +137,66 @@ def test_a_wrong_passphrase_opens_nothing(tmp_path):
          "ABCD-EFGH-JKLX", str(tmp_path / "x.bin")],
         capture_output=True, text=True, timeout=60)
     assert done.returncode != 0
+
+
+# A synthetic left knee in LPS (the patient's left is +x, so lateral is +x), with the
+# planner's points as orient.js reads them from the knee's mode-2 targets.
+ORIENT_KNEE = {
+    "side": "left",
+    "targets": {"adjust": {"targets": [
+        {"id": i, "bone": b, "name": i, "auto_mm": p} for i, b, p in [
+            ("femur.epicondyle_lateral", "Femur", [40, 5, 30]),
+            ("femur.epicondyle_medial_prominence", "Femur", [-40, 5, 30]),
+            ("femur.condyle_distal_lateral", "Femur", [20, 0, 2]),
+            ("femur.condyle_distal_medial", "Femur", [-20, 0, 0]),
+            ("femur.notch_centre", "Femur", [0, 5, 10]),
+            ("tibia.spine_medial", "Tibia", [-5, 5, -5]),
+            ("tibia.spine_lateral", "Tibia", [5, 5, -5]),
+            ("tibia.plateau_medial_lowest", "Tibia", [-20, 5, -10]),
+            ("tibia.plateau_lateral_lowest", "Tibia", [20, 5, -8]),
+        ]]}},
+}
+
+NODE_ORIENT = r"""
+const [orientUrl, kneeJson] = process.argv.slice(1);
+const { orientation, checkPick } = await import(orientUrl);
+const knee = JSON.parse(kneeJson);
+const o = orientation(knee, true);
+const t = (id, bone) => ({ id, bone, name: id });
+const none = { positions: new Map() };
+const out = {
+  medialOnLateral: checkPick(t("tibia.plateau_medial_lowest", "Tibia"), [18, 5, -10], none, o),
+  medialOnMedial: checkPick(t("tibia.plateau_medial_lowest", "Tibia"), [-18, 5, -10], none, o),
+  lateralOnMedial: checkPick(t("tibia.plateau_lateral_lowest", "Tibia"), [-18, 5, -8], none, o),
+  epicondyleOnCondyle: checkPick(t("femur.epicondyle_lateral", "Femur"), [38, 5, 2], none, o),
+  epicondyleInTheMiddle: checkPick(t("femur.epicondyle_medial_prominence", "Femur"), [-4, -20, 25], none, o),
+  condyleTooHigh: checkPick(t("femur.condyle_distal_medial", "Femur"), [-22, 5, 25], none, o),
+  spinesCrossed: checkPick(t("tibia.spine_lateral", "Tibia"), [-6, 5, -5],
+                           { positions: new Map([["tibia.spine_medial", [6, 5, -5]]]) }, o),
+  fibulaOnPatient: checkPick(t("fibula.head_apex", "Tibia"), [30, 20, -25], none, o),
+  fibulaOnDataset: checkPick(t("fibula.head_apex", "Tibia"), [30, 20, -25], none,
+                             orientation(knee, false)),
+  planner: knee.targets.adjust.targets.map((x) => checkPick(x, x.auto_mm, none, o)),
+};
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_a_marker_on_the_wrong_side_or_level_is_questioned_and_a_right_one_is_not(tmp_path):
+    public = build_site.SITE_SOURCE / "public"
+    shutil.copy2(public / "orient.js", tmp_path / "orient.js")
+    shutil.copytree(build_site.REPO / "web" / "vendor", tmp_path / "vendor")
+    run = subprocess.run(
+        ["node", "--input-type=module", "-e", NODE_ORIENT,
+         (tmp_path / "orient.js").as_uri(), json.dumps(ORIENT_KNEE)],
+        capture_output=True, text=True, encoding="utf-8", check=True)
+    out = json.loads(run.stdout)
+    for warned in ("medialOnLateral", "lateralOnMedial", "epicondyleOnCondyle",
+                   "epicondyleInTheMiddle", "condyleTooHigh", "spinesCrossed",
+                   "fibulaOnPatient"):
+        assert out[warned], warned
+    assert "ЛАТЕРАЛЬНОЙ" in out["medialOnLateral"]
+    assert out["medialOnMedial"] is None
+    assert out["fibulaOnDataset"] is None
+    assert out["planner"] == [None] * len(ORIENT_KNEE["targets"]["adjust"]["targets"])

@@ -9,6 +9,7 @@ import * as THREE from "./vendor/three.module.js";
 import { Viewer } from "./viewer.js";
 import { Study } from "./study.js";
 import { say, translateTargets } from "./ru.js";
+import { orientation, checkPick, Compass } from "./orient.js";
 
 const SIDE = { left: "левый", right: "правый" };
 const MODE = { blank: "1  Без маркеров", adjust: "2  Автоматические маркеры" };
@@ -23,6 +24,8 @@ let manifest = null;
 let viewer = null;
 let study = null;
 let knee = null;       // the open knee's decrypted file
+let orient = null;     // its medial/lateral and front/back directions (orient.js)
+let compass = null;
 let progress = { saved: {}, complete: {} };
 const meshUrls = new Map();
 
@@ -176,6 +179,7 @@ async function showKnees() {
   el("back").hidden = true;
   el("knees").hidden = false;
   document.body.classList.remove("picking");
+  compass?.set(null);
   await refreshProgress();
 
   const groups = el("group");
@@ -242,6 +246,7 @@ function button(label, stateName, onClick) {
 async function openKnee(item, mode) {
   await busy(async () => {
     knee = await openFile(item.file);
+    orient = orientation(knee, item.group === "study");
     for (const url of meshUrls.values()) URL.revokeObjectURL(url);
     meshUrls.clear();
     for (const [id, data] of Object.entries(knee.meshes)) {
@@ -264,7 +269,9 @@ async function openKnee(item, mode) {
         sessionId: () => "online",
         sendControls: async () => {},
         say,
+        checkPlacement: (target, mm, pick) => checkPick(target, mm, pick, orient),
       });
+      compass = new Compass(el("view"), viewer);
       const stop = study.stopPick.bind(study);
       study.stopPick = () => { stop(); showKnees(); };
     }
@@ -272,6 +279,7 @@ async function openKnee(item, mode) {
     window.dispatchEvent(new Event("resize"));
     el("pick-start-mode").value = mode;
     await study.startPick();
+    compass.set(orient);
   }, "Открываем сустав");
 }
 
